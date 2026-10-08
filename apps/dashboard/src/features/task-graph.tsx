@@ -42,6 +42,7 @@ import {
   statusLabel,
   defaultGraphFilters,
   filterGraph,
+  hiddenCompletedPrerequisiteCounts,
   graphEdgeKey,
   neighborhoodModes,
   graphNodeDetail,
@@ -123,6 +124,7 @@ interface TaskNodeData extends Record<string, unknown> {
   dimmed: boolean;
   selected: boolean;
   onChain: boolean;
+  hiddenCompletedPrerequisites: number;
   direction: GraphDirection;
   onSelect: (key: string) => void;
 }
@@ -130,6 +132,40 @@ interface TaskNodeData extends Record<string, unknown> {
 type TaskFlowNode = Node<TaskNodeData, "task">;
 
 const hiddenHandle = "!h-1 !w-1 !border-0 !bg-transparent !min-h-0 !min-w-0";
+
+const completedPrerequisiteContext = (count: number): string =>
+  `${count} completed prerequisite${count === 1 ? "" : "s"} hidden from graph`;
+
+export function CompletedPrerequisiteCue({
+  count,
+  direction,
+  dimmed,
+  detail,
+}: {
+  count: number;
+  direction: GraphDirection;
+  dimmed: boolean;
+  detail: GraphNodeDetail;
+}) {
+  if (count === 0) return null;
+  return (
+    <span
+      aria-hidden="true"
+      title={completedPrerequisiteContext(count)}
+      className={cn(
+        "pointer-events-none absolute z-10 max-w-[116px] truncate rounded border border-border bg-surface px-1.5 leading-4 text-subtle shadow-sm",
+        direction === "TB"
+          ? "bottom-full right-2 mb-1"
+          : "left-2 top-full mt-1",
+        detail === "compact" ? "text-base" : "text-xs",
+        dimmed && "opacity-25",
+      )}
+    >
+      ✓ {count}
+      {detail === "compact" ? "" : ` prereq${count === 1 ? "" : "s"}`}
+    </span>
+  );
+}
 
 function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
   // Select only the visual tier so ordinary zoom ticks do not rerender nodes.
@@ -145,6 +181,12 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
         isConnectable={false}
       />
       <GraphTaskNodeButton data={data} detail={detail} />
+      <CompletedPrerequisiteCue
+        count={data.hiddenCompletedPrerequisites}
+        direction={data.direction}
+        dimmed={data.dimmed}
+        detail={detail}
+      />
       <Handle
         type="source"
         position={source}
@@ -165,6 +207,10 @@ export function GraphTaskNodeButton({
   const { task, milestone } = data;
   const waitingOn = task.unmetPrerequisiteIds.length;
   const state = nodeStateLabel(task);
+  const completedContext =
+    data.hiddenCompletedPrerequisites > 0
+      ? completedPrerequisiteContext(data.hiddenCompletedPrerequisites)
+      : "";
   const compact = detail === "compact";
   const operationalFailure = task.operationalStatus === "failed";
   const compactTone = operationalFailure
@@ -195,11 +241,12 @@ export function GraphTaskNodeButton({
     <button
       type="button"
       aria-pressed={data.selected}
+      title={completedContext || undefined}
       aria-label={`${task.title}. ${statusLabel(task.operationalStatus)}. ${state}. Priority ${task.priority}.${
         milestone === null
           ? ""
           : ` Milestone ${milestone.title}${milestone.more > 0 ? ` and ${milestone.more} more` : ""}.`
-      }`}
+      }${completedContext === "" ? "" : ` ${completedContext}.`}`}
       onClick={() => data.onSelect(taskKey(task.taskId))}
       style={{
         width: nodeSize.width,
@@ -457,6 +504,11 @@ function TaskGraphCanvas({
     [effectiveFilters, graph, neighborhood, selectedTask],
   );
 
+  const hiddenCompleted = useMemo(
+    () => hiddenCompletedPrerequisiteCounts(graph, visible),
+    [graph, visible],
+  );
+
   const tooLarge = exceedsLayoutLimit(
     visible.tasks.length,
     visible.edges.length,
@@ -515,6 +567,7 @@ function TaskGraphCanvas({
               : { title: first.title, more: task.milestoneIds.length - 1 },
           selected: selectedKey === taskKey(task.taskId),
           onChain: chainIds.has(task.taskId),
+          hiddenCompletedPrerequisites: hiddenCompleted.get(task.taskId) ?? 0,
           dimmed: related !== null && !related.has(task.taskId),
           onSelect: select,
         },
@@ -533,6 +586,7 @@ function TaskGraphCanvas({
   }, [
     chainIds,
     direction,
+    hiddenCompleted,
     milestonesById,
     positions,
     related,

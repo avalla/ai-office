@@ -7,6 +7,7 @@ import type {
   TaskGraphNode,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
+  CompletedPrerequisiteCue,
   GraphTaskNodeButton,
   GraphTaskDetailSections,
   OverviewTaskLists,
@@ -147,6 +148,7 @@ test("graph node tiers preserve accessible identity, selection, and fixed footpr
     dimmed: false,
     selected: true,
     onChain: false,
+    hiddenCompletedPrerequisites: 2,
     direction: "LR" as const,
     onSelect: () => {},
   };
@@ -160,6 +162,7 @@ test("graph node tiers preserve accessible identity, selection, and fixed footpr
   expect(name).toContain("Selected task with a complete name");
   expect(name).toContain("2 blockers");
   expect(name).toContain("Current milestone");
+  expect(name).toContain("2 completed prerequisites hidden from graph");
   for (const html of [full, medium, compact]) {
     expect(html).toContain(`aria-label="${name}"`);
     expect(html).toContain('aria-pressed="true"');
@@ -178,12 +181,44 @@ test("graph node tiers preserve accessible identity, selection, and fixed footpr
   expect(visible(compact)).not.toContain("Current milestone");
 });
 
+test("completed prerequisite cue clears TB edges and dims with its node", () => {
+  const render = (
+    direction: "LR" | "TB",
+    dimmed: boolean,
+    detail: "full" | "medium" | "compact",
+  ) =>
+    renderToStaticMarkup(
+      createElement(CompletedPrerequisiteCue, {
+        count: 2,
+        direction,
+        dimmed,
+        detail,
+      }),
+    );
+  expect(render("LR", false, "full")).toContain("left-2 top-full mt-1");
+  expect(render("TB", false, "medium")).toContain("bottom-full right-2 mb-1");
+  expect(render("TB", true, "medium")).toContain("opacity-25");
+  expect(render("LR", false, "compact")).toContain("text-base");
+  expect(render("LR", false, "compact")).toContain("✓ 2</span>");
+  expect(
+    renderToStaticMarkup(
+      createElement(CompletedPrerequisiteCue, {
+        count: 0,
+        direction: "TB",
+        dimmed: false,
+        detail: "full",
+      }),
+    ),
+  ).toBe("");
+});
+
 test("compact graph nodes distinguish ready from waiting with text and a stripe", () => {
   const base = {
     milestone: null,
     dimmed: false,
     selected: false,
     onChain: false,
+    hiddenCompletedPrerequisites: 0,
     direction: "LR" as const,
     onSelect: () => {},
   };

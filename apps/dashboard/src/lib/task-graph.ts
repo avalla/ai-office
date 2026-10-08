@@ -214,6 +214,30 @@ export function filterGraph(
   };
 }
 
+/** Count direct completed prerequisites omitted from the current graph view. */
+export function hiddenCompletedPrerequisiteCounts(
+  graph: TaskGraph,
+  visible: VisibleGraph,
+): ReadonlyMap<string, number> {
+  const completed = new Set(
+    graph.tasks
+      .filter((task) => task.recordedStatus === "completed")
+      .map((task) => task.taskId),
+  );
+  const visibleIds = new Set(visible.tasks.map((task) => task.taskId));
+  const counts = new Map<string, number>();
+  for (const edge of graph.edges) {
+    if (
+      !visibleIds.has(edge.taskId) ||
+      visibleIds.has(edge.dependsOnTaskId) ||
+      !completed.has(edge.dependsOnTaskId)
+    )
+      continue;
+    counts.set(edge.taskId, (counts.get(edge.taskId) ?? 0) + 1);
+  }
+  return counts;
+}
+
 function matchesSearch(task: TaskGraphNode, search: string): boolean {
   return (
     task.taskId.toLowerCase().includes(search) ||

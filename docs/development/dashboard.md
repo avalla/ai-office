@@ -261,6 +261,11 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   title/state card with a state stripe at low zoom. Node dimensions and the
   layout stay fixed, and each tier retains the complete accessible name and
   selection state;
+- a small cue counts direct completed prerequisites hidden from the current
+  view. It sits below the node in left-to-right layout and above its right side
+  in top-to-bottom layout, clear of centered dependency edges; dimmed nodes
+  dim the cue too. At compact zoom it shows just the count; the accessible name
+  keeps the full context at every zoom level;
 - view controls beside the canvas (Fit graph, layout, longest chain overlay,
   minimap), distinct from the data filters;
 - a side panel: with no selection, a "what happens next" list (ready tasks by
