@@ -11,7 +11,10 @@ import type {
   TaskGraph,
   TaskPageQuery,
 } from "@ai-office/application/read-models/operational-read-models.ts";
-import { taskPageParameters } from "@ai-office/application/protocol/query-protocol.ts";
+import {
+  queryLimits,
+  taskPageParameters,
+} from "@ai-office/application/protocol/query-protocol.ts";
 import type { DashboardData } from "../api/client.ts";
 import {
   ActivityList,
@@ -44,7 +47,11 @@ import {
 } from "../components/ui/primitives.tsx";
 import { TaskGraphView } from "./task-graph.tsx";
 import { elapsed, formatDuration, formatTimestamp } from "../lib/formatting.ts";
-import { taskFilterQuery, type TaskFilterValues } from "../lib/task-filters.ts";
+import {
+  milestoneChoiceDisabled,
+  taskFilterQuery,
+  type TaskFilterValues,
+} from "../lib/task-filters.ts";
 import {
   milestoneStatusTone,
   requirementStatusTone,
@@ -806,7 +813,7 @@ function TaskFilters({ project }: { project: ProjectDetail }) {
     status: "active",
     priority: "",
     agent: "",
-    milestone: "",
+    milestones: [],
     sort: "milestone",
   });
   const [error, setError] = useState<string | null>(null);
@@ -819,17 +826,20 @@ function TaskFilters({ project }: { project: ProjectDetail }) {
       status: f.status ?? "active",
       priority: f.priority === undefined ? "" : String(f.priority),
       agent: f.unassigned ? "none" : f.agentId ? `agent:${f.agentId}` : "",
-      milestone: f.milestoneId ?? "",
+      milestones:
+        f.milestoneIds ?? (f.milestoneId === undefined ? [] : [f.milestoneId]),
       sort: f.sort ?? "milestone",
     });
   }, [routeKey]);
   if (!page) return null;
   const options = page.options;
-  const update = (key: keyof TaskFilterValues, value: string) =>
-    setValues((current) => ({ ...current, [key]: value }));
+  const update = (
+    key: Exclude<keyof TaskFilterValues, "milestone" | "milestones">,
+    value: string,
+  ) => setValues((current) => ({ ...current, [key]: value }));
   const select = (
     label: string,
-    key: keyof TaskFilterValues,
+    key: Exclude<keyof TaskFilterValues, "milestone" | "milestones">,
     choices: readonly [string, string][],
   ) => (
     <label className="flex min-w-[10rem] flex-col gap-1 text-xs font-medium text-subtle">
@@ -894,15 +904,69 @@ function TaskFilters({ project }: { project: ProjectDetail }) {
             (a) => [`agent:${a.agentId}`, a.name] as [string, string],
           ),
         ])}
-        {select("Milestone", "milestone", [
-          ["", "All milestones"],
-          ...(options.hasUnassignedMilestone
-            ? [["unassigned", "No milestone"] as [string, string]]
-            : []),
-          ...(options.milestones ?? []).map(
-            (m) => [m.milestoneId, m.title] as [string, string],
-          ),
-        ])}
+        <details className="w-full text-sm">
+          <summary className="flex h-10 w-fit max-w-full cursor-pointer items-center rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            {values.milestones?.length
+              ? `${values.milestones.length} milestone${values.milestones.length === 1 ? "" : "s"} selected`
+              : "All milestones"}
+          </summary>
+          <div
+            role="group"
+            aria-label="Select task milestones"
+            className="mt-2 flex max-h-64 w-full flex-col gap-2 overflow-y-auto rounded-md border border-border bg-surface p-3"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold">Milestones</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={!values.milestones?.length}
+                onClick={() =>
+                  setValues((current) => ({ ...current, milestones: [] }))
+                }
+              >
+                Clear
+              </Button>
+            </div>
+            <p className="text-xs text-subtle" aria-live="polite">
+              {values.milestones?.length === queryLimits.maxTaskMilestoneFilters
+                ? `Limit of ${queryLimits.maxTaskMilestoneFilters} reached. Deselect one to choose another.`
+                : `Select up to ${queryLimits.maxTaskMilestoneFilters} milestone categories.`}
+            </p>
+            {[
+              ...(options.hasUnassignedMilestone
+                ? [{ id: "unassigned", title: "No milestone" }]
+                : []),
+              ...(options.milestones ?? []).map((m) => ({
+                id: m.milestoneId,
+                title: m.title,
+              })),
+            ].map(({ id, title }) => (
+              <label key={id} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={values.milestones?.includes(id) ?? false}
+                  disabled={milestoneChoiceDisabled(
+                    values.milestones ?? [],
+                    id,
+                  )}
+                  onChange={() =>
+                    setValues((current) => ({
+                      ...current,
+                      milestones: current.milestones?.includes(id)
+                        ? current.milestones.filter((value) => value !== id)
+                        : [...(current.milestones ?? []), id].sort(),
+                    }))
+                  }
+                />
+                <span className="truncate" title={title}>
+                  {title}
+                </span>
+              </label>
+            ))}
+          </div>
+        </details>
         {select("Sort", "sort", [
           ["milestone", "Milestone, short name"],
           ["short_name", "Short name"],
@@ -915,8 +979,9 @@ function TaskFilters({ project }: { project: ProjectDetail }) {
         </p>
       )}
       <p className="text-xs text-subtle">
-        Active tasks are shown by default. Milestones come from explicit task →
-        requirement links.
+        Active tasks are shown by default. Choose filters, then Apply. All
+        statuses includes completed tasks across all result pages. Milestones
+        come from explicit task → requirement links.
       </p>
     </form>
   );
@@ -928,12 +993,26 @@ function ProjectTasks({ project }: { project: ProjectDetail }) {
   const query = `?${taskPageParameters({ ...page?.filters, ...(offset ? { offset } : {}) })}`;
   const pageHref = (next: number) =>
     `/projects/${id}/tasks?${taskPageParameters({ ...page?.filters, ...(next ? { offset: next } : {}) })}`;
+  const completedCount = project.summary.tasks.byStatus.completed;
   return (
     <Section
       title="Tasks"
       detail={`${project.tasks.total} matching · ${project.summary.tasks.total} project tasks`}
     >
       <TaskFilters project={project} />
+      {completedCount > 0 && page?.filters.status !== "completed" && (
+        <p className="text-sm text-subtle">
+          {completedCount.toLocaleString()} completed project{" "}
+          {completedCount === 1 ? "task" : "tasks"}. Results are paginated;{" "}
+          <Link
+            className="font-medium text-foreground underline underline-offset-2"
+            to={`/projects/${id}/tasks?status=completed`}
+          >
+            View all completed
+          </Link>
+          .
+        </p>
+      )}
       <TaskTable tasks={project.tasks.items} query={query} />
       <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-subtle">
         <span>

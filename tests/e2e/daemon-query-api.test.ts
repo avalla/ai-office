@@ -261,6 +261,96 @@ describe("daemon query API", () => {
     }
   });
 
+  test("task pages accept repeated milestone filters through the Unix socket", async () => {
+    const harness = await startDaemon();
+    try {
+      const command = (args: string[]) => harness.client.execute(args);
+      const projectId = (
+        await command(["project:create", "Filter milestones"])
+      ).stdout[0]!.replace("Project created: ", "");
+      const taskIds = await Promise.all(
+        ["First task", "Second task", "Unassigned task"].map(async (title) =>
+          (
+            await command([
+              "task:create",
+              "--project",
+              projectId,
+              "--title",
+              title,
+            ])
+          ).stdout[0]!.replace("Task created: ", ""),
+        ),
+      );
+      const milestoneIds = [];
+      for (const title of ["First milestone", "Second milestone"])
+        milestoneIds.push(
+          (
+            await command([
+              "milestone:create",
+              "--project",
+              projectId,
+              "--title",
+              title,
+            ])
+          ).stdout[0]!.replace("Milestone created: ", ""),
+        );
+      for (let index = 0; index < 2; index += 1) {
+        const requirementId = (
+          await command([
+            "requirement:create",
+            "--project",
+            projectId,
+            "--key",
+            `R${index + 1}`,
+            "--title",
+            `Requirement ${index + 1}`,
+            "--description",
+            "Acceptance",
+            "--milestone",
+            milestoneIds[index]!,
+          ])
+        ).stdout[0]!.replace("Requirement created: ", "");
+        expect(
+          (
+            await command([
+              "task:link-requirement",
+              "--project",
+              projectId,
+              "--task",
+              taskIds[index]!,
+              "--requirement",
+              requirementId,
+            ])
+          ).exitCode,
+        ).toBe(0);
+      }
+      const path = `/api/projects/${projectId}?taskView=paged&status=all`;
+      const query = async (milestones: string) =>
+        (await harness.get(`${path}&${milestones}`)).body.project as {
+          tasks: { items: { taskId: string }[] };
+          taskPage: { filters: { milestoneIds?: string[] } };
+        };
+      const both = await query(
+        `milestone=${milestoneIds[0]}&milestone=${milestoneIds[1]}`,
+      );
+      expect(both.tasks.items.map((task) => task.taskId).sort()).toEqual(
+        taskIds.slice(0, 2).sort(),
+      );
+      expect(both.taskPage.filters.milestoneIds).toEqual(milestoneIds);
+      const withUnassigned = await query(
+        `milestone=${milestoneIds[0]}&milestone=unassigned`,
+      );
+      expect(
+        withUnassigned.tasks.items.map((task) => task.taskId).sort(),
+      ).toEqual([taskIds[0], taskIds[2]].sort());
+      expect((await harness.get(`${path}&milestone=bad%20id`)).status).toBe(
+        400,
+      );
+    } finally {
+      await harness.stop();
+    }
+  });
+
   test("task requirement summaries reflect explicit links and governance changes", async () => {
     const harness = await startDaemon();
     try {
