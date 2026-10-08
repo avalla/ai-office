@@ -156,16 +156,25 @@ export function GraphTaskNodeButton({
   const waitingOn = task.unmetPrerequisiteIds.length;
   const state = nodeStateLabel(task);
   const compact = detail === "compact";
-  const compactTone = task.ready
-    ? "good"
-    : task.waiting
-      ? "attention"
-      : taskStatusTone(task.operationalStatus);
-  const compactState = task.ready
-    ? "Ready"
-    : task.waiting
-      ? blockers(waitingOn)
-      : statusLabel(task.operationalStatus);
+  const operationalFailure = task.operationalStatus === "failed";
+  const compactTone = operationalFailure
+    ? "attention"
+    : task.ready
+      ? "good"
+      : task.waiting
+        ? "attention"
+        : taskStatusTone(task.operationalStatus);
+  const compactState = operationalFailure
+    ? task.terminal
+      ? "Failed task"
+      : task.ready
+        ? "Failed run · Ready"
+        : "Failed run"
+    : task.ready
+      ? "Ready"
+      : task.waiting
+        ? blockers(waitingOn)
+        : statusLabel(task.operationalStatus);
   return (
     <button
       type="button"
