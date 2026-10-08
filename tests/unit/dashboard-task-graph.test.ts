@@ -17,7 +17,6 @@ import {
   searchTasks,
   defaultGraphFilters,
   filterGraph,
-  graphNeighborhood,
   layoutGraph,
   lineage,
   taskKey,
@@ -384,8 +383,12 @@ describe("dashboard task graph", () => {
   test("reuses direct and transitive relationships across fact-only refreshes", () => {
     const memo = createGraphRelationshipMemo();
     const first = memo(graph.edges, "b");
+    const firstNeighborhood = first.neighborhood("two_hops");
     const refreshedEdges = graph.edges.map((edge) => ({ ...edge }));
     expect(memo(refreshedEdges, "b")).toBe(first);
+    expect(memo(refreshedEdges, "b").neighborhood("two_hops")).toBe(
+      firstNeighborhood,
+    );
     expect(memo(refreshedEdges, "d")).toMatchObject({
       prerequisites: ["b", "c"],
       dependents: [],
@@ -421,10 +424,11 @@ describe("dashboard task graph", () => {
   });
 
   test("neighborhood depths include upstream and downstream branches", () => {
+    const relationships = createGraphRelationshipMemo();
     const scoped = (
       mode: "direct" | "one_hop" | "two_hops" | "full_lineage",
     ) => {
-      const neighborhood = graphNeighborhood(graph.edges, "b", mode);
+      const neighborhood = relationships(graph.edges, "b").neighborhood(mode);
       return filterGraph(graph, defaultGraphFilters, {
         only: neighborhood.taskIds,
         ...(neighborhood.edgeKeys === undefined
@@ -437,12 +441,12 @@ describe("dashboard task graph", () => {
     expect(ids(scoped("two_hops").tasks)).toEqual(["done", "a", "b", "d"]);
     expect(ids(scoped("full_lineage").tasks)).toEqual(["done", "a", "b", "d"]);
     expect(scoped("full_lineage").edges).toHaveLength(3);
-    expect(graphNeighborhood(graph.edges, "lone", "two_hops").taskIds).toEqual(
-      new Set(["lone"]),
-    );
-    expect(graphNeighborhood(graph.edges, "a", "two_hops").taskIds).toEqual(
-      new Set(["a", "done", "b", "c", "d"]),
-    );
+    expect(
+      relationships(graph.edges, "lone").neighborhood("two_hops").taskIds,
+    ).toEqual(new Set(["lone"]));
+    expect(
+      relationships(graph.edges, "a").neighborhood("two_hops").taskIds,
+    ).toEqual(new Set(["a", "done", "b", "c", "d"]));
   });
 
   test("direct draws incident edges while one hop includes neighbor edges", () => {
@@ -455,8 +459,11 @@ describe("dashboard task graph", () => {
         { taskId: "after", dependsOnTaskId: "before" },
       ],
     };
+    const relationships = createGraphRelationshipMemo();
     const scoped = (mode: "direct" | "one_hop") => {
-      const neighborhood = graphNeighborhood(triangle.edges, "focus", mode);
+      const neighborhood = relationships(triangle.edges, "focus").neighborhood(
+        mode,
+      );
       return filterGraph(triangle, defaultGraphFilters, {
         only: neighborhood.taskIds,
         ...(neighborhood.edgeKeys === undefined

@@ -41,7 +41,6 @@ import {
   statusLabel,
   defaultGraphFilters,
   filterGraph,
-  graphNeighborhood,
   neighborhoodModes,
   nodeSize,
   otherDependentIds,
@@ -357,10 +356,10 @@ function TaskGraphCanvas({
 
   const neighborhood = useMemo(
     () =>
-      selectedTask === null || neighborhoodMode === null
+      selectedRelationships === null || neighborhoodMode === null
         ? null
-        : graphNeighborhood(graph.edges, selectedTask.taskId, neighborhoodMode),
-    [graph.edges, neighborhoodMode, selectedTask],
+        : selectedRelationships.neighborhood(neighborhoodMode),
+    [neighborhoodMode, selectedRelationships],
   );
 
   const visible = useMemo(

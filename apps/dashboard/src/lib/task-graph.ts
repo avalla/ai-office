@@ -90,22 +90,17 @@ export interface GraphNeighborhood {
   edgeKeys?: ReadonlySet<string>;
 }
 
-/** Compute scope from the complete dependency graph, independent of filters. */
-export function graphNeighborhood(
-  edges: readonly TaskGraphEdge[],
+/** Compute scope from the complete dependency index, independent of filters. */
+function graphNeighborhoodFromIndex(
+  index: LineageIndex,
   taskId: string,
   mode: NeighborhoodMode,
+  fullLineage?: Lineage,
 ): GraphNeighborhood {
   if (mode === "full_lineage") {
-    const { upstream, downstream } = lineage(edges, taskId);
+    const { upstream, downstream } =
+      fullLineage ?? lineageFromIndex(index, taskId);
     return { taskIds: new Set([taskId, ...upstream, ...downstream]) };
-  }
-  const index = buildLineageIndex(edges);
-  const incidentEdges = new Set<string>();
-  for (const edge of edges) {
-    const { taskId: dependent, dependsOnTaskId: prerequisite } = edge;
-    if (dependent === taskId || prerequisite === taskId)
-      incidentEdges.add(`${prerequisite}>${dependent}`);
   }
   const taskIds = new Set([taskId]);
   const depth = mode === "two_hops" ? 2 : 1;
@@ -124,7 +119,13 @@ export function graphNeighborhood(
   };
   walk(index.prerequisites);
   walk(index.dependents);
-  return mode === "direct" ? { taskIds, edgeKeys: incidentEdges } : { taskIds };
+  if (mode !== "direct") return { taskIds };
+  const edgeKeys = new Set<string>();
+  for (const prerequisite of index.prerequisites.get(taskId) ?? [])
+    edgeKeys.add(`${prerequisite}>${taskId}`);
+  for (const dependent of index.dependents.get(taskId) ?? [])
+    edgeKeys.add(`${taskId}>${dependent}`);
+  return { taskIds, edgeKeys };
 }
 
 export function filterGraph(
@@ -274,6 +275,7 @@ export interface TaskRelationships {
   prerequisites: readonly string[];
   dependents: readonly string[];
   lineage: Lineage;
+  neighborhood: (mode: NeighborhoodMode) => GraphNeighborhood;
 }
 
 function buildLineageIndex(edges: readonly TaskGraphEdge[]): LineageIndex {
@@ -354,10 +356,25 @@ export function createGraphRelationshipMemo() {
     previousEdges = edges;
     if (previousTaskId === taskId && previousResult !== null)
       return previousResult;
-    const result = {
-      prerequisites: index.prerequisites.get(taskId) ?? [],
-      dependents: index.dependents.get(taskId) ?? [],
-      lineage: lineageFromIndex(index, taskId),
+    const currentIndex = index;
+    const currentLineage = lineageFromIndex(currentIndex, taskId);
+    const neighborhoods = new Map<NeighborhoodMode, GraphNeighborhood>();
+    const result: TaskRelationships = {
+      prerequisites: currentIndex.prerequisites.get(taskId) ?? [],
+      dependents: currentIndex.dependents.get(taskId) ?? [],
+      lineage: currentLineage,
+      neighborhood: (mode) => {
+        const cached = neighborhoods.get(mode);
+        if (cached !== undefined) return cached;
+        const scope = graphNeighborhoodFromIndex(
+          currentIndex,
+          taskId,
+          mode,
+          currentLineage,
+        );
+        neighborhoods.set(mode, scope);
+        return scope;
+      },
     };
     previousTaskId = taskId;
     previousResult = result;
