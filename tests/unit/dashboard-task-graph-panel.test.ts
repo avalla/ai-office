@@ -213,16 +213,26 @@ test("compact graph nodes distinguish ready from waiting with text and a stripe"
     terminal: true,
     ready: false,
   });
+  const failedWaiting = render({
+    ...node("retry-later"),
+    operationalStatus: "failed",
+    ready: false,
+    waiting: true,
+    unmetPrerequisiteIds: ["prerequisite"],
+  });
 
   expect(ready).toContain("Ready</span>");
   expect(ready).toContain("border-left-color:#10b981");
   expect(waiting).toContain("1 blocker</span>");
   expect(waiting).toContain("border-left-color:#f59e0b");
-  expect(failedRun).toContain("Failed run · Ready</span>");
+  expect(failedRun).toContain("Failed run</span>");
+  expect(failedRun).toContain("Ready</span>");
   expect(failedRun).toContain("border-left-color:#f59e0b");
   expect(failedRun).toContain("Ready to start");
   expect(failedTask).toContain("Failed task</span>");
   expect(failedTask).toContain("border-left-color:#f59e0b");
+  expect(failedWaiting).toContain("Failed run</span>");
+  expect(failedWaiting).toContain("1 blocker</span>");
 });
 
 test("shipped dashboard CSS includes the compact node utilities", () => {

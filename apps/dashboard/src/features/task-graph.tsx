@@ -164,12 +164,18 @@ export function GraphTaskNodeButton({
       : task.waiting
         ? "attention"
         : taskStatusTone(task.operationalStatus);
+  const compactSupplement =
+    operationalFailure && !task.terminal
+      ? task.ready
+        ? "Ready"
+        : task.waiting
+          ? blockers(waitingOn)
+          : null
+      : null;
   const compactState = operationalFailure
     ? task.terminal
       ? "Failed task"
-      : task.ready
-        ? "Failed run · Ready"
-        : "Failed run"
+      : "Failed run"
     : task.ready
       ? "Ready"
       : task.waiting
@@ -191,8 +197,10 @@ export function GraphTaskNodeButton({
         ...(compact ? { borderLeftColor: miniMapColour[compactTone] } : {}),
       }}
       className={cn(
-        "flex cursor-pointer flex-col rounded-lg border bg-surface px-3 py-2 text-left shadow-sm transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        compact ? "justify-center gap-1 border-l-[12px]" : "justify-between",
+        "flex cursor-pointer flex-col rounded-lg border bg-surface px-3 text-left shadow-sm transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        compact
+          ? "justify-center gap-1 border-l-[12px] py-1"
+          : "justify-between py-2",
         data.selected
           ? "border-primary ring-2 ring-primary"
           : data.onChain
@@ -206,9 +214,19 @@ export function GraphTaskNodeButton({
           <span className="w-full truncate text-xl font-semibold leading-tight">
             {task.title}
           </span>
-          <span className="w-full truncate text-2xl font-bold uppercase leading-tight">
+          <span
+            className={cn(
+              "w-full truncate font-bold uppercase leading-tight",
+              compactSupplement === null ? "text-2xl" : "text-xl",
+            )}
+          >
             {compactState}
           </span>
+          {compactSupplement !== null && (
+            <span className="w-full truncate text-xl font-bold uppercase leading-tight">
+              {compactSupplement}
+            </span>
+          )}
         </>
       ) : (
         <>
