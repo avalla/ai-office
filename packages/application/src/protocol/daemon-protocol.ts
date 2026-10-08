@@ -62,10 +62,11 @@ export interface RuntimeStatus {
   uptimeSeconds: number;
   knowledge: NonNullable<DaemonHealthResponse["knowledge"]> & {
     /**
-     * Live connectivity probe executed at request time through the connected
-     * store (a bounded read-only query), distinct from the startup-observed
-     * `startup` state. "not_checked" when no store connected at startup, so
-     * there is nothing to probe.
+     * Live connectivity probe executed at request time on a throwaway
+     * connection (connect plus a trivial read, bounded by a short deadline),
+     * distinct from the startup-observed `startup` state. Deliberately
+     * "not_checked" when no store connected at startup: the Runtime is not
+     * using that endpoint, so its live reachability is not reported.
      */
     live: "connected" | "unavailable" | "not_checked";
   };
