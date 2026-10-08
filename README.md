@@ -242,6 +242,7 @@ See:
 
 - [Development roadmap](docs/development/roadmap.md)
 - [M16 Generic Core & Domain Packs plan](docs/development/generic-core-domain-packs.md)
+- [Domain Pack authoring and operations](docs/development/domain-pack-authoring.md)
 - [Architecture overview](docs/architecture/overview.md)
 - [Storage architecture](docs/architecture/storage.md)
 - [Documentation index](docs/README.md)

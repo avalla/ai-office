@@ -270,7 +270,8 @@ export class ReconcileTasks {
             ? undefined
             : milestoneById.get(requirement.milestoneId);
         if (
-          milestone?.status === "completed" &&
+          (milestone?.status === "completed" ||
+            milestone?.status === "archived") &&
           inFlightTaskStatuses.has(task.status)
         )
           issues.push({

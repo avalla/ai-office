@@ -414,6 +414,26 @@ limits:
       const duplicate = await run(requirementArgs);
       expect(duplicate.exitCode).toBe(1);
       expect(duplicate.stderr[0]).toContain("already exists");
+      for (const status of ["active", "completed", "archived"]) {
+        expect(
+          (
+            await run([
+              "milestone:set-status",
+              "--project",
+              projectId,
+              "--milestone",
+              milestoneId,
+              "--status",
+              status,
+            ])
+          ).exitCode,
+        ).toBe(0);
+      }
+      expect(
+        (await run(["governance:profile", "--project", projectId])).stdout.join(
+          "\n",
+        ),
+      ).toContain("archived");
     } finally {
       controller.abort();
       await running;

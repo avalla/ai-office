@@ -33,6 +33,7 @@ import {
   portableProjectArchiveSchemaV8,
   portableProjectArchiveSchemaV9,
   portableProjectArchiveSchemaV10,
+  portableProjectArchiveSchemaV11,
   portableProjectFormatVersionFor,
   portableProjectFormatVersions,
   portableProjectManifestFor,
@@ -77,6 +78,54 @@ import {
 
 const roots: string[] = [];
 const migrations = join(process.cwd(), "migrations", "project");
+
+test("archived milestone selects format 11 and survives the portable archive", () => {
+  const frozen = parsePortableProjectArchive(
+    readFileSync(
+      new URL(
+        "../fixtures/legacy-development/format-4.aioffice",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  );
+  const state = {
+    ...frozen.state,
+    packBinding: { configurationRevision: 0, packs: [] },
+    definitions: { revision: 0, owned: [], overrides: [] },
+    governance: {
+      ...frozen.state.governance,
+      milestones: frozen.state.governance.milestones.map((item) => ({
+        ...item,
+        status: "archived" as const,
+      })),
+    },
+  };
+  expect(portableProjectFormatVersionFor(state)).toBe(11);
+  const manifest = portableProjectManifestFor({
+    formatVersion: 11,
+    projectIdentity: frozen.manifest.projectIdentity,
+    createdAt: frozen.manifest.createdAt,
+    revision: {
+      id: "archived-revision",
+      stateChecksum: portableStateChecksum(state),
+    },
+  });
+  const archive = createPortableProjectArchive({ manifest, state });
+  expect(portableProjectArchiveSchemaV11.safeParse(archive).success).toBe(true);
+  expect(portableProjectArchiveSchemaV10.safeParse(archive).success).toBe(
+    false,
+  );
+  expect(
+    parsePortableProjectArchive(serializePortableProjectArchive(archive)),
+  ).toEqual(archive);
+  expect(() =>
+    createPortableProjectArchive({
+      manifest: portableProjectManifestFor({ ...manifest, formatVersion: 10 }),
+      state,
+    }),
+  ).toThrow("cannot carry archived milestones");
+});
 
 class ExactTestRootBindingAdapter extends LocalProjectBindingAdapter {
   override async resolveProjectRoot(inputPath: string): Promise<string> {
@@ -145,6 +194,65 @@ async function importProject(
     runtime.transactions,
   ).execute({ rootPath: source });
 }
+
+test("archived milestone survives backup and restore with its requirement link", async () => {
+  const source = temporaryRoot("ai-office-archived-source-");
+  const origin = openRuntime(temporaryRoot("ai-office-archived-origin-"));
+  const destination = openRuntime(
+    temporaryRoot("ai-office-archived-destination-"),
+  );
+  try {
+    const projectId = (await importProject(origin, source)).projectId;
+    const governance = new ManageGovernance(
+      origin.projects,
+      origin.governance,
+      origin.ids,
+      origin.clock,
+    );
+    const milestoneId = await governance.createMilestone({
+      projectId,
+      title: "Finished phase",
+    });
+    const requirementId = await governance.createRequirement({
+      projectId,
+      milestoneId,
+      key: "REQ-ARCHIVE",
+      title: "Keep history",
+      description: "Linked requirement",
+    });
+    for (const status of ["active", "completed", "archived"] as const)
+      await governance.setStatus({
+        projectId,
+        kind: "milestone",
+        id: milestoneId,
+        status,
+      });
+    const backup = await origin.service.backup(projectId);
+    expect(backup.archive.manifest.formatVersion).toBe(11);
+    const restored = await destination.service.restore({
+      archive: parsePortableProjectArchive(
+        serializePortableProjectArchive(backup.archive),
+      ),
+      rootPath: source,
+    });
+    const snapshot = await destination.governance.getSnapshot(
+      restored.projectId,
+    );
+    expect(
+      snapshot.milestones.find((item) => item.id === milestoneId)?.status,
+    ).toBe("archived");
+    expect(
+      snapshot.requirements.find((item) => item.id === requirementId)
+        ?.milestoneId,
+    ).toBe(milestoneId);
+    expect(
+      (await destination.service.backup(restored.projectId)).archive.state,
+    ).toEqual(backup.archive.state);
+  } finally {
+    origin.database.close();
+    destination.database.close();
+  }
+});
 
 async function createTask(
   runtime: ReturnType<typeof openRuntime>,
@@ -330,7 +438,7 @@ describe("project portability", () => {
       overrides: [],
     });
     expect(portableProjectFormatVersions).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
     ]);
 
     expect(v6.safeParse(override("roles", "disable")).success).toBe(false);
@@ -1179,7 +1287,7 @@ describe("project portability", () => {
       portableProjectArchiveSchemaV6.shape.state.shape.definitions,
     ];
     expect(portableProjectFormatVersions).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
     ]);
     const entry = {
       revision: 1,

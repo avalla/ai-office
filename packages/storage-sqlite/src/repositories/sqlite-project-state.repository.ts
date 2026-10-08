@@ -312,7 +312,9 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
       }));
     const milestones = this.database
       .query<MilestoneRow, [string]>(
-        `SELECT id, title, description, status, created_at, updated_at
+        `SELECT id, title, description,
+                CASE WHEN archived_at IS NOT NULL THEN 'archived' ELSE status END AS status,
+                created_at, updated_at
          FROM milestone WHERE project_id = ? ORDER BY created_at, id`,
       )
       .all(projectId)
@@ -729,17 +731,18 @@ export class SqliteProjectStateRepository implements ProjectStateRepository {
       this.database
         .prepare(
           `INSERT INTO milestone(id, project_id, title, description, status,
-                                 created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                                 created_at, updated_at, archived_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           item.id,
           projectId,
           item.title,
           item.description ?? null,
-          item.status,
+          item.status === "archived" ? "completed" : item.status,
           item.createdAt,
           item.updatedAt,
+          item.status === "archived" ? item.updatedAt : null,
         );
     for (const item of value.governance.requirements)
       this.database

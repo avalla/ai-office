@@ -386,7 +386,7 @@ describe("portable project snapshot", () => {
       parsePortableProjectArchive(
         JSON.stringify({
           ...archive,
-          manifest: { ...archive.manifest, formatVersion: 11 },
+          manifest: { ...archive.manifest, formatVersion: 12 },
         }),
       ),
     ).toThrow("does not declare a supported format version");

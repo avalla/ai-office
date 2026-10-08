@@ -1056,6 +1056,7 @@ describe.skipIf(connectionString === undefined)(
           "20261006000100_project_agent_disable.sql",
           "20261006000200_project_workflow_override.sql",
           "20261006000300_project_definition_payload_object.sql",
+          "20261008000100_milestone_archived_status.sql",
         ]);
         expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
         const rows = await database.query<{
@@ -1427,6 +1428,7 @@ describe.skipIf(connectionString === undefined)(
           "20261006000100_project_agent_disable.sql",
           "20261006000200_project_workflow_override.sql",
           "20261006000300_project_definition_payload_object.sql",
+          "20261008000100_milestone_archived_status.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(
@@ -1698,6 +1700,7 @@ describe.skipIf(connectionString === undefined)(
 
         expect(await migratePostgres(database, migrationDirectory)).toEqual([
           payloadMigration,
+          "20261008000100_milestone_archived_status.sql",
         ]);
 
         const after = await storedRows(database);
@@ -1915,6 +1918,7 @@ describe.skipIf(connectionString === undefined)(
           );
           expect(await migratePostgres(database, migrationDirectory)).toEqual([
             payloadMigration,
+            "20261008000100_milestone_archived_status.sql",
           ]);
           expect(
             (await storedRows(database)).map((row) => [
@@ -2169,6 +2173,7 @@ describe.skipIf(connectionString === undefined)(
         ).toEqual(['{"id": "bad", "title": "Repaired"}']);
         expect(await migratePostgres(database, migrationDirectory)).toEqual([
           payloadMigration,
+          "20261008000100_milestone_archived_status.sql",
         ]);
         expect(await repository.get(project)).toMatchObject({
           revision: 2,

@@ -10,6 +10,15 @@ describe("governance lifecycles", () => {
       isGovernanceTransitionAllowed("milestone", "planned", "completed"),
     ).toBe(false);
     expect(
+      isGovernanceTransitionAllowed("milestone", "completed", "archived"),
+    ).toBe(true);
+    expect(
+      isGovernanceTransitionAllowed("milestone", "active", "archived"),
+    ).toBe(false);
+    expect(
+      isGovernanceTransitionAllowed("milestone", "archived", "active"),
+    ).toBe(false);
+    expect(
       isGovernanceTransitionAllowed("requirement", "implemented", "verified"),
     ).toBe(true);
     expect(isGovernanceTransitionAllowed("adr", "rejected", "accepted")).toBe(

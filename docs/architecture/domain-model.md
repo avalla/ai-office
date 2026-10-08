@@ -395,7 +395,7 @@ operator decides.
 
 ## Governance lifecycles
 
-- milestones: `planned -> active -> completed`, with cancellation from planned or active;
+- milestones: `planned -> active -> completed -> archived`, with cancellation from planned or active;
 - requirements: `proposed -> accepted -> implemented -> verified`, with rejection from proposed or accepted;
 - ADR records: `proposed -> accepted -> deprecated | superseded`, or proposed to rejected;
 - reviews: `pending -> approved | rejected`, finalized by an immutable governance decision.

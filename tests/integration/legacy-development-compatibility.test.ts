@@ -334,12 +334,25 @@ describe("GP-09 committed legacy fixtures", () => {
       "0044_project_role_omission.sql",
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
+      "0047_milestone_archived_status.sql",
     ]);
     const preExisting = Object.keys(before).filter(
       (name) => name !== "schema_migration",
     );
     expect(tableRows(database, preExisting)).toEqual(
-      Object.fromEntries(preExisting.map((name) => [name, before[name]])),
+      Object.fromEntries(
+        preExisting.map((name) => [
+          name,
+          name === "milestone"
+            ? before[name]!.map((row) =>
+                JSON.stringify({
+                  ...(JSON.parse(row) as Record<string, unknown>),
+                  archived_at: null,
+                }),
+              )
+            : before[name],
+        ]),
+      ),
     );
     // The upgrade selects no pack and creates no definition.
     const added = tableRows(database);
@@ -376,7 +389,21 @@ describe("GP-09 committed legacy fixtures", () => {
     const pinned = pin();
     expect(active.currentStage()!.stageId).toBe("design");
 
-    for (const agent of ["architect", "developer", "reviewer"])
+    const staleVersion = active.snapshot().version;
+    await completeActiveStage(
+      stores,
+      runId,
+      legacyActivePipelineTaskId,
+      "architect",
+    );
+    // The pre-pack run's optimistic fence still rejects a stale transition.
+    active.cancel("stale-operator", stores.clock.now());
+    expect(await stores.pipelines.save(active, staleVersion)).toBe(false);
+    expect(
+      (await stores.pipelineRuns.show(legacyProjectId, runId)).currentStage(),
+    ).toMatchObject({ stageId: "implement", status: "active" });
+
+    for (const agent of ["developer", "reviewer"])
       await completeActiveStage(
         stores,
         runId,

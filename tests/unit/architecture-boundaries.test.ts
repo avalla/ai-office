@@ -172,13 +172,14 @@ test("GP-09 legacy profile stays a derived read model outside scheduling, storag
       ).not.toMatch(/legacy_development|legacy_profile/u);
 });
 
-/** Every module specifier in a static import, re-export, or dynamic import. */
+/** Every module specifier in a static import, re-export, dynamic import, or require. */
 function importedSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
   const patterns = [
     /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s*["']([^"']+)["']/g,
     /(?:^|\n)\s*import\s*["']([^"']+)["']/g,
     /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
+    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
   ];
   for (const pattern of patterns) {
     let match = pattern.exec(source);
@@ -1343,5 +1344,180 @@ describe("GP-10A development pack stays a reference artifact outside production"
       "installedPacks });",
       "installedPacks = catalog;",
     ]);
+  });
+});
+
+describe("GP-20 official Domain Packs use only public core contracts", () => {
+  const packagesRoot = join(repositoryRoot, "packages");
+  const packDirectories = readdirSync(packagesRoot)
+    .filter(
+      (name) =>
+        name.startsWith("domain-pack-") && name !== "domain-pack-contracts",
+    )
+    .sort();
+
+  function filesUnder(directory: string): string[] {
+    return readdirSync(directory).flatMap((entry) => {
+      if (entry === "node_modules") return [];
+      const path = join(directory, entry);
+      return statSync(path).isDirectory() ? filesUnder(path) : [path];
+    });
+  }
+
+  function sourceFiles(directory: string): string[] {
+    return filesUnder(directory).filter((file) =>
+      /\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/u.test(file),
+    );
+  }
+
+  function forbiddenPackImports(
+    file: string,
+    source: string,
+    name: string,
+  ): string[] {
+    return importedSpecifiers(source).filter((specifier) => {
+      const target = resolvedTarget(file, specifier);
+      return target === null
+        ? specifier !== "@ai-office/domain-pack-contracts" &&
+            !specifier.startsWith("@ai-office/domain-pack-contracts/")
+        : !target.startsWith(`packages/${name}/`) &&
+            !target.startsWith("packages/domain-pack-contracts/");
+    });
+  }
+
+  function verticalLiteralPattern(vertical: string): RegExp | null {
+    // The existing development router is legacy behavior retained in M16.
+    if (vertical === "development") return null;
+    if (!/^[a-z0-9-]+$/u.test(vertical))
+      throw new Error(`Unsupported pack package name: ${vertical}`);
+    return new RegExp(`['"]${vertical}(?:[-./][a-z0-9_-]+)?['"]`, "u");
+  }
+
+  test("every official pack imports only itself or the contracts package", () => {
+    for (const name of [
+      "domain-pack-development",
+      "domain-pack-legal",
+      "domain-pack-manufacturing",
+    ])
+      expect(packDirectories).toContain(name);
+    const offenders: string[] = [];
+    for (const name of packDirectories) {
+      const packRoot = join(packagesRoot, name);
+      const packageManifest = JSON.parse(
+        readFileSync(join(packRoot, "package.json"), "utf8"),
+      ) as Record<string, unknown>;
+      for (const field of [
+        "dependencies",
+        "devDependencies",
+        "peerDependencies",
+      ]) {
+        const dependencies = packageManifest[field];
+        if (dependencies === undefined) continue;
+        if (
+          typeof dependencies !== "object" ||
+          dependencies === null ||
+          Array.isArray(dependencies)
+        ) {
+          offenders.push(`${name} has invalid ${field}`);
+          continue;
+        }
+        for (const dependency of Object.keys(dependencies))
+          if (dependency !== "@ai-office/domain-pack-contracts")
+            offenders.push(`${name} -> ${dependency}`);
+      }
+      for (const file of sourceFiles(packRoot)) {
+        for (const specifier of forbiddenPackImports(
+          file,
+          readFileSync(file, "utf8"),
+          name,
+        ))
+          offenders.push(`${relative(repositoryRoot, file)} -> ${specifier}`);
+      }
+      const manifest = JSON.parse(
+        readFileSync(join(packRoot, "manifest.json"), "utf8"),
+      ) as { id: string };
+      const vertical = name.slice("domain-pack-".length);
+      const verticalLiteral = verticalLiteralPattern(vertical);
+      for (const layer of ["domain", "application", "runtime-host"]) {
+        const packageSource = readFileSync(
+          join(packagesRoot, layer, "package.json"),
+          "utf8",
+        );
+        if (packageSource.includes(`@ai-office/${name}`))
+          offenders.push(`packages/${layer}/package.json -> ${name}`);
+      }
+      for (const file of [
+        ...sourceFiles(join(packagesRoot, "domain")),
+        ...sourceFiles(join(packagesRoot, "application")),
+        ...sourceFiles(join(packagesRoot, "runtime-host")),
+      ]) {
+        const source = readFileSync(file, "utf8");
+        if (source.includes(manifest.id) || source.includes(name))
+          offenders.push(`${relative(repositoryRoot, file)} names ${name}`);
+        if (verticalLiteral !== null && verticalLiteral.test(source))
+          offenders.push(`${relative(repositoryRoot, file)} names ${vertical}`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("the rule detects relative, aliased and built-in imports from a pack", () => {
+    const file = join(packagesRoot, "domain-pack-legal/src/index.ts");
+    expect(
+      forbiddenPackImports(
+        file,
+        [
+          'import { x } from "@ai-office/domain-pack-contracts";',
+          'import { x } from "../../domain-pack-contracts/src/index.ts";',
+          'import { x } from "./local.ts";',
+          'import { x } from "../../application/src/domain-pack/project-definition.ts";',
+          'import { x } from "@ai-office/domain/project/project.ts";',
+          'import { x } from "node:fs";',
+        ].join("\n"),
+        "domain-pack-legal",
+      ),
+    ).toEqual([
+      "../../application/src/domain-pack/project-definition.ts",
+      "@ai-office/domain/project/project.ts",
+      "node:fs",
+    ]);
+  });
+
+  test("the purity scan catches forbidden CommonJS requires in .cjs and .cts files", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ai-office-gp20-commonjs-"));
+    try {
+      const cjsFile = join(directory, "probe.cjs");
+      const ctsFile = join(directory, "probe.cts");
+      writeFileSync(cjsFile, 'const fs = require("node:fs");\n');
+      writeFileSync(
+        ctsFile,
+        'const app = require("@ai-office/application/domain-pack");\n',
+      );
+      const offenders = sourceFiles(directory)
+        .flatMap((file) =>
+          forbiddenPackImports(
+            file,
+            readFileSync(file, "utf8"),
+            "domain-pack-legal",
+          ).map((specifier) => `${file} -> ${specifier}`),
+        )
+        .sort();
+      expect(offenders).toEqual([
+        `${cjsFile} -> node:fs`,
+        `${ctsFile} -> @ai-office/application/domain-pack`,
+      ]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("the core scan recognizes bare vertical and qualified-name branches", () => {
+    const pattern = verticalLiteralPattern("legal")!;
+    expect(pattern.test('if (domain === "legal") return true;')).toBe(true);
+    expect(pattern.test('case "legal-reviewer": return true;')).toBe(true);
+    expect(pattern.test('if (domain === "development") return true;')).toBe(
+      false,
+    );
+    expect(verticalLiteralPattern("development")).toBeNull();
   });
 });
