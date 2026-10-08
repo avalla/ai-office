@@ -76,6 +76,57 @@ export interface VisibleGraph {
   hiddenTaskCount: number;
 }
 
+export const neighborhoodModes = [
+  "direct",
+  "one_hop",
+  "two_hops",
+  "full_lineage",
+] as const;
+export type NeighborhoodMode = (typeof neighborhoodModes)[number];
+
+export interface GraphNeighborhood {
+  taskIds: ReadonlySet<string>;
+  /** Direct relations draw only edges incident to the selected task. */
+  edgeKeys?: ReadonlySet<string>;
+}
+
+/** Compute scope from the complete dependency graph, independent of filters. */
+export function graphNeighborhood(
+  edges: readonly TaskGraphEdge[],
+  taskId: string,
+  mode: NeighborhoodMode,
+): GraphNeighborhood {
+  if (mode === "full_lineage") {
+    const { upstream, downstream } = lineage(edges, taskId);
+    return { taskIds: new Set([taskId, ...upstream, ...downstream]) };
+  }
+  const index = buildLineageIndex(edges);
+  const incidentEdges = new Set<string>();
+  for (const edge of edges) {
+    const { taskId: dependent, dependsOnTaskId: prerequisite } = edge;
+    if (dependent === taskId || prerequisite === taskId)
+      incidentEdges.add(`${prerequisite}>${dependent}`);
+  }
+  const taskIds = new Set([taskId]);
+  const depth = mode === "two_hops" ? 2 : 1;
+  const walk = (adjacent: ReadonlyMap<string, readonly string[]>) => {
+    let frontier = [taskId];
+    for (let hop = 0; hop < depth; hop += 1) {
+      const next: string[] = [];
+      for (const id of frontier)
+        for (const neighbor of adjacent.get(id) ?? []) {
+          if (taskIds.has(neighbor)) continue;
+          taskIds.add(neighbor);
+          next.push(neighbor);
+        }
+      frontier = next;
+    }
+  };
+  walk(index.prerequisites);
+  walk(index.dependents);
+  return mode === "direct" ? { taskIds, edgeKeys: incidentEdges } : { taskIds };
+}
+
 export function filterGraph(
   graph: TaskGraph,
   filters: GraphFilters,
@@ -84,9 +135,11 @@ export function filterGraph(
     keep?: ReadonlySet<string>;
     /** When set, exactly these tasks are shown and the filters are ignored. */
     only?: ReadonlySet<string>;
+    /** When set, only these dependency edges are drawn within the scope. */
+    onlyEdges?: ReadonlySet<string>;
   } = {},
 ): VisibleGraph {
-  const { keep = new Set<string>(), only } = scope;
+  const { keep = new Set<string>(), only, onlyEdges } = scope;
   const search = filters.search.trim().toLowerCase();
   const matchingTasks = graph.tasks.filter((task) => {
     if (only !== undefined) return only.has(task.taskId);
@@ -137,7 +190,11 @@ export function filterGraph(
   return {
     tasks,
     edges: graph.edges.filter(
-      (edge) => ids.has(edge.taskId) && ids.has(edge.dependsOnTaskId),
+      (edge) =>
+        ids.has(edge.taskId) &&
+        ids.has(edge.dependsOnTaskId) &&
+        (onlyEdges === undefined ||
+          onlyEdges.has(`${edge.dependsOnTaskId}>${edge.taskId}`)),
     ),
     hiddenTaskCount: graph.tasks.length - tasks.length,
   };

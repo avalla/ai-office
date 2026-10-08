@@ -17,6 +17,7 @@ import {
   searchTasks,
   defaultGraphFilters,
   filterGraph,
+  graphNeighborhood,
   layoutGraph,
   lineage,
   taskKey,
@@ -417,6 +418,55 @@ describe("dashboard task graph", () => {
     const visible = filterGraph(graph, defaultGraphFilters, { only: related });
     expect(ids(visible.tasks)).toEqual(["done", "a", "b", "d"]);
     expect(visible.edges).toHaveLength(3);
+  });
+
+  test("neighborhood depths include upstream and downstream branches", () => {
+    const scoped = (
+      mode: "direct" | "one_hop" | "two_hops" | "full_lineage",
+    ) => {
+      const neighborhood = graphNeighborhood(graph.edges, "b", mode);
+      return filterGraph(graph, defaultGraphFilters, {
+        only: neighborhood.taskIds,
+        ...(neighborhood.edgeKeys === undefined
+          ? {}
+          : { onlyEdges: neighborhood.edgeKeys }),
+      });
+    };
+    expect(ids(scoped("direct").tasks)).toEqual(["a", "b", "d"]);
+    expect(ids(scoped("one_hop").tasks)).toEqual(["a", "b", "d"]);
+    expect(ids(scoped("two_hops").tasks)).toEqual(["done", "a", "b", "d"]);
+    expect(ids(scoped("full_lineage").tasks)).toEqual(["done", "a", "b", "d"]);
+    expect(scoped("full_lineage").edges).toHaveLength(3);
+    expect(graphNeighborhood(graph.edges, "lone", "two_hops").taskIds).toEqual(
+      new Set(["lone"]),
+    );
+    expect(graphNeighborhood(graph.edges, "a", "two_hops").taskIds).toEqual(
+      new Set(["a", "done", "b", "c", "d"]),
+    );
+  });
+
+  test("direct draws incident edges while one hop includes neighbor edges", () => {
+    const triangle: TaskGraph = {
+      ...graph,
+      tasks: [node("focus"), node("before"), node("after")],
+      edges: [
+        { taskId: "focus", dependsOnTaskId: "before" },
+        { taskId: "after", dependsOnTaskId: "focus" },
+        { taskId: "after", dependsOnTaskId: "before" },
+      ],
+    };
+    const scoped = (mode: "direct" | "one_hop") => {
+      const neighborhood = graphNeighborhood(triangle.edges, "focus", mode);
+      return filterGraph(triangle, defaultGraphFilters, {
+        only: neighborhood.taskIds,
+        ...(neighborhood.edgeKeys === undefined
+          ? {}
+          : { onlyEdges: neighborhood.edgeKeys }),
+      });
+    };
+    expect(ids(scoped("direct").tasks)).toEqual(["focus", "before", "after"]);
+    expect(scoped("direct").edges).toEqual(triangle.edges.slice(0, 2));
+    expect(scoped("one_hop").edges).toEqual(triangle.edges);
   });
 
   test("lays prerequisites before their dependents in both directions", () => {

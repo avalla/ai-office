@@ -261,8 +261,12 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   a selection, the task description and explicitly linked requirement titles,
   statuses and descriptions, followed by its blockers (only while it is waiting),
   what completing it unblocks, its other dependents, completed prerequisites (also
-  when those tasks are hidden from the canvas), milestones, and an "Only this
-  lineage" option that exists only while something is selected.
+  when those tasks are hidden from the canvas), milestones, and a neighborhood
+  selector that exists only while something is selected. Direct relations shows
+  incident dependencies; 1 hop keeps the same tasks and also draws dependencies
+  among them; 2 hops extends up to two levels along prerequisite and dependent
+  paths; Full lineage shows every ancestor and descendant. The selected task
+  stays visible in every mode, including when it is isolated.
 
 Searching locates: results are listed from the whole project, Enter or a click
 selects the task, frames it and dims the rest of the graph. "Show only tasks
