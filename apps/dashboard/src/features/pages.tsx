@@ -48,6 +48,7 @@ import { taskFilterQuery, type TaskFilterValues } from "../lib/task-filters.ts";
 import {
   milestoneStatusTone,
   requirementStatusTone,
+  taskOperationalFilterLabel,
   taskStatusLabel,
   taskStatusTone,
 } from "../ui/view-model.ts";
@@ -875,7 +876,7 @@ function TaskFilters({ project }: { project: ProjectDetail }) {
           ["active", "Active tasks"],
           ["all", "All statuses"],
           ...options.statuses.map(
-            (s) => [s, taskStatusLabel(s)] as [string, string],
+            (s) => [s, taskOperationalFilterLabel(s)] as [string, string],
           ),
         ])}
         {select("Priority", "priority", [

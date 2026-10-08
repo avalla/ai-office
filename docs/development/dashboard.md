@@ -216,7 +216,9 @@ only presents it:
   its dependents unmet.
 - `terminal`: the recorded status is terminal (`isTerminalTaskStatus`); not the
   same as an operational `failed`, which a runnable task can show after a failed
-  run.
+  run. The task list's `active` filter, project open-task counts, and graph
+  terminal flag use this same recorded-task rule. An operational `failed` filter
+  still finds both a failed task and an open task with a failed latest run.
 - `waiting`: not terminal and at least one prerequisite is unmet;
   `unmetPrerequisiteIds` lists them.
 - `needsAttention`: the task carries an authoritative attention reason
@@ -254,6 +256,16 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   a prerequisite to the task that needs it. Dashed amber edges are unmet
   prerequisites, completed ones recede, the longest chain is thick red, and a
   selected task's lineage is thick blue;
+- graph nodes reduce visible detail as the user zooms out: full task detail at
+  high zoom, title/status/ready or blocker state at medium zoom, and a compact
+  title/state card with a state stripe at low zoom. Node dimensions and the
+  layout stay fixed, and each tier retains the complete accessible name and
+  selection state;
+- a small cue counts direct completed prerequisites hidden from the current
+  view. It sits below the node in left-to-right layout and above its right side
+  in top-to-bottom layout, clear of centered dependency edges; dimmed nodes
+  dim the cue too. At compact zoom it shows just the count; the accessible name
+  keeps the full context at every zoom level;
 - view controls beside the canvas (Fit graph, layout, longest chain overlay,
   minimap), distinct from the data filters;
 - a side panel: with no selection, a "what happens next" list (ready tasks by
@@ -261,8 +273,12 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   a selection, the task description and explicitly linked requirement titles,
   statuses and descriptions, followed by its blockers (only while it is waiting),
   what completing it unblocks, its other dependents, completed prerequisites (also
-  when those tasks are hidden from the canvas), milestones, and an "Only this
-  lineage" option that exists only while something is selected.
+  when those tasks are hidden from the canvas), milestones, and a neighborhood
+  selector that exists only while something is selected. Direct relations shows
+  incident dependencies; 1 hop keeps the same tasks and also draws dependencies
+  among them; 2 hops extends up to two levels along prerequisite and dependent
+  paths; Full lineage shows every ancestor and descendant. The selected task
+  stays visible in every mode, including when it is isolated.
 
 Searching locates: results are listed from the whole project, Enter or a click
 selects the task, frames it and dims the rest of the graph. "Show only tasks
@@ -308,11 +324,11 @@ references, with a control to reveal the rest in batches of eight.
 ### Task search, filters, and pages
 
 The project task table searches title, description, and task ID with literal,
-case-insensitive matching. The default `active` view omits operational
-`failed`, `completed`, and `cancelled` tasks. The Status filter also offers
-`all` and each exact operational status, so terminal tasks remain available
-without occupying the default work queue. Status means the application's
-operational status;
+case-insensitive matching. The default `active` view includes every task whose
+recorded lifecycle is not terminal, even if its latest run makes its operational
+status `failed`. The Status filter also offers `all` and each exact operational
+status, so terminal tasks remain available without occupying the default work
+queue. Exact status filters use the application's operational status;
 priority is the persisted integer, including zero and negative values. Agent
 matches any active run or current assignment in an active pipeline, and
 "No current agent" matches neither. Historical run agents are excluded.
