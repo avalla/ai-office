@@ -268,12 +268,14 @@ export function lineage(
 export function relationshipEdgeKind(
   edge: TaskGraphEdge,
   selectedTaskId: string,
-  relatedTaskIds: ReadonlySet<string>,
+  lineage: Lineage,
 ): "direct" | "transitive" | null {
   if (edge.taskId === selectedTaskId || edge.dependsOnTaskId === selectedTaskId)
     return "direct";
-  return relatedTaskIds.has(edge.taskId) &&
-    relatedTaskIds.has(edge.dependsOnTaskId)
+  return (lineage.upstream.has(edge.taskId) &&
+    lineage.upstream.has(edge.dependsOnTaskId)) ||
+    (lineage.downstream.has(edge.taskId) &&
+      lineage.downstream.has(edge.dependsOnTaskId))
     ? "transitive"
     : null;
 }

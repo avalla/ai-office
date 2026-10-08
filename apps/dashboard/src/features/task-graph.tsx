@@ -445,9 +445,9 @@ function TaskGraphCanvas({
     return visible.edges.map((edge) => {
       const unmet = unmetPairs.has(`${edge.dependsOnTaskId}>${edge.taskId}`);
       const relationship =
-        selectedTask === null || related === null
+        selectedTask === null || selectedLineage === null
           ? null
-          : relationshipEdgeKind(edge, selectedTask.taskId, related);
+          : relationshipEdgeKind(edge, selectedTask.taskId, selectedLineage);
       const onChain = chainEdges.has(`${edge.dependsOnTaskId}>${edge.taskId}`);
       const stroke =
         relationship !== null
@@ -488,7 +488,15 @@ function TaskGraphCanvas({
         },
       };
     });
-  }, [chainEdges, selectedTask, related, tooLarge, unmetPairs, visible.edges]);
+  }, [
+    chainEdges,
+    selectedTask,
+    selectedLineage,
+    related,
+    tooLarge,
+    unmetPairs,
+    visible.edges,
+  ]);
 
   // Isolation belongs to one selection: choosing another item, or clearing,
   // ends it.

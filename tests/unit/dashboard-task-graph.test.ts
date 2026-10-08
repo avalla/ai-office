@@ -107,33 +107,40 @@ describe("dashboard task graph", () => {
   test("classifies direct links and transitive lineage from existing edges", () => {
     const selected = "b";
     const tree = lineage(graph.edges, selected);
-    const related = new Set([selected, ...tree.upstream, ...tree.downstream]);
     expect(
       relationshipEdgeKind(
         { taskId: "b", dependsOnTaskId: "a" },
         selected,
-        related,
+        tree,
       ),
     ).toBe("direct");
     expect(
       relationshipEdgeKind(
         { taskId: "d", dependsOnTaskId: "b" },
         selected,
-        related,
+        tree,
       ),
     ).toBe("direct");
     expect(
       relationshipEdgeKind(
         { taskId: "a", dependsOnTaskId: "done" },
         selected,
-        related,
+        tree,
       ),
     ).toBe("transitive");
     expect(
       relationshipEdgeKind(
         { taskId: "d", dependsOnTaskId: "c" },
         selected,
-        related,
+        tree,
+      ),
+    ).toBeNull();
+    // This edge reaches a downstream task without passing through b.
+    expect(
+      relationshipEdgeKind(
+        { taskId: "d", dependsOnTaskId: "a" },
+        selected,
+        tree,
       ),
     ).toBeNull();
   });
