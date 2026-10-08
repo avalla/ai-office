@@ -217,9 +217,9 @@ it("re-authenticates with the stored credentials when the token expires", async 
       const connection = fake.connections[0]!;
       expect(connection.issuedTokens).toHaveLength(1);
       // The SDK schedules renewal at the token's ~2s expiry (#handleAuthChanged);
-      // #applyAuthentication then finds authenticate() rejected by the server
-      // and no refresh token, so it replays the connect-time provider — a
-      // fresh sign-in with the same credentials on the same connection.
+      // with the token already expired and no refresh token issued, #applyAuthentication
+      // replays the connect-time provider directly — a fresh sign-in with the
+      // same credentials on the same connection.
       await waitFor(
         () => signinsOn(connection).length >= 2,
         15_000,
