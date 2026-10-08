@@ -1400,6 +1400,53 @@ describe.skipIf(connectionString === undefined)(
           ).toEqual([]);
         }
 
+        // Claiming a queued run is admission: it waits for the exit and then
+        // sees the prerequisite is no longer usable.
+        await reviewPair("claim");
+        await database.query(
+          `INSERT INTO core.agent_run(id,project_id,task_id,agent_id,status,created_at,updated_at)
+          VALUES ('claim-run','history-project','claim-dependent','history-agent','queued',$1,$1)`,
+          [at],
+        );
+        let claimExited!: () => void;
+        const claimExitUpdated = new Promise<void>((resolve) => {
+          claimExited = resolve;
+        });
+        let releaseClaimExit!: () => void;
+        const holdClaimExit = new Promise<void>((resolve) => {
+          releaseClaimExit = resolve;
+        });
+        const claimExitWrite = first.transaction(async () => {
+          await first.query(
+            "UPDATE core.task SET status='failed' WHERE id='claim-prerequisite'",
+          );
+          claimExited();
+          await holdClaimExit;
+        });
+        await claimExitUpdated;
+        let claimSettled = false;
+        const claim = second
+          .query(
+            "UPDATE core.agent_run SET status='preparing' WHERE id='claim-run'",
+          )
+          .then(
+            () => "claimed",
+            (error: Error) => error.message,
+          )
+          .finally(() => {
+            claimSettled = true;
+          });
+        await sleep(150);
+        expect(claimSettled).toBe(false);
+        releaseClaimExit();
+        await claimExitWrite;
+        expect(await claim).toContain("incomplete prerequisites");
+        expect(
+          await database.query<{ status: string }>(
+            "SELECT status FROM core.agent_run WHERE id='claim-run'",
+          ),
+        ).toEqual([{ status: "queued" }]);
+
         // The other order is serial too: admission commits first, then the
         // exit proceeds, and neither write is lost.
         await reviewPair("admit-first");

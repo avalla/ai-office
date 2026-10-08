@@ -88,3 +88,12 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+-- Claiming a queued run is admission too. It takes the same project lock and
+-- re-reads prerequisite statuses, so a claim cannot commit on a stale
+-- waiting_review snapshot while the prerequisite is leaving review.
+CREATE TRIGGER task_execution_history_agent_run_claim
+AFTER UPDATE OF status ON core.agent_run
+FOR EACH ROW
+WHEN (OLD.status = 'queued' AND NEW.status IN ('preparing', 'running', 'reviewing'))
+EXECUTE FUNCTION core.mark_task_execution_history();

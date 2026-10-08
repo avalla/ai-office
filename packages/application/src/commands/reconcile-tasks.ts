@@ -385,9 +385,11 @@ export class ReconcileTasks {
           // When the lifecycle cannot reach the pipeline's outcome, the honest
           // next step is the explicit operator correction, not a transition the
           // task would reject.
-          suggestedCommand: reachable
-            ? taskLifecycleOperations[operation].command
-            : correctionCommandFor(task.status, target),
+          suggestedCommand: prerequisitesOpen
+            ? null
+            : reachable
+              ? taskLifecycleOperations[operation].command
+              : correctionCommandFor(task.status, target),
           repairOperation: repairable ? operation : null,
           repairable,
           refusalReason: ambiguous

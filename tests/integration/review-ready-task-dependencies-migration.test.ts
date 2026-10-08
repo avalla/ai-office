@@ -223,3 +223,62 @@ test("a historical completion record is outside the completion guard", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("claiming a queued run rechecks prerequisites that left review", () => {
+  const root = mkdtempSync(join(tmpdir(), "ai-office-claim-guard-"));
+  const database = openDatabase(join(root, "project.sqlite"));
+  const at = "2026-10-08T00:00:00.000Z";
+  try {
+    migrate(database, join(process.cwd(), "migrations", "project"));
+    database
+      .prepare(
+        "INSERT INTO project(id,name,created_at,updated_at) VALUES ('p','Project',?,?)",
+      )
+      .run(at, at);
+    for (const id of ["review", "dependent"])
+      database
+        .prepare(
+          "INSERT INTO task(id,project_id,title,status,priority,created_at,updated_at) VALUES (?,'p',?,'pending',0,?,?)",
+        )
+        .run(id, id, at, at);
+    database
+      .prepare(
+        "INSERT INTO task_dependency(project_id,task_id,depends_on_task_id,created_at) VALUES ('p','dependent','review',?)",
+      )
+      .run(at);
+    for (const status of ["running", "waiting_review"])
+      database
+        .prepare("UPDATE task SET status=? WHERE id='review'")
+        .run(status);
+    database
+      .prepare(
+        `INSERT INTO role(id,project_id,role_key,name,version,capabilities_json,
+         tools_json,model_policy,limits_json,source_path,created_at,updated_at)
+         VALUES ('role','p','role','Role',1,'[]','[]','default','{}','fixture',?,?)`,
+      )
+      .run(at, at);
+    database
+      .prepare(
+        `INSERT INTO agent(id,project_id,role_id,name,enabled,created_at,updated_at)
+         VALUES ('agent','p','role','Agent',1,?,?)`,
+      )
+      .run(at, at);
+    database
+      .prepare(
+        `INSERT INTO agent_run(id,project_id,task_id,agent_id,status,created_at,updated_at)
+         VALUES ('run','p','dependent','agent','queued',?,?)`,
+      )
+      .run(at, at);
+    database
+      .prepare("UPDATE task SET status='failed' WHERE id='review'")
+      .run();
+    expect(() =>
+      database
+        .prepare("UPDATE agent_run SET status='preparing' WHERE id='run'")
+        .run(),
+    ).toThrow("incomplete prerequisites");
+  } finally {
+    database.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

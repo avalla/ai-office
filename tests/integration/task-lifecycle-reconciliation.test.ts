@@ -1370,6 +1370,7 @@ describe("task reconciliation", () => {
     expect(issue).toMatchObject({
       repairable: false,
       repairOperation: null,
+      suggestedCommand: null,
       refusalReason: "completion requires every prerequisite to be completed",
     });
   });
