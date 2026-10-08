@@ -1639,7 +1639,7 @@ export function TaskPanel({
         task.unmetPrerequisiteIds.length > 0 && (
           // A finished task is not waiting, but the record stays honest.
           <PagedTaskList
-            title="Prerequisites never completed or reviewed"
+            title="Prerequisites neither completed nor in review"
             empty=""
             ids={task.unmetPrerequisiteIds}
             tasksById={tasksById}

@@ -227,7 +227,7 @@ only presents it:
   `waiting_review` or `completed` (it is their only unmet prerequisite and their
   status allows work);
   empty for a terminal task (a completed task is nobody's unmet prerequisite
-  any more; a failed or cancelled one can never complete).
+  any more; a failed or cancelled one can never reach review or completion).
 - `summary`: counts of `ready`, `waiting`, operationally `blocked`,
   `inProgress` and `needsAttention`, derived from the same nodes (a task counts
   in every bucket that applies).

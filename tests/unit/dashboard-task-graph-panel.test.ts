@@ -164,6 +164,9 @@ test("graph node tiers preserve accessible identity, selection, and fixed footpr
 
   expect(name).toContain("Selected task with a complete name");
   expect(name).toContain("2 blockers");
+  expect(full).toContain(
+    "2 blockers: prerequisites neither completed nor in review",
+  );
   expect(name).toContain("Current milestone");
   expect(name).toContain("2 completed prerequisites hidden from graph");
   for (const html of [full, medium, compact]) {
