@@ -17,6 +17,7 @@ import {
   searchTasks,
   defaultGraphFilters,
   filterGraph,
+  graphNodeDetail,
   layoutGraph,
   lineage,
   taskKey,
@@ -104,6 +105,15 @@ const ids = (tasks: readonly TaskGraphNode[]) => tasks.map((t) => t.taskId);
 const all = { ...defaultGraphFilters, hideCompleted: false };
 
 describe("dashboard task graph", () => {
+  test("changes presentation only at the two zoom thresholds", () => {
+    expect(graphNodeDetail(0.05)).toBe("compact");
+    expect(graphNodeDetail(0.399)).toBe("compact");
+    expect(graphNodeDetail(0.4)).toBe("medium");
+    expect(graphNodeDetail(0.849)).toBe("medium");
+    expect(graphNodeDetail(0.85)).toBe("full");
+    expect(graphNodeDetail(1.75)).toBe("full");
+  });
+
   test("hides completed work by default but keeps counts exact", () => {
     const visible = filterGraph(graph, defaultGraphFilters);
     expect(ids(visible.tasks)).toEqual(["a", "b", "c", "d", "lone"]);

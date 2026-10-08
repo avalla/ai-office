@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type {
@@ -6,6 +7,7 @@ import type {
   TaskGraphNode,
 } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
+  GraphTaskNodeButton,
   GraphTaskDetailSections,
   OverviewTaskLists,
   TaskGraphView,
@@ -128,6 +130,124 @@ describe("graph overview task lists", () => {
     expect(laterPage).not.toContain("Title r0");
     expect(laterPage).not.toContain("Title a0");
   });
+});
+
+test("graph node tiers preserve accessible identity, selection, and fixed footprint", () => {
+  const task = {
+    ...node("selected"),
+    title: "Selected task with a complete name",
+    priority: 3,
+    ready: false,
+    waiting: true,
+    unmetPrerequisiteIds: ["first", "second"],
+  };
+  const data = {
+    task,
+    milestone: { title: "Current milestone", more: 0 },
+    dimmed: false,
+    selected: true,
+    onChain: false,
+    direction: "LR" as const,
+    onSelect: () => {},
+  };
+  const render = (detail: "full" | "medium" | "compact") =>
+    renderToStaticMarkup(createElement(GraphTaskNodeButton, { data, detail }));
+  const full = render("full");
+  const medium = render("medium");
+  const compact = render("compact");
+  const name = full.match(/aria-label="([^"]+)"/)?.[1];
+
+  expect(name).toContain("Selected task with a complete name");
+  expect(name).toContain("2 blockers");
+  expect(name).toContain("Current milestone");
+  for (const html of [full, medium, compact]) {
+    expect(html).toContain(`aria-label="${name}"`);
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain("ring-2 ring-primary");
+    expect(html).toContain('style="width:264px;height:96px');
+  }
+  // Remove the full accessible name to inspect only the visible tier content.
+  const visible = (html: string) => html.replace(/aria-label="[^"]+"/, "");
+  expect(visible(full)).toContain("Current milestone");
+  expect(visible(full)).toContain("P3");
+  expect(visible(medium)).toContain("2 blockers");
+  expect(visible(medium)).not.toContain("Current milestone");
+  expect(visible(medium)).not.toContain("P3");
+  expect(visible(compact)).toContain("2 blockers");
+  expect(visible(compact)).toContain("border-left-color:#f59e0b");
+  expect(visible(compact)).not.toContain("Current milestone");
+});
+
+test("compact graph nodes distinguish ready from waiting with text and a stripe", () => {
+  const base = {
+    milestone: null,
+    dimmed: false,
+    selected: false,
+    onChain: false,
+    direction: "LR" as const,
+    onSelect: () => {},
+  };
+  const render = (task: TaskGraphNode) =>
+    renderToStaticMarkup(
+      createElement(GraphTaskNodeButton, {
+        data: { ...base, task },
+        detail: "compact",
+      }),
+    );
+  const ready = render(node("ready"));
+  const waiting = render({
+    ...node("waiting"),
+    ready: false,
+    waiting: true,
+    unmetPrerequisiteIds: ["prerequisite"],
+  });
+  const failedRun = render({
+    ...node("retry"),
+    operationalStatus: "failed",
+    needsAttention: true,
+  });
+  const failedTask = render({
+    ...node("failed"),
+    recordedStatus: "failed",
+    operationalStatus: "failed",
+    terminal: true,
+    ready: false,
+  });
+  const failedWaiting = render({
+    ...node("retry-later"),
+    operationalStatus: "failed",
+    ready: false,
+    waiting: true,
+    unmetPrerequisiteIds: ["prerequisite"],
+  });
+
+  expect(ready).toContain("Ready</span>");
+  expect(ready).toContain("border-left-color:#10b981");
+  expect(waiting).toContain("1 blocker</span>");
+  expect(waiting).toContain("border-left-color:#f59e0b");
+  expect(failedRun).toContain("Failed run</span>");
+  expect(failedRun).toContain("Ready</span>");
+  expect(failedRun).toContain("border-left-color:#f59e0b");
+  expect(failedRun).toContain("Ready to start");
+  expect(failedTask).toContain("Failed task</span>");
+  expect(failedTask).toContain("border-left-color:#f59e0b");
+  expect(failedWaiting).toContain("Failed run</span>");
+  expect(failedWaiting).toContain("1 blocker</span>");
+});
+
+test("shipped dashboard CSS includes the compact node utilities", () => {
+  const styles = readFileSync(
+    new URL("../../apps/dashboard/src/assets/styles.css", import.meta.url),
+    "utf8",
+  );
+  for (const selector of [
+    ".border-l-\\[12px\\]{",
+    ".text-xl{",
+    ".text-2xl{",
+    ".gap-1{",
+  ]) {
+    expect(styles).toContain(selector);
+  }
 });
 
 test("selected task panel shows task text and linked requirement details in bounded pages", () => {
