@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "skill": "task-delivery",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "files": {
-    "SKILL.md": "d870375d8434b895b3fc6864b044608dca6ac9695d77542efb81a352edab4fb7",
+    "SKILL.md": "40f27e5d9282b4554962555a5b97ced46c1f45d185cbf82c3e51dedb66781542",
     "assets/pr-template.md": "042cd175402f40447a0f37ca548d9fec08e76f1428e9b9d75262f79613c7c1b7",
     "assets/task-delivery.example.yaml": "f0e3b918d03ad5b88cd11bc51f7c08320a583a40d8c29fb19e42069ce31a09a8",
     "references/branch-policy.md": "4895c817626479072d89c4b8237ee612a9913ca8bb65b8dee3a7604852db7a44",
     "references/configuration.md": "760d4262de2802a1421dafc25c2bcabf0986189923b434572a03b1bcde8f4bd4",
     "references/evidence.md": "1ba1dad8fbc23e10763e81a23904823315505e831873b5bb71c1b4e70d7cf385",
-    "references/handoff.md": "4bde5fed72969750497ae84ff6f09466b6fac67ed30da981f81b158815b078ee",
+    "references/handoff.md": "9c5f7a99e2fdaa262e21105afb90808807b94dc15a12a7dc7f62451c610ec1d1",
     "references/lifecycle.md": "da172d43ac94ab82fa929ac1ad69adc01a62e29768e0da7b16e892ac831c94b7",
     "references/qa-checklist.md": "e9a9419ec6f8a90dd927ee86593b1d56d059b82844d0365450b7f7375ccd07e5",
     "references/review-checklist.md": "216d0dd0175e2acb43aa9600a7c3f8e8792dcf29cf940b50bc3c6de834500862",
