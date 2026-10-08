@@ -705,6 +705,8 @@ export function defineGovernanceRepositoryContracts(
     await harness.governance.saveRequirement(orphan);
     const at = date("2026-01-02T00:00:00.000Z");
 
+    // bun:sqlite is synchronous, so on SQLite the calls run one after the
+    // other and this proves the fence; PostgreSQL interleaves them for real.
     const results = await Promise.all(
       milestones.map((value, index) =>
         harness.governance.assignRequirementMilestone(
@@ -764,10 +766,25 @@ export function defineGovernanceRepositoryContracts(
           milestoneId: milestone.id,
         }),
       ).rejects.toBeInstanceOf(DomainValidationError);
+      // A status change that wins the race still meets the storage fence.
+      expect(
+        await harness.governance.assignRequirementMilestone(
+          orphan.id,
+          project.id,
+          milestone.id,
+          at,
+          { id: `${prefix}-forced-${status}`, metadata: {} },
+        ),
+      ).toBe(false);
       expect(
         (await harness.governance.getSnapshot(project.id)).requirements[0]
           ?.milestoneId,
       ).toBeUndefined();
+      expect(
+        (await harness.governance.listEvents(project.id)).filter(
+          (event) => event.eventType === "requirement.updated",
+        ),
+      ).toEqual([]);
     },
   );
 

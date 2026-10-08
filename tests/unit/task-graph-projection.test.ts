@@ -32,6 +32,10 @@ const node = (
   completionUnblocks: [],
   terminal: isTerminalTaskStatus(recordedStatus),
 });
+const noLinks = {
+  requirementLinkedTaskIds: new Set<string>(),
+  milestoneLinkedTaskIds: new Set<string>(),
+};
 const edge = (dependsOnTaskId: string, taskId: string): TaskGraphEdge => ({
   taskId,
   dependsOnTaskId,
@@ -123,9 +127,18 @@ describe("projectTaskGraphNodes milestone gap", () => {
   test("separates a missing requirement from a requirement without a milestone", () => {
     const gaps = Object.fromEntries(
       projectTaskGraphNodes(
-        [state("a", ["m1"]), state("b"), state("c"), state("d", ["m1"])],
+        [
+          state("a", ["m1"]),
+          state("b"),
+          state("c"),
+          state("d", ["m1"]),
+          state("e"),
+        ],
         [],
-        new Set(["c", "d"]),
+        {
+          requirementLinkedTaskIds: new Set(["c", "d", "e"]),
+          milestoneLinkedTaskIds: new Set(["e"]),
+        },
       ).map((node) => [node.taskId, node.milestoneGap]),
     );
     expect(gaps).toEqual({
@@ -133,6 +146,8 @@ describe("projectTaskGraphNodes milestone gap", () => {
       b: "no_requirement",
       c: "requirement_without_milestone",
       d: null,
+      // Its milestone link exists but could not be resolved: still not "none".
+      e: null,
     });
   });
 });
@@ -158,7 +173,7 @@ describe("projectTaskGraphNodes prerequisite semantics", () => {
       projectTaskGraphNodes(
         [state("pre", prerequisite), state("dep", "pending")],
         [edge("pre", "dep")],
-        new Set(),
+        noLinks,
       ).map((n) => [n.taskId, n]),
     );
 
@@ -223,7 +238,7 @@ describe("projectTaskGraphNodes prerequisite semantics", () => {
           state("dep", "pending"),
         ],
         [edge("rev", "dep"), edge("pend", "dep")],
-        new Set(),
+        noLinks,
       ).map((n) => [n.taskId, n]),
     );
     expect(nodes.get("dep")?.unmetPrerequisiteIds).toEqual(["pend"]);
@@ -236,7 +251,7 @@ describe("projectTaskGraphNodes prerequisite semantics", () => {
       projectTaskGraphNodes(
         [state("pre", "waiting_review"), state("dep", "blocked")],
         [edge("pre", "dep")],
-        new Set(),
+        noLinks,
       ).map((n) => [n.taskId, n]),
     );
     expect(nodes.get("dep")).toMatchObject({ ready: false, waiting: false });

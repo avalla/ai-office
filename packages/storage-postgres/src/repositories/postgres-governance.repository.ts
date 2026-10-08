@@ -322,6 +322,11 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
               SELECT 1 FROM core.project
               WHERE id = $4 AND tenant_id = $5
             )
+            AND EXISTS (
+              SELECT 1 FROM core.milestone
+              WHERE id = $1 AND project_id = $4 AND status <> 'cancelled'
+                AND archived_at IS NULL
+            )
           RETURNING id
         `,
         [milestoneId, now, id, projectId, this.tenantId],

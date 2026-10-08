@@ -23,21 +23,32 @@ import type {
  */
 function milestoneGap(
   task: TaskOperationalState,
-  requirementLinkedTaskIds: ReadonlySet<string>,
+  links: TaskGraphLinkFacts,
 ): TaskMilestoneGap | null {
-  if ((task.milestones ?? []).length > 0) return null;
-  // A task outside every milestone that still has a requirement: that
-  // requirement carries no (surviving) milestone.
-  return requirementLinkedTaskIds.has(task.taskId)
+  // A link to a milestone that the separate milestone read could not resolve
+  // still means the task belongs to one; never tell the user it belongs to none.
+  if (
+    (task.milestones ?? []).length > 0 ||
+    links.milestoneLinkedTaskIds.has(task.taskId)
+  )
+    return null;
+  return links.requirementLinkedTaskIds.has(task.taskId)
     ? "requirement_without_milestone"
     : "no_requirement";
+}
+
+/** Task→requirement link facts read in the same snapshot as the tasks. */
+export interface TaskGraphLinkFacts {
+  /** Tasks linked to at least one requirement, whatever its milestone. */
+  requirementLinkedTaskIds: ReadonlySet<string>;
+  /** Tasks linked to a requirement that has a milestone. */
+  milestoneLinkedTaskIds: ReadonlySet<string>;
 }
 
 export function projectTaskGraphNodes(
   tasks: readonly TaskOperationalState[],
   edges: readonly TaskGraphEdge[],
-  /** Tasks linked to at least one requirement, whatever its milestone. */
-  requirementLinkedTaskIds: ReadonlySet<string>,
+  links: TaskGraphLinkFacts,
 ): TaskGraphNode[] {
   const statuses = new Map(
     tasks.map((task) => [task.taskId, task.recordedStatus]),
@@ -89,7 +100,7 @@ export function projectTaskGraphNodes(
         operationalStatus: task.operationalStatus,
         assignedAgent: task.assignedAgent,
         milestoneIds: (task.milestones ?? []).map((m) => m.milestoneId).sort(),
-        milestoneGap: milestoneGap(task, requirementLinkedTaskIds),
+        milestoneGap: milestoneGap(task, links),
         unmetPrerequisiteIds: unmet,
         // The admission rule of ManageTaskDependencies.readiness, not a copy.
         ready: isTaskRunnable(task.recordedStatus) && unmet.length === 0,

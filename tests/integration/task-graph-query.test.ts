@@ -303,7 +303,8 @@ describe("task dependency graph read model", () => {
 
     expect(graph.tasks[0]).toMatchObject({
       milestoneIds: [],
-      milestoneGap: "requirement_without_milestone",
+      // The snapshot still links it to a milestone, so it is never "none".
+      milestoneGap: null,
     });
   });
 

@@ -246,9 +246,21 @@ export class SqliteGovernanceRepository implements GovernanceRepository {
           `UPDATE requirement
            SET milestone_id=?, updated_at=?
            WHERE id=? AND project_id=? AND status='proposed'
-             AND milestone_id IS NULL`,
+             AND milestone_id IS NULL
+             AND EXISTS (
+               SELECT 1 FROM milestone
+               WHERE id=? AND project_id=? AND status<>'cancelled'
+                 AND archived_at IS NULL
+             )`,
         )
-        .run(milestoneId, now.toISOString(), id, projectId);
+        .run(
+          milestoneId,
+          now.toISOString(),
+          id,
+          projectId,
+          milestoneId,
+          projectId,
+        );
       if (result.changes !== 1) return false;
       this.appendEvent({
         id: event.id,
