@@ -28,7 +28,13 @@ import {
   KnowledgeStoreError,
   type RuntimeAgentKnowledge,
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
-import type { DaemonHealthResponse } from "@ai-office/application/protocol/daemon-protocol.ts";
+import {
+  daemonProtocolVersion,
+  type DaemonHealthResponse,
+  type RuntimeStatus,
+} from "@ai-office/application/protocol/daemon-protocol.ts";
+import { productVersion } from "@ai-office/command-support/version.ts";
+import { readSourceRevision } from "./source-revision.ts";
 import {
   agentKnowledgeEnvironment,
   isAgentKnowledgeTenantId,
@@ -141,6 +147,8 @@ export interface BootstrapOptions {
   projectStorageBootstrap?: ProjectStorageBootstrapLike;
   /** Internal bootstrap seam for deterministic global-database failure tests. */
   openGlobalDatabase?: typeof openDatabase;
+  /** Internal bootstrap seam for deterministic source-revision capture tests. */
+  readSourceRevision?: (directory: string) => string | null;
 }
 
 interface ProjectStorageBootstrapLike {
@@ -384,9 +392,42 @@ export async function bootstrap(
       agentRunWorker: queue?.consuming.execute_agent_run ?? false,
     });
 
+    // The provider reads the host through a holder, assigned just below; it
+    // only runs at request time, once the host has recorded its start instant.
+    // The source revision is resolved once, here: re-reading mutable git
+    // metadata per request could report a checkout that moved after this
+    // process loaded its code, misrepresenting the running distribution.
+    const statusHost: { current?: PersistentRuntimeHost } = {};
+    const sourceRevision = (options.readSourceRevision ?? readSourceRevision)(
+      sourceDirectory,
+    );
+    const runtimeStatus = async (): Promise<RuntimeStatus> => {
+      const startedAt = statusHost.current?.startedAtInstant ?? new Date();
+      return {
+        protocolVersion: daemonProtocolVersion,
+        status: "ok",
+        productVersion,
+        sourceRevision,
+        startedAt: startedAt.toISOString(),
+        uptimeSeconds: Math.max(
+          0,
+          Math.floor((Date.now() - startedAt.getTime()) / 1000),
+        ),
+        knowledge: knowledgeStatus,
+        queue: await queueStatus(),
+        // Reaching this composition means the authoritative project store
+        // opened; a daemon that failed to open it never answers.
+        storage: { project: "available" },
+      };
+    };
+
     const host = new PersistentRuntimeHost({
       socketPath: runtimePaths.socketPath,
-      queryApi: new QueryApi({ queries, events: queryEvents }),
+      queryApi: new QueryApi({
+        queries,
+        events: queryEvents,
+        status: runtimeStatus,
+      }),
       queryEvents,
       handler: new LocalCommandHandler(runtime),
       events,
@@ -411,6 +452,7 @@ export async function bootstrap(
         await runtime.stop();
       },
     });
+    statusHost.current = host;
     ownershipTransferred = true;
     return host;
   } finally {

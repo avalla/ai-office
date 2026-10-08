@@ -58,6 +58,7 @@ export type DashboardRoute =
   | { kind: "pipelines" }
   | { kind: "agents" }
   | { kind: "memory" }
+  | { kind: "runtime" }
   | {
       kind: "project";
       projectId: string;
@@ -131,6 +132,8 @@ export function parseRoute(hash: string): DashboardRoute {
     return { kind: "run", runId: decodeURIComponent(segments[1]!) };
   if (segments.length === 1 && segments[0] === "memory")
     return { kind: "memory" };
+  if (segments.length === 1 && segments[0] === "runtime")
+    return { kind: "runtime" };
   if (segments.length === 1 && segments[0] === "projects")
     return { kind: "projects" };
   if (segments.length === 1 && segments[0] === "work") return { kind: "work" };
@@ -155,6 +158,7 @@ export function routeHref(route: DashboardRoute): string {
     return `#/projects/${encodeURIComponent(route.projectId)}${route.section === undefined ? "" : `/${route.section}`}${suffix}`;
   if (route.kind === "run") return `#/runs/${encodeURIComponent(route.runId)}`;
   if (route.kind === "memory") return "#/memory";
+  if (route.kind === "runtime") return "#/runtime";
   if (route.kind === "projects") return "#/projects";
   if (route.kind === "work") return "#/work";
   if (route.kind === "pipelines") return "#/pipelines";
