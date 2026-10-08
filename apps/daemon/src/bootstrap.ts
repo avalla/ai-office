@@ -422,7 +422,7 @@ export async function bootstrap(
     // probes on a fresh connection, so recovery is observed immediately. The
     // probe only connects and runs a trivial read; it never writes and holds
     // no transaction, so a dead store only delays this one status request by
-    // the probe deadline.
+    // the probe deadline plus a small connection-close budget.
     const knowledgeLiveStatus = async (): Promise<
       "connected" | "unavailable" | "not_checked"
     > => {
