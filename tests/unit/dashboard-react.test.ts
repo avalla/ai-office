@@ -751,6 +751,7 @@ describe("operational presentation", () => {
       '<option value="failed">Failed (operational)</option>',
     );
     expect(markup).toContain('<option value="completed">completed</option>');
+  });
   test("hides archived milestones in the default project view", () => {
     const page = {
       kind: "project",
