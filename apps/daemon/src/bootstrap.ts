@@ -413,12 +413,20 @@ export async function bootstrap(
     // `knowledgeStatus`: a bounded read-only query through the connected store.
     // It never runs inside a transaction and cannot write; a slow or dead
     // store only delays this one status request by the probe deadline.
-    const knowledgeLiveStatus = async (): Promise<
-      "connected" | "unavailable" | "not_checked"
-    > => {
-      if (agentKnowledge.state !== "connected") return "not_checked";
-      try {
-        await Promise.race([
+    // Single-flight: concurrent and later requests share one in-flight probe,
+    // so a store that accepts queries but never answers leaks at most one
+    // pending RPC (the SurrealDB client has no abort-signal API) instead of
+    // one per request. Each caller still races the shared probe against its
+    // own deadline, so every response stays bounded. The shared probe clears
+    // when it settles (a later socket drop rejects it, reopening probes);
+    // if it never settles it stays pinned and callers keep reporting
+    // "unavailable" until it settles or the host restarts.
+    let inflightProbe: Promise<unknown> | undefined;
+    const probeKnowledge = (): Promise<unknown> => {
+      if (agentKnowledge.state !== "connected")
+        return Promise.reject(new Error("knowledge store not connected"));
+      inflightProbe ??= Promise.resolve()
+        .then(() =>
           agentKnowledge.store.findKnowledge(
             {
               tenantId: agentKnowledge.tenantId,
@@ -426,16 +434,37 @@ export async function bootstrap(
             },
             { text: "probe", limit: 1 },
           ),
-          new Promise<never>((_, reject) =>
-            setTimeout(
+        )
+        .finally(() => {
+          inflightProbe = undefined;
+        });
+      // Callers may race away before the shared probe settles; keep a handler
+      // attached so a late rejection is never unobserved.
+      void inflightProbe.catch(() => {});
+      return inflightProbe;
+    };
+    const knowledgeLiveStatus = async (): Promise<
+      "connected" | "unavailable" | "not_checked"
+    > => {
+      if (agentKnowledge.state !== "connected") return "not_checked";
+      const deadlineMs =
+        options.agentKnowledgeProbeTimeoutMs ?? knowledgeProbeTimeoutMs;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          probeKnowledge(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
               () => reject(new Error("knowledge probe deadline exceeded")),
-              options.agentKnowledgeProbeTimeoutMs ?? knowledgeProbeTimeoutMs,
-            ),
-          ),
+              deadlineMs,
+            );
+          }),
         ]);
         return "connected";
       } catch {
         return "unavailable";
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
       }
     };
     const runtimeStatus = async (): Promise<RuntimeStatus> => {

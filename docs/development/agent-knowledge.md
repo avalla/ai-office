@@ -45,7 +45,14 @@ AK-02 schema, but AK-03 does not create or change knowledge records.
 `/health` reports `knowledge.provider` and
 `knowledge.startup` (`disabled`, `misconfigured`, `connected`, or `unavailable`)
 as the **startup observation**, not a live database probe. Restart to retry
-after a failure or configuration change. AK-03 introduced no knowledge mutation command; AK-05 later added reviewed admission.
+after a failure or configuration change. `GET /api/status` additionally probes
+connectivity at request time (a bounded read-only query, 1.5s deadline,
+single-flight) and reports it separately as `knowledge.live`
+(`connected`, `unavailable`, or `not_checked`). The SurrealDB client has no
+abort-signal API, so a probe that never settles stays pinned as the shared
+in-flight probe — at most one pending RPC — until it settles. AK-03
+introduced no knowledge mutation command; AK-05 later added reviewed
+admission.
 
 ## Retrieval contract
 
