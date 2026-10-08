@@ -24,6 +24,7 @@ import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import { projectWorkerOutput } from "@ai-office/application/read-models/worker-output.ts";
 import { EvaluatePipelineAuthorization } from "@ai-office/application/pipeline/evaluate-pipeline-authorization.ts";
+import { TaskPrerequisiteIncompleteError } from "@ai-office/application/commands/manage-task-dependencies.ts";
 import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
 import {
   CliUsageError,
@@ -381,6 +382,7 @@ export async function handleRunCommand(
       clock,
       transactions,
       context.jobOutbox,
+      context.taskDependencies,
     );
     const results = (
       await Promise.all(
@@ -408,16 +410,33 @@ export async function handleRunCommand(
             if (
               result.status === "completed" &&
               claimed.snapshot().pipelineRunId !== undefined
-            )
-              await pipelineManager.completeStageFromAgentRun({
-                projectId: claimed.snapshot().projectId,
-                agentRunId: claimed.snapshot().id,
-                ...(claimed.snapshot().pipelineRunId === undefined
-                  ? {}
-                  : {
-                      expectedPipelineRunId: claimed.snapshot().pipelineRunId,
-                    }),
-              });
+            ) {
+              try {
+                await pipelineManager.completeStageFromAgentRun({
+                  projectId: claimed.snapshot().projectId,
+                  agentRunId: claimed.snapshot().id,
+                  ...(claimed.snapshot().pipelineRunId === undefined
+                    ? {}
+                    : {
+                        expectedPipelineRunId:
+                          claimed.snapshot().pipelineRunId,
+                      }),
+                });
+              } catch (error) {
+                // The run finished but the final stage cannot close while a
+                // prerequisite is still in review. The refusal rolled back, so
+                // report it for this run instead of failing the whole batch.
+                if (!(error instanceof TaskPrerequisiteIncompleteError))
+                  throw error;
+                return {
+                  ...result,
+                  error: {
+                    code: "STAGE_AWAITING_PREREQUISITES",
+                    message: error.message,
+                  },
+                };
+              }
+            }
             return result;
           } finally {
             context.executionControl.release(id);
@@ -427,7 +446,9 @@ export async function handleRunCommand(
     ).filter((value) => value !== null);
     const unsuccessful = results.filter(
       (result) =>
-        result.status !== "completed" || result.cleanupError !== undefined,
+        result.status !== "completed" ||
+        result.cleanupError !== undefined ||
+        result.error?.code === "STAGE_AWAITING_PREREQUISITES",
     ).length;
     if (parsed.flags.has("json"))
       io.stdout(JSON.stringify({ schemaVersion: 1, results, unsuccessful }));

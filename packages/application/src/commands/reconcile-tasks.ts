@@ -363,7 +363,20 @@ export class ReconcileTasks {
         const operation: TaskLifecycleOperation =
           target === "completed" ? "complete" : "cancel";
         const reachable = this.lifecycleAllows(task.status, target);
-        const repairable = !ambiguous && reachable;
+        // `complete` is refused while a prerequisite is not completed, so an
+        // approved plan must not offer it.
+        const prerequisitesOpen =
+          operation === "complete" &&
+          dependencies !== undefined &&
+          blockingPrerequisites(
+            task.id,
+            dependencies
+              .filter((edge) => edge.taskId === task.id)
+              .map((edge) => edge.dependsOnTaskId),
+            statusByTask,
+            "completion",
+          ).length > 0;
+        const repairable = !ambiguous && reachable && !prerequisitesOpen;
         issues.push({
           ...base,
           finding: "terminal_pipeline_open_task",
@@ -380,7 +393,9 @@ export class ReconcileTasks {
           refusalReason: ambiguous
             ? "pipelines for this task disagree or one is still active"
             : reachable
-              ? null
+              ? prerequisitesOpen
+                ? "completion requires every prerequisite to be completed"
+                : null
               : `task cannot move from ${task.status} to ${target}`,
         });
       }

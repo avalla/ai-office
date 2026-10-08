@@ -102,6 +102,12 @@ serializes a prerequisite leaving review with dependent admission on the
 project's graph-edit lock. Historical completion records (`task:record-completion`)
 attest work done outside the lifecycle and are not subject to the rule.
 
+If a pipeline's final stage finishes while a prerequisite is still in review,
+the refusal rolls back and the pipeline stays active; `run:tick` reports the
+run with `STAGE_AWAITING_PREREQUISITES`. Nothing resumes it automatically: once
+the prerequisite is completed, close the stage with `pipeline:transition --event
+complete --agent-run <id>`.
+
 When dependent work uses a prerequisite in review, the delivery workflow must
 start the dependent branch from a commit containing that prerequisite's current
 review head. With several prerequisites in review, the base must contain every

@@ -185,3 +185,41 @@ test("completion requires completed prerequisites while start accepts review", (
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("a historical completion record is outside the completion guard", () => {
+  const root = mkdtempSync(join(tmpdir(), "ai-office-completion-history-"));
+  const database = openDatabase(join(root, "project.sqlite"));
+  const at = "2026-10-08T00:00:00.000Z";
+  try {
+    migrate(database, join(process.cwd(), "migrations", "project"));
+    database
+      .prepare(
+        "INSERT INTO project(id,name,created_at,updated_at) VALUES ('p','Project',?,?)",
+      )
+      .run(at, at);
+    for (const id of ["review", "attested"])
+      database
+        .prepare(
+          "INSERT INTO task(id,project_id,title,status,priority,created_at,updated_at) VALUES (?,'p',?,'pending',0,?,?)",
+        )
+        .run(id, id, at, at);
+    database
+      .prepare(
+        "INSERT INTO task_dependency(project_id,task_id,depends_on_task_id,created_at) VALUES ('p','attested','review',?)",
+      )
+      .run(at);
+    for (const status of ["running", "waiting_review"])
+      database
+        .prepare("UPDATE task SET status=? WHERE id='review'")
+        .run(status);
+    // pending -> completed is the historical correction path, not execution.
+    expect(() =>
+      database
+        .prepare("UPDATE task SET status='completed' WHERE id='attested'")
+        .run(),
+    ).not.toThrow();
+  } finally {
+    database.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});

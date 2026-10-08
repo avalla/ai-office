@@ -1335,6 +1335,45 @@ describe("task reconciliation", () => {
     expect(report.planHash).toBeNull();
   });
 
+  test("reconciliation does not offer completion while a prerequisite is in review", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1");
+    await seedTask(context, "project-1", "upstream");
+    await seedTask(context, "project-1", "task-1");
+    await context.dependencyCommands.link({
+      projectId: "project-1",
+      taskId: "task-1",
+      dependsOnTaskId: "upstream",
+      actorId: "operator",
+    });
+    const upstream = {
+      projectId: "project-1",
+      taskId: "upstream",
+      actorId: "operator",
+    };
+    await context.lifecycle.start(upstream);
+    await context.lifecycle.submitForReview(upstream);
+    await seedManifest(context);
+    await seedAgent(context);
+    await seedPipeline(context, {
+      id: "pipeline-1",
+      taskId: "task-1",
+      status: "completed",
+    });
+    context.database
+      .prepare("UPDATE task SET status = 'running' WHERE id = 'task-1'")
+      .run();
+
+    const issue = (await context.reconcile.inspect("project-1")).issues.find(
+      (value) => value.finding === "terminal_pipeline_open_task",
+    );
+    expect(issue).toMatchObject({
+      repairable: false,
+      repairOperation: null,
+      refusalReason: "completion requires every prerequisite to be completed",
+    });
+  });
+
   test("reconciliation distinguishes start and completion prerequisite requirements", async () => {
     const context = await fixture();
     await seedProject(context, "project-1");

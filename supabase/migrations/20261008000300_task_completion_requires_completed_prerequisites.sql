@@ -20,7 +20,9 @@ BEGIN
     IF TG_OP <> 'UPDATE' OR OLD.status = NEW.status THEN
       RETURN NEW;
     END IF;
-    IF NEW.status = 'completed' AND OLD.status IN ('running', 'waiting_review') THEN
+    IF NEW.status = 'completed' AND OLD.status IN ('running', 'waiting_review')
+      AND EXISTS (SELECT 1 FROM core.task_dependency edge
+        WHERE edge.project_id = NEW.project_id AND edge.task_id = NEW.id) THEN
       PERFORM pg_advisory_xact_lock(hashtextextended(NEW.project_id, 0));
       IF EXISTS (
         SELECT 1 FROM core.task_dependency edge
