@@ -25,13 +25,21 @@ export async function connectSurrealAgentKnowledgeStore(
         throw error;
       },
     ));
+  const cancellation = new Error("Agent knowledge connection cancelled");
+  let cancel: (error: Error) => void = () => {};
+  const cancelled = new Promise<never>((_, reject) => {
+    cancel = reject;
+  });
+  // If the abort arrives after the raced connect has settled (during the
+  // scoping queries below), nothing consumes this rejection anymore.
+  void cancelled.catch(() => {});
   const abort = () => {
+    cancel(cancellation);
     void close().catch(() => {});
   };
   signal?.addEventListener("abort", abort, { once: true });
   const requireActive = () => {
-    if (signal?.aborted)
-      throw new Error("Agent knowledge connection cancelled");
+    if (signal?.aborted) throw cancellation;
   };
   try {
     requireActive();
@@ -41,15 +49,20 @@ export async function connectSurrealAgentKnowledgeStore(
     // an automatic reconnect. A manual `signin()` here would set the SDK's
     // `authOverriden` flag and disable that replay, reintroducing the
     // ~1-hour silent knowledge outage this connection exists to prevent.
-    await db.connect(config.endpoint, {
-      reconnect: true,
-      namespace: config.namespace,
-      database: config.database,
-      authentication: {
-        username: config.username,
-        password: config.password,
-      },
-    });
+    // Race the handshake: closing the socket on abort does not settle the
+    // SDK's pending connect(), so without this race the caller would hang.
+    await Promise.race([
+      db.connect(config.endpoint, {
+        reconnect: true,
+        namespace: config.namespace,
+        database: config.database,
+        authentication: {
+          username: config.username,
+          password: config.password,
+        },
+      }),
+      cancelled,
+    ]);
     requireActive();
     await db.query("DEFINE NAMESPACE IF NOT EXISTS $namespace", {
       namespace: config.namespace,

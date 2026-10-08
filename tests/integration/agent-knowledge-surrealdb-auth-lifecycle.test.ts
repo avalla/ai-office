@@ -77,7 +77,12 @@ function withDeadline(promise: Promise<void>, timeoutMs: number, label: string):
   ]);
 }
 
-function startFakeSurreal(options: { accessTokenTtlSec: number; rejectPassword?: string }): FakeSurreal {
+function startFakeSurreal(options: {
+  accessTokenTtlSec: number;
+  rejectPassword?: string;
+  /** Leave the version handshake unanswered so connect() stays pending. */
+  neverAnswerVersion?: boolean;
+}): FakeSurreal {
   const codec = new CborCodec({});
   const connections: FakeConnection[] = [];
   let serial = 0;
@@ -128,6 +133,7 @@ function startFakeSurreal(options: { accessTokenTtlSec: number; rejectPassword?:
         switch (request.method) {
           case "version":
             // The SDK requires >= 2.1.0 and < 4.0.0 and calls this first.
+            if (options.neverAnswerVersion) return;
             return respond("surrealdb-2.2.0");
           case "use":
             return respond(null);
@@ -282,6 +288,21 @@ it("rejects and cleans up when credentials are invalid", async () => {
     expect(fake.connections[0]!.issuedTokens).toHaveLength(0);
     // The failed connect must close its socket server-side, not leak it.
     await withDeadline(fake.connections[0]!.closeObserved, 5_000, "server-side socket close after rejected connect");
+  } finally {
+    fake.stop();
+  }
+});
+
+it("rejects with the cancellation error when aborted mid-connect", async () => {
+  const fake = startFakeSurreal({ accessTokenTtlSec: 3600, neverAnswerVersion: true });
+  try {
+    const controller = new AbortController();
+    const connecting = connectSurrealAgentKnowledgeStore(connectConfig(fake.endpoint), controller.signal);
+    await waitFor(() => fake.connections.length === 1, 5_000, "first websocket connection");
+    controller.abort();
+    await expect(connecting).rejects.toThrow("Agent knowledge connection cancelled");
+    // The aborted connect must still close its socket server-side.
+    await withDeadline(fake.connections[0]!.closeObserved, 5_000, "server-side socket close after aborted connect");
   } finally {
     fake.stop();
   }
