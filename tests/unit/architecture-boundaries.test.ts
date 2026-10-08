@@ -1448,13 +1448,7 @@ describe("GP-20 official Domain Packs use only public core contracts", () => {
         const source = readFileSync(file, "utf8");
         if (source.includes(manifest.id) || source.includes(name))
           offenders.push(`${relative(repositoryRoot, file)} names ${name}`);
-        if (
-          verticalLiteral !== null &&
-          !relative(repositoryRoot, file).startsWith(
-            "packages/runtime-host/",
-          ) &&
-          verticalLiteral.test(source)
-        )
+        if (verticalLiteral !== null && verticalLiteral.test(source))
           offenders.push(`${relative(repositoryRoot, file)} names ${vertical}`);
       }
     }
