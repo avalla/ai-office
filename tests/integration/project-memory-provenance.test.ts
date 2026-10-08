@@ -209,6 +209,7 @@ test("upgrading an existing database adds provenance without touching historical
     "0046_project_workflow_override.sql",
     "0047_milestone_archived_status.sql",
       "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   expect(
@@ -341,6 +342,7 @@ test("upgrading 0028 provenance keeps its context digest and leaves the unreport
     "0046_project_workflow_override.sql",
     "0047_milestone_archived_status.sql",
       "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
   ]);
   expect(migrate(db, resolve("migrations/project")).applied).toEqual([]);
   const repository = new SqliteProjectMemoryProvenanceRepository(db);

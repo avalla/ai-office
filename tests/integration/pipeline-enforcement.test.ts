@@ -424,6 +424,7 @@ describe("pipeline enforcement persistence and authorization", () => {
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
       "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
     ]);
     expect(
       database

@@ -235,18 +235,27 @@ export class ReconcileTasks {
             prerequisites.map((edge) => edge.dependsOnTaskId),
             statusByTask,
           );
-          if (blockedBy.length > 0 && !isTerminalTaskStatus(task.status))
+          if (blockedBy.length > 0 && !isTerminalTaskStatus(task.status)) {
+            const started =
+              task.status === "running" || task.status === "waiting_review";
+            const unmet = blockedBy
+              .map((item) => `${item.taskId} (${item.status})`)
+              .join(", ");
             issues.push({
               ...base,
               finding: "blocking_prerequisite_incomplete",
               severity: "warning",
-              summary: `incomplete prerequisites: ${blockedBy.map((item) => `${item.taskId} (${item.status})`).join(", ")}`,
+              summary: started
+                ? `started with prerequisites neither completed nor in review: ${unmet}; completing it requires every prerequisite completed`
+                : `cannot start until prerequisites are completed or in review: ${unmet}`,
               suggestedCommand: null,
               repairOperation: null,
               repairable: false,
-              refusalReason:
-                "prerequisites must complete through their own lifecycle",
+              refusalReason: started
+                ? "prerequisites must be completed before this task can complete; resolve them through their own lifecycle"
+                : "prerequisites must reach review or completion through their own lifecycle",
             });
+          }
         } catch {
           issues.push({
             ...base,

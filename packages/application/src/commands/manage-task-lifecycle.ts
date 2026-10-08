@@ -256,12 +256,18 @@ export class ManageTaskLifecycle {
     const { operation } = request;
     const reason = this.resolveReason(operation, request.reason);
     const task = await this.requireTask(request.projectId, request.taskId);
-    if (operation === "start" && this.taskDependencies !== undefined)
+    // Starting accepts prerequisites in review; completing does not, because a
+    // review can still be rejected after the dependent has finished.
+    if (
+      (operation === "start" || operation === "complete") &&
+      this.taskDependencies !== undefined
+    )
       await assertTaskPrerequisitesComplete(
         request.projectId,
         request.taskId,
         this.tasks,
         this.taskDependencies,
+        operation === "start" ? "start" : "completion",
       );
     const from = task.snapshot().status;
     const now = this.clock.now();

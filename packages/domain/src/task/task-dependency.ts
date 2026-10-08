@@ -13,19 +13,30 @@ export class TaskDependencyError extends DomainValidationError {
   }
 }
 
-/** Work submitted for review can be used as a base for dependent work. */
+/**
+ * What a dependent needs from its prerequisites at a given point.
+ *
+ * - `start`: admission of work. Work submitted for review (`waiting_review`)
+ *   is a usable base, so it counts like `completed`.
+ * - `completion`: the dependent may only finish once every prerequisite is
+ *   `completed`; an open review can still be rejected.
+ */
+export type PrerequisiteRequirement = "start" | "completion";
+
 export function blockingPrerequisites(
   taskId: string,
   dependsOnTaskIds: readonly string[],
   statuses: ReadonlyMap<string, TaskStatus>,
+  requirement: PrerequisiteRequirement = "start",
 ): BlockingPrerequisite[] {
   return dependsOnTaskIds.flatMap((id) => {
     const status = statuses.get(id);
     if (status === undefined)
       throw new TaskDependencyError(`Prerequisite task ${id} does not exist`);
-    return status === "completed" || status === "waiting_review"
-      ? []
-      : [{ taskId: id, status }];
+    const satisfied =
+      status === "completed" ||
+      (requirement === "start" && status === "waiting_review");
+    return satisfied ? [] : [{ taskId: id, status }];
   });
 }
 

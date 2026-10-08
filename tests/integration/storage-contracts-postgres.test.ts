@@ -1058,6 +1058,7 @@ describe.skipIf(connectionString === undefined)(
           "20261006000300_project_definition_payload_object.sql",
           "20261008000100_milestone_archived_status.sql",
           "20261008000200_review_ready_task_dependencies.sql",
+          "20261008000300_task_completion_requires_completed_prerequisites.sql",
         ]);
         expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
         const rows = await database.query<{
@@ -1260,6 +1261,180 @@ describe.skipIf(connectionString === undefined)(
             "SELECT task_id FROM core.task_execution_history WHERE task_id='race-task'",
           ),
         ).toEqual([]);
+        // Completion needs completed prerequisites; start accepts review.
+        for (const id of ["done-prerequisite", "done-dependent"])
+          await database.query(
+            `INSERT INTO core.task(id,project_id,title,status,priority,created_at,updated_at)
+            VALUES ($1,'history-project',$1,'pending',0,$2,$2)`,
+            [id, at],
+          );
+        await database.query(
+          `INSERT INTO core.task_dependency(project_id,task_id,depends_on_task_id,created_at)
+          VALUES ('history-project','done-dependent','done-prerequisite',$1)`,
+          [at],
+        );
+        for (const status of ["running", "waiting_review"])
+          await database.query(
+            "UPDATE core.task SET status=$1 WHERE id='done-prerequisite'",
+            [status],
+          );
+        await database.query(
+          "UPDATE core.task SET status='running' WHERE id='done-dependent'",
+        );
+        await expect(
+          database.query(
+            "UPDATE core.task SET status='completed' WHERE id='done-dependent'",
+          ),
+        ).rejects.toThrow("incomplete prerequisites");
+        await database.query(
+          "UPDATE core.task SET status='completed' WHERE id='done-prerequisite'",
+        );
+        await expect(
+          database.query(
+            "UPDATE core.task SET status='completed' WHERE id='done-dependent'",
+          ),
+        ).resolves.toBeDefined();
+
+        // A rejected review keeps the dependent from completing.
+        for (const id of ["rejected-prerequisite", "rejected-dependent"])
+          await database.query(
+            `INSERT INTO core.task(id,project_id,title,status,priority,created_at,updated_at)
+            VALUES ($1,'history-project',$1,'pending',0,$2,$2)`,
+            [id, at],
+          );
+        await database.query(
+          `INSERT INTO core.task_dependency(project_id,task_id,depends_on_task_id,created_at)
+          VALUES ('history-project','rejected-dependent','rejected-prerequisite',$1)`,
+          [at],
+        );
+        for (const status of ["running", "waiting_review"])
+          await database.query(
+            "UPDATE core.task SET status=$1 WHERE id='rejected-prerequisite'",
+            [status],
+          );
+        await database.query(
+          "UPDATE core.task SET status='running' WHERE id='rejected-dependent'",
+        );
+        await database.query(
+          "UPDATE core.task SET status='failed' WHERE id='rejected-prerequisite'",
+        );
+        await expect(
+          database.query(
+            "UPDATE core.task SET status='completed' WHERE id='rejected-dependent'",
+          ),
+        ).rejects.toThrow("incomplete prerequisites");
+
+        // Leaving review serializes with dependent admission. The exit holds
+        // the project lock, so a concurrent admission waits and then sees the
+        // new status instead of committing on the stale waiting_review one.
+        const sleep = (ms: number) =>
+          new Promise((resolve) => setTimeout(resolve, ms));
+        const reviewPair = async (prefix: string) => {
+          for (const id of [`${prefix}-prerequisite`, `${prefix}-dependent`])
+            await database.query(
+              `INSERT INTO core.task(id,project_id,title,status,priority,created_at,updated_at)
+              VALUES ($1,'history-project',$1,'pending',0,$2,$2)`,
+              [id, at],
+            );
+          await database.query(
+            `INSERT INTO core.task_dependency(project_id,task_id,depends_on_task_id,created_at)
+            VALUES ('history-project',$1,$2,$3)`,
+            [`${prefix}-dependent`, `${prefix}-prerequisite`, at],
+          );
+          for (const status of ["running", "waiting_review"])
+            await database.query("UPDATE core.task SET status=$1 WHERE id=$2", [
+              status,
+              `${prefix}-prerequisite`,
+            ]);
+        };
+        const statusOf = async (id: string) =>
+          (
+            await database.query<{ status: string }>(
+              "SELECT status FROM core.task WHERE id=$1",
+              [id],
+            )
+          )[0]?.status;
+        for (const exitTo of ["blocked", "failed", "cancelled"]) {
+          const prefix = `exit-${exitTo}`;
+          await reviewPair(prefix);
+          let exited!: () => void;
+          const exitUpdated = new Promise<void>((resolve) => {
+            exited = resolve;
+          });
+          let releaseExit!: () => void;
+          const holdExit = new Promise<void>((resolve) => {
+            releaseExit = resolve;
+          });
+          const exitWrite = first.transaction(async () => {
+            await first.query("UPDATE core.task SET status=$1 WHERE id=$2", [
+              exitTo,
+              `${prefix}-prerequisite`,
+            ]);
+            exited();
+            await holdExit;
+          });
+          await exitUpdated;
+          let admissionSettled = false;
+          const admission = second
+            .query("UPDATE core.task SET status='running' WHERE id=$1", [
+              `${prefix}-dependent`,
+            ])
+            .then(
+              () => "admitted",
+              (error: Error) => error.message,
+            )
+            .finally(() => {
+              admissionSettled = true;
+            });
+          await sleep(150);
+          expect(admissionSettled).toBe(false);
+          releaseExit();
+          await exitWrite;
+          expect(await admission).toContain("incomplete prerequisites");
+          expect(await statusOf(`${prefix}-dependent`)).toBe("pending");
+          expect(
+            await database.query(
+              "SELECT task_id FROM core.task_execution_history WHERE task_id=$1",
+              [`${prefix}-dependent`],
+            ),
+          ).toEqual([]);
+        }
+
+        // The other order is serial too: admission commits first, then the
+        // exit proceeds, and neither write is lost.
+        await reviewPair("admit-first");
+        let admitted!: () => void;
+        const admissionDone = new Promise<void>((resolve) => {
+          admitted = resolve;
+        });
+        let releaseAdmission!: () => void;
+        const holdAdmission = new Promise<void>((resolve) => {
+          releaseAdmission = resolve;
+        });
+        const admissionWrite = first.transaction(async () => {
+          await first.query(
+            "UPDATE core.task SET status='running' WHERE id='admit-first-dependent'",
+          );
+          admitted();
+          await holdAdmission;
+        });
+        await admissionDone;
+        let exitSettled = false;
+        const exitAfter = second
+          .query(
+            "UPDATE core.task SET status='blocked' WHERE id='admit-first-prerequisite'",
+          )
+          .finally(() => {
+            exitSettled = true;
+          });
+        await sleep(150);
+        expect(exitSettled).toBe(false);
+        releaseAdmission();
+        await admissionWrite;
+        await exitAfter;
+        expect(await statusOf("admit-first-dependent")).toBe("running");
+        expect(await statusOf("admit-first-prerequisite")).toBe("blocked");
+
         await database.query(
           `INSERT INTO core.project(id,tenant_id,name,created_at,updated_at)
           VALUES ('cascade-project','history-tenant','Cascade',$1,$1)`,
@@ -1468,6 +1643,7 @@ describe.skipIf(connectionString === undefined)(
           "20261006000300_project_definition_payload_object.sql",
           "20261008000100_milestone_archived_status.sql",
           "20261008000200_review_ready_task_dependencies.sql",
+          "20261008000300_task_completion_requires_completed_prerequisites.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(
@@ -1741,6 +1917,7 @@ describe.skipIf(connectionString === undefined)(
           payloadMigration,
           "20261008000100_milestone_archived_status.sql",
           "20261008000200_review_ready_task_dependencies.sql",
+          "20261008000300_task_completion_requires_completed_prerequisites.sql",
         ]);
 
         const after = await storedRows(database);
@@ -1960,6 +2137,7 @@ describe.skipIf(connectionString === undefined)(
             payloadMigration,
             "20261008000100_milestone_archived_status.sql",
           "20261008000200_review_ready_task_dependencies.sql",
+          "20261008000300_task_completion_requires_completed_prerequisites.sql",
           ]);
           expect(
             (await storedRows(database)).map((row) => [
@@ -2216,6 +2394,7 @@ describe.skipIf(connectionString === undefined)(
           payloadMigration,
           "20261008000100_milestone_archived_status.sql",
           "20261008000200_review_ready_task_dependencies.sql",
+          "20261008000300_task_completion_requires_completed_prerequisites.sql",
         ]);
         expect(await repository.get(project)).toMatchObject({
           revision: 2,

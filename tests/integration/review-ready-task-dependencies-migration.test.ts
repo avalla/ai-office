@@ -62,6 +62,7 @@ test("upgrading admits review-submitted prerequisites without admitting pending 
 
     expect(migrate(database, migrations).applied).toEqual([
       "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
     ]);
     expect(migrate(database, migrations).applied).toEqual([]);
     expect(() =>
@@ -110,6 +111,75 @@ test("upgrading admits review-submitted prerequisites without admitting pending 
         )
         .get()?.state,
     ).toBe("executed");
+  } finally {
+    database.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("completion requires completed prerequisites while start accepts review", () => {
+  const root = mkdtempSync(join(tmpdir(), "ai-office-completion-guard-"));
+  const database = openDatabase(join(root, "project.sqlite"));
+  const at = "2026-10-08T00:00:00.000Z";
+  const status = (id: string, value: string) =>
+    database.prepare("UPDATE task SET status=? WHERE id=?").run(value, id);
+  try {
+    migrate(database, join(process.cwd(), "migrations", "project"));
+    database
+      .prepare(
+        "INSERT INTO project(id,name,created_at,updated_at) VALUES ('p','Project',?,?)",
+      )
+      .run(at, at);
+    for (const id of [
+      "review",
+      "rejected",
+      "dependent",
+      "rejected-dep",
+      "free",
+    ])
+      database
+        .prepare(
+          "INSERT INTO task(id,project_id,title,status,priority,created_at,updated_at) VALUES (?,'p',?,'pending',0,?,?)",
+        )
+        .run(id, id, at, at);
+    for (const [task, prerequisite] of [
+      ["dependent", "review"],
+      ["rejected-dep", "rejected"],
+    ] as const)
+      database
+        .prepare(
+          "INSERT INTO task_dependency(project_id,task_id,depends_on_task_id,created_at) VALUES ('p',?,?,?)",
+        )
+        .run(task, prerequisite, at);
+    for (const id of ["review", "rejected"]) {
+      status(id, "running");
+      status(id, "waiting_review");
+    }
+    for (const id of ["dependent", "rejected-dep"]) status(id, "running");
+
+    // Premature completion is refused while the prerequisite is in review.
+    expect(() => status("dependent", "completed")).toThrow(
+      "incomplete prerequisites",
+    );
+    // A rejected review never lets the dependent complete.
+    status("rejected", "failed");
+    expect(() => status("rejected-dep", "completed")).toThrow(
+      "incomplete prerequisites",
+    );
+    expect(
+      database
+        .query<{ status: string }, []>(
+          "SELECT status FROM task WHERE id='dependent'",
+        )
+        .get()?.status,
+    ).toBe("running");
+
+    status("review", "completed");
+    expect(() => status("dependent", "completed")).not.toThrow();
+
+    // Tasks without prerequisites, and historical corrections, are unaffected.
+    status("free", "running");
+    expect(() => status("free", "completed")).not.toThrow();
   } finally {
     database.close();
     rmSync(root, { recursive: true, force: true });

@@ -35,7 +35,8 @@ test("forward migration preserves existing tasks and starts with an empty depend
       name !== "0045_project_agent_disable.sql" &&
       name !== "0046_project_workflow_override.sql" &&
       name !== "0047_milestone_archived_status.sql" &&
-      name !== "0048_review_ready_task_dependencies.sql",
+      name !== "0048_review_ready_task_dependencies.sql" &&
+      name !== "0049_task_completion_requires_completed_prerequisites.sql",
   ))
     copyFileSync(join(migrations, file), join(prior, file));
   const database = openDatabase(join(root, "project.sqlite"));
@@ -66,6 +67,7 @@ test("forward migration preserves existing tasks and starts with an empty depend
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
       "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
     ]);
     expect(migrate(database, migrations).applied).toEqual([]);
     expect(

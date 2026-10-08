@@ -434,6 +434,56 @@ describe("task lifecycle commands", () => {
     ).rejects.toBeInstanceOf(TaskPrerequisiteIncompleteError);
   });
 
+  test("a dependent cannot complete until every prerequisite is completed", async () => {
+    const context = await fixture();
+    await seedProject(context, "completion-project");
+    for (const taskId of ["upstream", "dependent", "rejected", "rejected-dep"])
+      await seedTask(context, "completion-project", taskId);
+    for (const [taskId, dependsOnTaskId] of [
+      ["dependent", "upstream"],
+      ["rejected-dep", "rejected"],
+    ] as const)
+      await context.dependencyCommands.link({
+        projectId: "completion-project",
+        taskId,
+        dependsOnTaskId,
+        actorId: "operator",
+      });
+    const input = (taskId: string) => ({
+      projectId: "completion-project",
+      taskId,
+      actorId: "operator",
+    });
+    for (const taskId of ["upstream", "rejected"]) {
+      await context.lifecycle.start(input(taskId));
+      await context.lifecycle.submitForReview(input(taskId));
+    }
+    for (const taskId of ["dependent", "rejected-dep"])
+      await context.lifecycle.start(input(taskId));
+
+    // Premature completion: the prerequisite is only in review.
+    const premature = context.lifecycle.complete(input("dependent"));
+    await expect(premature).rejects.toBeInstanceOf(
+      TaskPrerequisiteIncompleteError,
+    );
+    await expect(premature).rejects.toThrow(/completion requires/);
+
+    // Review rejection: the dependent can never complete on rejected work.
+    await context.lifecycle.fail({
+      ...input("rejected"),
+      reason: "Review rejected the change",
+    });
+    await expect(
+      context.lifecycle.complete(input("rejected-dep")),
+    ).rejects.toBeInstanceOf(TaskPrerequisiteIncompleteError);
+
+    // Once the prerequisite is completed the dependent may complete.
+    await context.lifecycle.complete(input("upstream"));
+    expect(await context.lifecycle.complete(input("dependent"))).toBe(
+      "completed",
+    );
+  });
+
   test("hard prerequisites block readiness, start, and scheduling until completed", async () => {
     const context = await fixture();
     await seedProject(context, "dependency-project");
@@ -1285,6 +1335,51 @@ describe("task reconciliation", () => {
     expect(report.planHash).toBeNull();
   });
 
+  test("reconciliation distinguishes start and completion prerequisite requirements", async () => {
+    const context = await fixture();
+    await seedProject(context, "project-1");
+    for (const taskId of ["waiting", "unstarted", "reviewed", "started"])
+      await seedTask(context, "project-1", taskId);
+    for (const [taskId, dependsOnTaskId] of [
+      ["unstarted", "waiting"],
+      ["started", "reviewed"],
+    ] as const)
+      await context.dependencyCommands.link({
+        projectId: "project-1",
+        taskId,
+        dependsOnTaskId,
+        actorId: "operator",
+      });
+    const input = (taskId: string) => ({
+      projectId: "project-1",
+      taskId,
+      actorId: "operator",
+    });
+    await context.lifecycle.start(input("reviewed"));
+    await context.lifecycle.submitForReview(input("reviewed"));
+    await context.lifecycle.start(input("started"));
+    await context.lifecycle.fail({
+      ...input("reviewed"),
+      reason: "Review rejected the change",
+    });
+
+    const findings = (await context.reconcile.inspect("project-1")).issues
+      .filter((issue) => issue.finding === "blocking_prerequisite_incomplete")
+      .sort((a, b) => a.taskId.localeCompare(b.taskId));
+    expect(findings.map((issue) => issue.taskId)).toEqual([
+      "started",
+      "unstarted",
+    ]);
+    expect(findings[0]?.summary).toContain(
+      "started with prerequisites neither completed nor in review: reviewed (failed)",
+    );
+    expect(findings[0]?.summary).toContain("completing it requires");
+    expect(findings[1]?.summary).toBe(
+      "cannot start until prerequisites are completed or in review: waiting (pending)",
+    );
+    expect(findings[1]?.refusalReason).toContain("review or completion");
+  });
+
   test("reports a terminal pipeline whose task never followed", async () => {
     const context = await fixture();
     await seedProject(context, "project-1");
@@ -2081,6 +2176,52 @@ describe("ManagePipelineRuns keeps pipeline and task in one transaction", () => 
     const run = await context.pipelineRuns.start(start);
     const agentRunId = await assignedAgentRun(context, run.snapshot().id);
 
+    const completed = await context.pipelineRuns.completeStageFromAgentRun({
+      projectId: "project-1",
+      agentRunId,
+    });
+    expect(completed.snapshot().status).toBe("completed");
+    expect((await context.tasks.findById("task-1"))?.snapshot().status).toBe(
+      "completed",
+    );
+  });
+
+  test("does not complete the task while a prerequisite is only in review", async () => {
+    const context = await fixture();
+    await ready(context);
+    await seedTask(context, "project-1", "upstream");
+    await context.dependencyCommands.link({
+      projectId: "project-1",
+      taskId: "task-1",
+      dependsOnTaskId: "upstream",
+      actorId: "operator",
+    });
+    const upstream = {
+      projectId: "project-1",
+      taskId: "upstream",
+      actorId: "operator",
+    };
+    await context.lifecycle.start(upstream);
+    await context.lifecycle.submitForReview(upstream);
+    const run = await context.pipelineRuns.start(start);
+    const pipelineRunId = run.snapshot().id;
+    const agentRunId = await assignedAgentRun(context, pipelineRunId);
+
+    await expect(
+      context.pipelineRuns.completeStageFromAgentRun({
+        projectId: "project-1",
+        agentRunId,
+      }),
+    ).rejects.toBeInstanceOf(TaskPrerequisiteIncompleteError);
+    expect(
+      (await context.pipelines.findById(pipelineRunId, "project-1"))?.snapshot()
+        .status,
+    ).toBe("active");
+    expect((await context.tasks.findById("task-1"))?.snapshot().status).toBe(
+      "running",
+    );
+
+    await context.lifecycle.complete(upstream);
     const completed = await context.pipelineRuns.completeStageFromAgentRun({
       projectId: "project-1",
       agentRunId,

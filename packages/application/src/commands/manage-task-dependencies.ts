@@ -2,6 +2,7 @@ import {
   assertAcyclicDependency,
   blockingPrerequisites,
   TaskDependencyError,
+  type PrerequisiteRequirement,
 } from "@ai-office/domain/task/task-dependency.ts";
 import { isTaskRunnable } from "@ai-office/domain/agent/run-eligibility.ts";
 import type { TaskStatus } from "@ai-office/domain/task/task.ts";
@@ -17,9 +18,13 @@ export class TaskPrerequisiteIncompleteError extends TaskDependencyError {
   constructor(
     readonly taskId: string,
     readonly blockedBy: readonly { taskId: string; status: TaskStatus }[],
+    readonly requirement: PrerequisiteRequirement = "start",
   ) {
     super(
-      `Task ${taskId} has incomplete prerequisites: ${blockedBy.map((item) => item.taskId).join(", ")}`,
+      `Task ${taskId} has incomplete prerequisites: ${blockedBy.map((item) => item.taskId).join(", ")}` +
+        (requirement === "completion"
+          ? " (completion requires every prerequisite to be completed)"
+          : ""),
     );
     this.name = "TaskPrerequisiteIncompleteError";
   }
@@ -30,6 +35,7 @@ export async function assertTaskPrerequisitesComplete(
   taskId: string,
   tasks: TaskRepository,
   dependencies: TaskDependencyRepository,
+  requirement: PrerequisiteRequirement = "start",
 ): Promise<void> {
   const [allTasks, edges] = await Promise.all([
     tasks.listByProject(projectId),
@@ -46,9 +52,10 @@ export async function assertTaskPrerequisitesComplete(
       .filter((edge) => edge.taskId === taskId)
       .map((edge) => edge.dependsOnTaskId),
     statuses,
+    requirement,
   );
   if (blockedBy.length > 0)
-    throw new TaskPrerequisiteIncompleteError(taskId, blockedBy);
+    throw new TaskPrerequisiteIncompleteError(taskId, blockedBy, requirement);
 }
 
 export interface TaskDependencyReadiness {

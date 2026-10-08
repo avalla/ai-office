@@ -92,6 +92,16 @@ and active pipeline admission. A prerequisite that leaves review for `blocked`,
 `waiting_review` remains distinct from `completed`:
 the prerequisite still needs its own review and completion.
 
+Completion is stricter than start. A dependent task, including one whose
+pipeline finishes, can complete only when every prerequisite is `completed`;
+`task:complete` and pipeline completion are refused while a prerequisite is
+still in review or has left review for `blocked`, `failed`, or `cancelled`. The
+rule is enforced by the domain policy, by the application commands, and by
+SQLite and PostgreSQL triggers on the task status transition. PostgreSQL
+serializes a prerequisite leaving review with dependent admission on the
+project's graph-edit lock. Historical completion records (`task:record-completion`)
+attest work done outside the lifecycle and are not subject to the rule.
+
 When dependent work uses a prerequisite in review, the delivery workflow must
 start the dependent branch from a commit containing that prerequisite's current
 review head. With several prerequisites in review, the base must contain every
