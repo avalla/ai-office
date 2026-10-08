@@ -181,6 +181,13 @@ export function taskStatusLabel(status: TaskOperationalStatus): string {
   return taskStatusLabels[status];
 }
 
+/** Clarifies that exact status filters use the operational projection. */
+export function taskOperationalFilterLabel(
+  status: TaskOperationalStatus,
+): string {
+  return status === "failed" ? "Failed (operational)" : taskStatusLabel(status);
+}
+
 type MilestoneStatus = MilestoneSummary["status"];
 
 const milestoneStatusLabels: Record<MilestoneStatus, string> = {
