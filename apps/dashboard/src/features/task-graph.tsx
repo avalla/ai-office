@@ -42,6 +42,8 @@ import {
   statusLabel,
   defaultGraphFilters,
   filterGraph,
+  graphEdgeKey,
+  neighborhoodModes,
   graphNodeDetail,
   nodeSize,
   otherDependentIds,
@@ -50,6 +52,7 @@ import {
   taskKey,
   type GraphDirection,
   type GraphFilters,
+  type NeighborhoodMode,
   type GraphNodeDetail,
   type QuickFilter,
 } from "../lib/task-graph.ts";
@@ -100,6 +103,13 @@ const quickLabels: Record<QuickFilter, string> = {
   blocked: "Blocked",
   in_progress: "In progress",
   attention: "Needs attention",
+};
+
+const neighborhoodLabels: Record<NeighborhoodMode, string> = {
+  direct: "Direct relations",
+  one_hop: "1 hop",
+  two_hops: "2 hops",
+  full_lineage: "Full lineage",
 };
 
 /* -------------------------------------------------------------------------- */
@@ -317,7 +327,8 @@ function TaskGraphCanvas({
   const [searchOpen, setSearchOpen] = useState(true);
   const [direction, setDirection] = useState<GraphDirection>("LR");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [focusOnly, setFocusOnly] = useState(false);
+  const [neighborhoodMode, setNeighborhoodMode] =
+    useState<NeighborhoodMode | null>(null);
   const [showChain, setShowChain] = useState(true);
   const [showMinimap, setShowMinimap] = useState(true);
   const [readyPageIndex, setReadyPageIndex] = useState(0);
@@ -396,7 +407,7 @@ function TaskGraphCanvas({
       // Data-driven, not a user clear: it must not count as one when framing.
       staleReset.current = true;
       setSelectedKey(null);
-      setFocusOnly(false);
+      setNeighborhoodMode(null);
     }
   }, [selectedKey, selectedTask]);
 
@@ -420,15 +431,30 @@ function TaskGraphCanvas({
     [selectedLineage, selectedTask],
   );
 
+  const neighborhood = useMemo(
+    () =>
+      selectedRelationships === null || neighborhoodMode === null
+        ? null
+        : selectedRelationships.neighborhood(neighborhoodMode),
+    [neighborhoodMode, selectedRelationships],
+  );
+
   const visible = useMemo(
     () =>
       filterGraph(graph, effectiveFilters, {
         ...(selectedTask === null
           ? {}
           : { keep: new Set([selectedTask.taskId]) }),
-        ...(focusOnly && related !== null ? { only: related } : {}),
+        ...(neighborhood === null
+          ? {}
+          : {
+              only: neighborhood.taskIds,
+              ...(neighborhood.edgeKeys === undefined
+                ? {}
+                : { onlyEdges: neighborhood.edgeKeys }),
+            }),
       }),
-    [effectiveFilters, focusOnly, graph, related, selectedTask],
+    [effectiveFilters, graph, neighborhood, selectedTask],
   );
 
   const tooLarge = exceedsLayoutLimit(
@@ -452,7 +478,7 @@ function TaskGraphCanvas({
     if (!showChain) return pairs;
     const chain = graph.longestDependencyChain;
     for (let i = 1; i < chain.length; i += 1)
-      pairs.add(`${chain[i - 1]}>${chain[i]}`);
+      pairs.add(graphEdgeKey(chain[i - 1]!, chain[i]!));
     return pairs;
   }, [graph.longestDependencyChain, showChain]);
 
@@ -525,14 +551,15 @@ function TaskGraphCanvas({
         : null;
     if (tooLarge) return [];
     return visible.edges.map((edge) => {
-      const unmet = unmetPairs.has(`${edge.dependsOnTaskId}>${edge.taskId}`);
+      const edgeKey = graphEdgeKey(edge.dependsOnTaskId, edge.taskId);
+      const unmet = unmetPairs.has(edgeKey);
       const onLineage =
         lineageScope !== null &&
         ((lineageScope.up.has(edge.taskId) &&
           lineageScope.up.has(edge.dependsOnTaskId)) ||
           (lineageScope.down.has(edge.taskId) &&
             lineageScope.down.has(edge.dependsOnTaskId)));
-      const onChain = chainEdges.has(`${edge.dependsOnTaskId}>${edge.taskId}`);
+      const onChain = chainEdges.has(edgeKey);
       const stroke = onLineage
         ? colour.lineage
         : onChain
@@ -541,7 +568,7 @@ function TaskGraphCanvas({
             ? colour.unmet
             : colour.neutral;
       return {
-        id: `d:${edge.dependsOnTaskId}>${edge.taskId}`,
+        id: `d:${edgeKey}`,
         source: taskKey(edge.dependsOnTaskId),
         target: taskKey(edge.taskId),
         type: "smoothstep",
@@ -568,7 +595,7 @@ function TaskGraphCanvas({
   // Isolation belongs to one selection: choosing another item, or clearing,
   // ends it.
   useEffect(() => {
-    setFocusOnly(false);
+    setNeighborhoodMode(null);
   }, [selectedKey]);
 
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -631,7 +658,7 @@ function TaskGraphCanvas({
         .join("|"),
     [positions],
   );
-  const actionKey = `${direction}|${focusOnly}|${JSON.stringify(effectiveFilters)}`;
+  const actionKey = `${direction}|${neighborhoodMode}|${JSON.stringify(effectiveFilters)}`;
   const userMoved = useRef(false);
   const lastAction = useRef<string | null>(null);
   const selectedKeyRef = useRef(selectedKey);
@@ -979,7 +1006,7 @@ function TaskGraphCanvas({
                   {maxLayoutWeight.toLocaleString()} combined tasks and
                   dependencies. Narrow the view with a summary shortcut, a
                   status or milestone filter, or select a task from the lists
-                  and use &ldquo;Only this lineage&rdquo;. Summary counts remain
+                  and choose a neighborhood scope. Summary counts remain
                   complete. Search can find any task; ready, attention, and
                   chain lists are paged.
                 </Empty>
@@ -1117,8 +1144,8 @@ function TaskGraphCanvas({
                 const m = milestonesById.get(id);
                 return m === undefined ? [] : [m];
               })}
-              focusOnly={focusOnly}
-              onFocusOnly={setFocusOnly}
+              neighborhoodMode={neighborhoodMode}
+              onNeighborhoodMode={setNeighborhoodMode}
               onFocus={focusOn}
               onClear={clearSelection}
             />
@@ -1375,8 +1402,8 @@ function TaskPanel({
   dependents,
   lineage: tree,
   milestones,
-  focusOnly,
-  onFocusOnly,
+  neighborhoodMode,
+  onNeighborhoodMode,
   onFocus,
   onClear,
 }: {
@@ -1391,8 +1418,8 @@ function TaskPanel({
   dependents: readonly string[];
   lineage: { upstream: ReadonlySet<string>; downstream: ReadonlySet<string> };
   milestones: readonly TaskGraphMilestone[];
-  focusOnly: boolean;
-  onFocusOnly: (value: boolean) => void;
+  neighborhoodMode: NeighborhoodMode | null;
+  onNeighborhoodMode: (value: NeighborhoodMode | null) => void;
   onFocus: (key: string) => void;
   onClear: () => void;
 }) {
@@ -1451,14 +1478,32 @@ function TaskPanel({
             Clear
           </Button>
         </div>
-        <label className="flex items-center gap-2 text-xs">
-          <input
-            type="checkbox"
-            checked={focusOnly}
-            onChange={(event) => onFocusOnly(event.target.checked)}
-          />
-          Only this lineage
+        <label className="flex flex-col gap-1 text-xs">
+          Neighborhood
+          <Select
+            value={neighborhoodMode ?? ""}
+            onChange={(event) =>
+              onNeighborhoodMode(
+                event.target.value === ""
+                  ? null
+                  : (event.target.value as NeighborhoodMode),
+              )
+            }
+          >
+            <option value="">All visible tasks</option>
+            {neighborhoodModes.map((mode) => (
+              <option key={mode} value={mode}>
+                {neighborhoodLabels[mode]}
+              </option>
+            ))}
+          </Select>
         </label>
+        {(neighborhoodMode === "direct" || neighborhoodMode === "one_hop") && (
+          <p className="text-xs text-subtle">
+            Direct relations shows only links touching this task. 1 hop also
+            shows links between its neighbors.
+          </p>
+        )}
       </div>
       {detailLoading ? (
         <p role="status" className="text-xs text-subtle">
