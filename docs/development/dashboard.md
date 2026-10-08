@@ -326,17 +326,17 @@ references, with a control to reveal the rest in batches of eight.
 The project task table searches title, description, and task ID with literal,
 case-insensitive matching. The default `active` view includes every task whose
 recorded lifecycle is not terminal, even if its latest run makes its operational
-status `failed`. The Status filter also offers `all` and each exact operational
-status, so terminal tasks remain available without occupying the default work
-queue. Exact status filters use the application's operational status;
+status `failed`. The Operational status filter also offers `all` and each exact
+operational status, so terminal tasks remain available without occupying the
+default work queue. Exact status filters use the application's operational status;
 priority is the persisted integer, including zero and negative values. Agent
 matches any active run or current assignment in an active pipeline, and
 "No current agent" matches neither. Historical run agents are excluded.
 Selected milestones match any linked through an explicitly linked requirement;
 "No milestone" can be selected alongside named milestones and matches tasks
-with no such link. An empty selection includes all milestones. Status, priority,
-agent, and milestone choices come from the project's actual tasks and project
-milestones.
+with no such link. An empty selection includes all milestones. Operational
+status, priority, agent, and milestone choices come from the project's actual
+tasks and project milestones.
 
 The browser requests `GET /api/projects/:id?taskView=paged`, with optional
 `search`, `status`, `priority`, `agent`, repeated `milestone`,
