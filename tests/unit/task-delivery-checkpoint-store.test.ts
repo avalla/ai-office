@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -17,6 +18,7 @@ import {
   parseCheckpoint,
   pruneCheckpoints,
   publishCheckpoint,
+  reservationGraceMs,
   taskCheckpointDirectory,
   type GitStateProvider,
   type PublishCheckpointInput,
@@ -84,6 +86,12 @@ function checkpointsDir(root: string): string {
 
 function sha256(bytes: Buffer): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+/** Backdates a file past the reservation grace period, as a prior crash would. */
+function agePastGrace(path: string): void {
+  const past = new Date(Date.now() - reservationGraceMs * 2);
+  utimesSync(path, past, past);
 }
 
 describe("publishCheckpoint", () => {
@@ -243,8 +251,11 @@ describe("publishCheckpoint", () => {
   test("recovers from a colliding corrupt artifact instead of deadlocking", () => {
     const root = temporaryRoot();
     publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
-    // A crashed or hand-dropped file occupies the next sequence name.
-    writeFileSync(join(checkpointsDir(root), "000002.json"), "{}");
+    // A crashed or hand-dropped file, old enough to be a crash artifact,
+    // occupies the next sequence name.
+    const artifact = join(checkpointsDir(root), "000002.json");
+    writeFileSync(artifact, "{}");
+    agePastGrace(artifact);
     const { checkpoint } = publishCheckpoint(
       taskDir(root),
       baseInput({ gate: "implementation" }),
@@ -252,13 +263,17 @@ describe("publishCheckpoint", () => {
       deterministicOptions(),
     );
     expect(checkpoint.stage.seq).toBe(2);
-    expect(parseCheckpoint(readFileSync(join(checkpointsDir(root), "000002.json"), "utf8")).id).toBe(checkpoint.id);
+    expect(
+      parseCheckpoint(readFileSync(join(checkpointsDir(root), "000002.json"), "utf8")).id,
+    ).toBe(checkpoint.id);
   });
 
   test("removes a zero-byte reservation artifact left by a crash", () => {
     const root = temporaryRoot();
     publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
-    writeFileSync(join(checkpointsDir(root), "000002.json"), "");
+    const artifact = join(checkpointsDir(root), "000002.json");
+    writeFileSync(artifact, "");
+    agePastGrace(artifact);
     const { checkpoint } = publishCheckpoint(
       taskDir(root),
       baseInput({ gate: "implementation" }),
@@ -269,21 +284,56 @@ describe("publishCheckpoint", () => {
     expect(readFileSync(join(checkpointsDir(root), "000002.json"), "utf8")).not.toBe("");
   });
 
+  test("a fresh in-flight reservation is never deleted, and surfaces contention", () => {
+    const root = temporaryRoot();
+    publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
+    // A concurrent publisher's live reservation: zero-byte and young.
+    writeFileSync(join(checkpointsDir(root), "000002.json"), "");
+    expect(() =>
+      publishCheckpoint(
+        taskDir(root),
+        baseInput({ gate: "implementation" }),
+        fakeGit(cleanSha),
+        deterministicOptions(),
+      ),
+    ).toThrow(/concurrent publisher won the sequence/);
+    expect(readFileSync(join(checkpointsDir(root), "000002.json"), "utf8")).toBe("");
+  });
+
+  test("a fresh corrupt file at the next sequence surfaces contention, not deletion", () => {
+    const root = temporaryRoot();
+    publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
+    const path = join(checkpointsDir(root), "000002.json");
+    writeFileSync(path, "{}");
+    expect(() =>
+      publishCheckpoint(
+        taskDir(root),
+        baseInput({ gate: "implementation" }),
+        fakeGit(cleanSha),
+        deterministicOptions(),
+      ),
+    ).toThrow(/concurrent publisher won the sequence/);
+    expect(readFileSync(path, "utf8")).toBe("{}");
+  });
+
   test("never forks the sequence when a valid checkpoint occupies the next name", () => {
     const root = temporaryRoot();
     publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
     // A sibling at the next sequence whose name disagrees with its content
-    // is an artifact, not a checkpoint; it is removed and the sequence reused.
+    // is an aged artifact, not a checkpoint; it is removed and the sequence
+    // reused.
     const { checkpoint: orphan } = publishCheckpoint(
       taskDir(root),
       baseInput({ gate: "implementation" }),
       fakeGit(cleanSha),
       deterministicOptions(),
     );
+    const artifact = join(checkpointsDir(root), "000003.json");
     writeFileSync(
-      join(checkpointsDir(root), "000003.json"),
+      artifact,
       JSON.stringify({ ...orphan, stage: { gate: "implementation", seq: 2 } }),
     );
+    agePastGrace(artifact);
     const { checkpoint } = publishCheckpoint(
       taskDir(root),
       baseInput({ gate: "pull_request" }),
@@ -535,6 +585,32 @@ describe("crash recovery", () => {
     );
     expect(third.checkpoint.stage.seq).toBe(3);
     expect(third.checkpoint.supersedes).toBe(second.checkpoint.id);
+  });
+
+  test("a corrupt index falls back to the scan and is rewritten on publish", () => {
+    const root = temporaryRoot();
+    const first = publishCheckpoint(
+      taskDir(root),
+      baseInput(),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    writeFileSync(join(checkpointsDir(root), "index.json"), "not json");
+    const assessment = assessResume(taskDir(root), fakeGit(cleanSha));
+    expect(assessment.usable).toBe(true);
+    expect(assessment.checkpoint?.id).toBe(first.checkpoint.id);
+    const second = publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "implementation" }),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    expect(second.checkpoint.stage.seq).toBe(2);
+    expect(second.checkpoint.supersedes).toBe(first.checkpoint.id);
+    const index = JSON.parse(
+      readFileSync(join(checkpointsDir(root), "index.json"), "utf8"),
+    ) as { latest: { seq: number } };
+    expect(index.latest.seq).toBe(2);
   });
 
   test("ignores leftover temp files from a crashed publish", () => {

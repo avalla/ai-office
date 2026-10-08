@@ -37,14 +37,24 @@ import { errorMessage, isRecord } from "./shared.ts";
  * The published file name is the zero-padded sequence alone, so the
  * exclusive-create reservation is per sequence, whatever the gate. A crash
  * can leave a zero-byte file behind (reserved, not yet renamed over); the
- * next publish removes such artifacts before computing the sequence, and a
- * colliding file that does not validate as a checkpoint is removed on the
- * retry path. Readers cross-check the index against a scan of published
- * files, so a crash between the checkpoint rename and the index rename
- * loses the update, never the store.
+ * next publish removes such artifacts - once older than a grace period, so
+ * a live publisher's in-flight reservation is never deleted - before
+ * computing the sequence, and a colliding file that does not validate as a
+ * checkpoint is removed on the retry path under the same age rule. Readers
+ * cross-check the index against a scan of published files, so a crash
+ * between the checkpoint rename and the index rename loses the update,
+ * never the store.
  */
 
 export const checkpointSchemaVersion = 1;
+
+/**
+ * How old a zero-byte or non-validating file at a sequence name must be
+ * before cleanup treats it as a crash artifact. A younger file may be the
+ * in-flight reservation of a live concurrent publisher: deleting it would
+ * let that publisher's stalled rename overwrite a durable checkpoint.
+ */
+export const reservationGraceMs = 60_000;
 
 /** Published checkpoints kept per task before automatic pruning starts. */
 export const defaultCheckpointRetentionCap = 20;
@@ -632,20 +642,24 @@ function scanLatest(
 }
 
 /**
- * Removes zero-byte published files: the reservation artifact of a crash
- * between the exclusive create and the rename. Runs at publish time only,
- * so reads stay free of write side effects.
+ * Removes zero-byte published files older than {@link reservationGraceMs}:
+ * the reservation artifact of a crash between the exclusive create and the
+ * rename. A younger file may be a live publisher's in-flight reservation
+ * and is left alone. Runs at publish time only, so reads stay free of
+ * write side effects.
  */
 function removeCrashedReservationArtifacts(directory: string): string[] {
   const removed: string[] = [];
+  const now = Date.now();
   for (const file of readdirSync(directory)) {
     if (!checkpointFilePattern.test(file)) continue;
     const path = join(directory, file);
     try {
-      if (statSync(path).size === 0) {
-        unlinkSync(path);
-        removed.push(file);
-      }
+      const stats = statSync(path);
+      if (stats.size !== 0) continue;
+      if (now - stats.mtimeMs < reservationGraceMs) continue;
+      unlinkSync(path);
+      removed.push(file);
     } catch {
       // A racing cleanup wins; the publish attempt reports what it saw.
     }
@@ -654,14 +668,23 @@ function removeCrashedReservationArtifacts(directory: string): string[] {
 }
 
 /**
- * Handles an exclusive-create collision at `seq`: a file that validates as
- * a checkpoint is a lost race, left in place for the retry to re-read; a
- * file that does not validate is a crashed or corrupt artifact and is
- * removed so the retry can use the sequence.
+ * Handles an exclusive-create collision at `seq`. A file that validates as
+ * a checkpoint is a lost race, left in place for the retry to re-read. A
+ * file that does not validate and is older than {@link reservationGraceMs}
+ * is a crashed or corrupt artifact and is removed so the retry can use the
+ * sequence; a younger file is a live publisher's reservation and is never
+ * deleted - the retry loop surfaces the contention instead.
  */
 function handleSequenceCollision(directory: string, seq: number): void {
   const file = checkpointFileName(seq);
   const path = join(directory, file);
+  let aged: boolean;
+  try {
+    aged = Date.now() - statSync(path).mtimeMs >= reservationGraceMs;
+  } catch {
+    return; // Gone between the collision and the inspection; the retry re-reads.
+  }
+  if (!aged) return;
   try {
     readPublishedCheckpoint(directory, file);
   } catch {
@@ -686,7 +709,15 @@ function loadLatestCheckpoint(
 ): { entry: CheckpointIndexEntry; bytes: Buffer } | null {
   const directory = checkpointsDirectory(taskDirectory);
   let indexed: { entry: CheckpointIndexEntry; bytes: Buffer } | null = null;
-  const indexEntry = readIndex(taskDirectory)?.latest ?? null;
+  let indexEntry: CheckpointIndexEntry | null;
+  try {
+    indexEntry = readIndex(taskDirectory)?.latest ?? null;
+  } catch (error) {
+    if (!(error instanceof CheckpointFormatError)) throw error;
+    // A corrupt index says nothing about any checkpoint; fall back to the
+    // scan, and let the next publish rewrite the index.
+    indexEntry = null;
+  }
   if (indexEntry !== null) {
     const path = join(directory, indexEntry.file);
     if (!existsSync(path)) {

@@ -66,14 +66,17 @@ lives in the document and in the index.
 - Publishing reserves the sequence with an exclusive create. A concurrent
   publisher loses the reservation, re-reads, and retries; losing can stall
   a sequence but never fork it. A colliding file that does not validate as
-  a checkpoint is a crashed or corrupt artifact and is removed on the retry
-  path, as is a zero-byte file left by a crash between the reservation and
-  the rename (the next publish sweeps those first).
+  a checkpoint is a crashed or corrupt artifact once it is older than a
+  short grace period (a younger file may be a live publisher's in-flight
+  reservation and is never deleted); it is removed on the retry path under
+  that age rule, as is a zero-byte file left by a crash between the
+  reservation and the rename, which the next publish sweeps first.
 - Readers cross-check the index against a scan of published files. A crash
   between the checkpoint rename and the index rename leaves a stale-but-valid
   index; the scan reveals the newer checkpoint, so the crash loses the
-  update, never the store. An indexed file that fails the recorded hash is
-  a tamper signal and stops the reader.
+  update, never the store. An index that does not parse falls back to the
+  same scan; an indexed checkpoint file that fails the recorded hash is a
+  tamper signal and stops the reader.
 - Published checkpoints are immutable. The only changes are new checkpoints
   (`supersedes` points at the previous one) and retention pruning.
 - Retention runs after each publish and on demand; its failure never fails
