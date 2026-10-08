@@ -211,9 +211,9 @@ only presents it:
 
 - `ready`: `isTaskRunnable` accepts the recorded status (`pending`, `assigned`,
   `running`, `waiting_review`; never `blocked` or terminal) and every
-  prerequisite's recorded status is `completed`: the same rule as
-  `ManageTaskDependencies.readiness`. A cancelled or failed prerequisite keeps
-  its dependents unmet.
+  prerequisite's recorded status is `completed` or `waiting_review`: the same
+  rule as `ManageTaskDependencies.readiness`. A cancelled or failed prerequisite
+  keeps its dependents unmet.
 - `terminal`: the recorded status is terminal (`isTerminalTaskStatus`); not the
   same as an operational `failed`, which a runnable task can show after a failed
   run.
@@ -221,8 +221,9 @@ only presents it:
   `unmetPrerequisiteIds` lists them.
 - `needsAttention`: the task carries an authoritative attention reason
   (blocked, failed, and the other documented attention kinds).
-- `completionUnblocks`: the dependents that become ready when the task
-  completes (it is their only unmet prerequisite and their status allows work);
+- `completionUnblocks`: the dependents that become ready when the task reaches
+  `waiting_review` or `completed` (it is their only unmet prerequisite and their
+  status allows work);
   empty for a terminal task (a completed task is nobody's unmet prerequisite
   any more; a failed or cancelled one can never complete).
 - `summary`: counts of `ready`, `waiting`, operationally `blocked`,

@@ -3,7 +3,7 @@ name: task-delivery
 description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
 license: MIT
 metadata:
-  version: "0.3.0"
+  version: "0.3.1"
 ---
 
 # Task Delivery
@@ -202,7 +202,13 @@ Declining run-wide stacking leaves separately approved Git branch
 dependencies unchanged. Every other task starts from the integration branch
 unless another separately approved Git branch dependency applies. A
 separately approved Git branch dependency takes precedence over the run chain
-for its task. Stacking the run changes where branches start and how a stop spreads along the stack, and nothing else: every task keeps its own pull
+for its task. When a prerequisite is under review, the dependent task may start
+before it is DONE only if its starting head contains that prerequisite's current
+review head. If several prerequisites are under review, the starting head must
+contain every one of their current review heads. Verify this before marking the
+task started, and record the heads in the task's delivery evidence. The logical
+dependencies remain unresolved until their tasks are DONE.
+Stacking the run changes where branches start and how a stop spreads along the stack, and nothing else: every task keeps its own pull
 request and gates, and its task dependencies stay as they were. When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it, directly or through other tasks, stop too, and so does every later task of the chain that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts. If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them.
 
 A run that covers several tasks gives each task its own branch, pull request,

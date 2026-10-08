@@ -13,7 +13,7 @@ export class TaskDependencyError extends DomainValidationError {
   }
 }
 
-/** A hard prerequisite is satisfied only by completed work. */
+/** Work submitted for review can be used as a base for dependent work. */
 export function blockingPrerequisites(
   taskId: string,
   dependsOnTaskIds: readonly string[],
@@ -23,7 +23,9 @@ export function blockingPrerequisites(
     const status = statuses.get(id);
     if (status === undefined)
       throw new TaskDependencyError(`Prerequisite task ${id} does not exist`);
-    return status === "completed" ? [] : [{ taskId: id, status }];
+    return status === "completed" || status === "waiting_review"
+      ? []
+      : [{ taskId: id, status }];
   });
 }
 

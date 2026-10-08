@@ -1057,6 +1057,7 @@ describe.skipIf(connectionString === undefined)(
           "20261006000200_project_workflow_override.sql",
           "20261006000300_project_definition_payload_object.sql",
           "20261008000100_milestone_archived_status.sql",
+          "20261008000200_review_ready_task_dependencies.sql",
         ]);
         expect(await migratePostgres(database, migrationDirectory)).toEqual([]);
         const rows = await database.query<{
@@ -1080,6 +1081,43 @@ describe.skipIf(connectionString === undefined)(
           ]),
           ["status-only", "executed", null],
         ]);
+        for (const id of ["review-prerequisite", "review-dependent"])
+          await database.query(
+            `INSERT INTO core.task(id,project_id,title,status,priority,created_at,updated_at)
+             VALUES ($1,'history-project',$1,'pending',0,$2,$2)`,
+            [id, at],
+          );
+        await database.query(
+          `INSERT INTO core.task_dependency(project_id,task_id,depends_on_task_id,created_at)
+           VALUES ('history-project','review-dependent','review-prerequisite',$1)`,
+          [at],
+        );
+        await expect(
+          database.query(
+            "UPDATE core.task SET status='running' WHERE id='review-dependent'",
+          ),
+        ).rejects.toThrow("incomplete prerequisites");
+        await database.query(
+          "UPDATE core.task SET status='running' WHERE id='review-prerequisite'",
+        );
+        await database.query(
+          "UPDATE core.task SET status='waiting_review' WHERE id='review-prerequisite'",
+        );
+        await expect(
+          database.query(
+            "UPDATE core.task SET status='running' WHERE id='review-dependent'",
+          ),
+        ).resolves.toBeDefined();
+        await database.query(
+          "UPDATE core.task SET status='blocked' WHERE id='review-prerequisite'",
+        );
+        await expect(
+          database.query(
+            `INSERT INTO core.agent_run(id,project_id,task_id,agent_id,status,created_at,updated_at)
+             VALUES ('review-run','history-project','review-dependent','history-agent','queued',$1,$1)`,
+            [at],
+          ),
+        ).rejects.toThrow("incomplete prerequisites");
         const repository = new PostgresTaskDependencyRepository(
           database,
           "history-tenant",
@@ -1429,6 +1467,7 @@ describe.skipIf(connectionString === undefined)(
           "20261006000200_project_workflow_override.sql",
           "20261006000300_project_definition_payload_object.sql",
           "20261008000100_milestone_archived_status.sql",
+          "20261008000200_review_ready_task_dependencies.sql",
         ]);
         expect(
           await database.query<{ is_nullable: string }>(
@@ -1701,6 +1740,7 @@ describe.skipIf(connectionString === undefined)(
         expect(await migratePostgres(database, migrationDirectory)).toEqual([
           payloadMigration,
           "20261008000100_milestone_archived_status.sql",
+          "20261008000200_review_ready_task_dependencies.sql",
         ]);
 
         const after = await storedRows(database);
@@ -1919,6 +1959,7 @@ describe.skipIf(connectionString === undefined)(
           expect(await migratePostgres(database, migrationDirectory)).toEqual([
             payloadMigration,
             "20261008000100_milestone_archived_status.sql",
+          "20261008000200_review_ready_task_dependencies.sql",
           ]);
           expect(
             (await storedRows(database)).map((row) => [
@@ -2174,6 +2215,7 @@ describe.skipIf(connectionString === undefined)(
         expect(await migratePostgres(database, migrationDirectory)).toEqual([
           payloadMigration,
           "20261008000100_milestone_archived_status.sql",
+          "20261008000200_review_ready_task_dependencies.sql",
         ]);
         expect(await repository.get(project)).toMatchObject({
           revision: 2,

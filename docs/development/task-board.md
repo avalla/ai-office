@@ -85,6 +85,19 @@ ai-office task:start --project <project-id> --task <task-id>
 ai-office task:complete --project <project-id> --task <task-id>
 ```
 
+A task with prerequisites may start when each prerequisite is `completed` or
+`waiting_review`. The same rule governs `task:readiness`, AgentRun admission,
+and active pipeline admission. A prerequisite that leaves review for `blocked`,
+`failed`, or `cancelled` blocks new dependent starts and run admissions.
+`waiting_review` remains distinct from `completed`:
+the prerequisite still needs its own review and completion.
+
+When dependent work uses a prerequisite in review, the delivery workflow must
+start the dependent branch from a commit containing that prerequisite's current
+review head. With several prerequisites in review, the base must contain every
+review head. The Runtime records task state and checks prerequisite statuses; it
+does not store task Git heads or verify Git ancestry.
+
 Every transition validates the current state, refuses an impossible one with an
 error naming what *is* allowed, runs in one transaction with its audit event,
 moves `updated_at`, and never writes the status column directly. Transitions are

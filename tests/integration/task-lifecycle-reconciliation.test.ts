@@ -349,6 +349,91 @@ afterEach(() => {
 });
 
 describe("task lifecycle commands", () => {
+  test("review-submitted prerequisites admit dependent work and are rechecked", async () => {
+    const context = await fixture();
+    await seedProject(context, "review-project");
+    for (const taskId of [
+      "foundation-a",
+      "foundation-b",
+      "pending",
+      "dependent",
+    ])
+      await seedTask(context, "review-project", taskId);
+    for (const dependsOnTaskId of ["foundation-a", "foundation-b", "pending"])
+      await context.dependencyCommands.link({
+        projectId: "review-project",
+        taskId: "dependent",
+        dependsOnTaskId,
+        actorId: "operator",
+      });
+    for (const taskId of ["foundation-a", "foundation-b"]) {
+      await context.lifecycle.start({
+        projectId: "review-project",
+        taskId,
+        actorId: "operator",
+      });
+      await context.lifecycle.submitForReview({
+        projectId: "review-project",
+        taskId,
+        actorId: "operator",
+      });
+    }
+    expect(
+      await context.dependencyCommands.readiness("review-project", "dependent"),
+    ).toMatchObject({
+      runnable: false,
+      blockedBy: [{ taskId: "pending", status: "pending" }],
+    });
+    await expect(
+      context.lifecycle.start({
+        projectId: "review-project",
+        taskId: "dependent",
+        actorId: "operator",
+      }),
+    ).rejects.toBeInstanceOf(TaskPrerequisiteIncompleteError);
+
+    await context.lifecycle.start({
+      projectId: "review-project",
+      taskId: "pending",
+      actorId: "operator",
+    });
+    await context.lifecycle.submitForReview({
+      projectId: "review-project",
+      taskId: "pending",
+      actorId: "operator",
+    });
+    expect(
+      await context.dependencyCommands.readiness("review-project", "dependent"),
+    ).toMatchObject({ runnable: true, blockedBy: [] });
+    expect(
+      await context.lifecycle.start({
+        projectId: "review-project",
+        taskId: "dependent",
+        actorId: "operator",
+      }),
+    ).toBe("running");
+
+    await context.lifecycle.block({
+      projectId: "review-project",
+      taskId: "foundation-a",
+      actorId: "operator",
+      reason: "Review found a blocker",
+    });
+    expect(
+      await context.dependencyCommands.readiness("review-project", "dependent"),
+    ).toMatchObject({
+      runnable: false,
+      blockedBy: [{ taskId: "foundation-a", status: "blocked" }],
+    });
+    await expect(
+      context.agentRuns.execute({
+        projectId: "review-project",
+        taskId: "dependent",
+        agentId: "absent",
+      }),
+    ).rejects.toBeInstanceOf(TaskPrerequisiteIncompleteError);
+  });
+
   test("hard prerequisites block readiness, start, and scheduling until completed", async () => {
     const context = await fixture();
     await seedProject(context, "dependency-project");
