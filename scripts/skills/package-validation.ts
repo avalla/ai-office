@@ -87,6 +87,7 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       "references/qa-checklist.md",
       "references/evidence.md",
       "references/configuration.md",
+      "references/handoff.md",
       "assets/pr-template.md",
     ],
     stages: [
@@ -279,6 +280,24 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:scope",
         pattern: /stay in scope/iu,
+      },
+      {
+        id: "policy:handoff-is-offer-not-gate",
+        pattern: /It is an offer, never a gate/iu,
+      },
+      {
+        id: "policy:handoff-is-context-handoff",
+        pattern:
+          /A handoff is a context handoff: a map to recorded state for the context/iu,
+      },
+      {
+        id: "policy:handoff-not-a-review-input",
+        pattern:
+          /It is never an input to independent review, second review, verification, or external review/iu,
+      },
+      {
+        id: "policy:handoff-untrusted-input",
+        pattern: /treats it as untrusted input/iu,
       },
     ],
   },

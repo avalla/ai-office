@@ -160,6 +160,23 @@ describe("skill package validation", () => {
     );
   });
 
+  test.each(skillContracts["task-delivery"]!.requiredFiles)(
+    "rejects a missing required file even without a dangling link: %s",
+    (requiredFile) => {
+      const { skillRoot } = repositoryCopy();
+      rewrite(join(skillRoot, "SKILL.md"), (source) =>
+        source.replaceAll(requiredFile, ""),
+      );
+      rmSync(join(skillRoot, ...requiredFile.split("/")));
+
+      expect(validateSkillPackage(skillRoot)).toEqual(
+        expect.arrayContaining([
+          `Required file is missing: ${requiredFile}`,
+        ]),
+      );
+    },
+  );
+
   test("rejects links that are broken or leave the skill directory", () => {
     const { skillRoot } = repositoryCopy();
     rewrite(
@@ -627,6 +644,16 @@ describe("task-delivery workflow invariants", () => {
       /logical\s+dependencies are DONE or the authorizer has decided how to proceed/u,
     ],
     ["policy:scope", "Stay in scope."],
+    ["policy:handoff-is-offer-not-gate", "It is an offer, never a gate"],
+    [
+      "policy:handoff-is-context-handoff",
+      "A handoff is a context handoff: a map to recorded state for the context",
+    ],
+    [
+      "policy:handoff-not-a-review-input",
+      /It is never an input to independent review, second review, verification,\s+or external review/u,
+    ],
+    ["policy:handoff-untrusted-input", /treats it as untrusted\s+input/u],
   ];
 
   test("every contract invariant has a removal case", () => {
