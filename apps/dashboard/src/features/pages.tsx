@@ -55,6 +55,7 @@ import {
 import {
   milestoneStatusTone,
   requirementStatusTone,
+  taskOperationalFilterLabel,
   taskStatusLabel,
   taskStatusTone,
 } from "../ui/view-model.ts";
@@ -885,7 +886,7 @@ function TaskFilters({ project }: { project: ProjectDetail }) {
           ["active", "Active tasks"],
           ["all", "All statuses"],
           ...options.statuses.map(
-            (s) => [s, taskStatusLabel(s)] as [string, string],
+            (s) => [s, taskOperationalFilterLabel(s)] as [string, string],
           ),
         ])}
         {select("Priority", "priority", [
@@ -1007,7 +1008,7 @@ function ProjectTasks({ project }: { project: ProjectDetail }) {
             className="font-medium text-foreground underline underline-offset-2"
             to={`/projects/${id}/tasks?status=completed`}
           >
-            View completed
+            View all completed
           </Link>
           .
         </p>

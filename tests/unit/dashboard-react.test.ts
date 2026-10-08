@@ -213,6 +213,7 @@ const task: TaskOperationalState = {
   description: "A clear and readable description.",
   priority: 0,
   recordedStatus: "pending",
+  terminal: false,
   operationalStatus: "in_progress",
   divergesFromRecordedStatus: true,
   divergenceReasons: ["agent_run_active_without_task_transition"],
@@ -729,6 +730,35 @@ describe("operational presentation", () => {
     );
     expect(html(TaskTable, { tasks: [task] })).toContain("No linked milestone");
   });
+  test("labels the task status filter as operational without changing its value", () => {
+    const markup = html(ProjectPage, {
+      data: {
+        kind: "project",
+        project: {
+          ...project,
+          taskPage: {
+            filters: { status: "failed" },
+            offset: 0,
+            limit: 20,
+            options: {
+              statuses: ["failed", "completed"],
+              priorities: [],
+              agents: [],
+              hasUnassigned: false,
+            },
+          },
+        },
+        activePipelines: { total: 0, items: [], truncated: false },
+        activeRuns: { total: 0, items: [], truncated: false },
+      },
+      section: "tasks",
+    });
+    expect(markup).toMatch(/Operational status.*?<select/s);
+    expect(markup).toContain(
+      '<option value="failed">Failed (operational)</option>',
+    );
+    expect(markup).toContain('<option value="completed">completed</option>');
+  });
   test("hides archived milestones in the default project view", () => {
     const page = {
       kind: "project",
@@ -885,7 +915,7 @@ describe("task filters", () => {
       section: "tasks",
     });
     expect(markup).toContain("1 completed project task");
-    expect(markup).toContain("View completed");
+    expect(markup).toContain("View all completed");
     expect(markup).toContain("?status=completed");
     expect(markup).toContain("1–1 of 101 matching");
     expect(markup).toContain(

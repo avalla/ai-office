@@ -179,6 +179,7 @@ describe("daemon query API", () => {
             taskId,
             description: "First line\nSecond line",
             operationalStatus: "not_started",
+            terminal: false,
             assignedAgent: null,
           },
           runs: { total: 0, items: [], truncated: false },
@@ -554,6 +555,7 @@ describe("daemon query API", () => {
         title: "Ship the thing",
         recordedStatus: "pending",
         operationalStatus: "not_started",
+        terminal: false,
         divergesFromRecordedStatus: false,
         priority: 5,
       });
