@@ -188,9 +188,12 @@ For removal, preview a `remove_owned` mutation such as
 `{"action":"remove_owned","kind":"roles","id":"gardener"}`, or a
 `remove_override` mutation with the same exact `source` object used by
 `put_override`. Apply with the current **project definition** revision after
-review. To deselect all packs, use `--packs '[]'` with the binding preview and,
-when reconciliation is needed, the upgrade flow below; an empty selection
-does not automatically delete project-owned definitions.
+review. To deselect all packs, use `--packs '[]'` with the binding preview.
+If any selected pack has project overrides, use `project:pack:upgrade` with
+`--packs '[]'` so those overrides receive explicit resolutions; direct
+`project:pack:apply` can leave them unresolved. `retain_as_project_owned` is
+available where the override contains a complete definition. An empty
+selection does not automatically delete project-owned definitions.
 
 ## Review conflicts and upgrades
 
@@ -208,6 +211,8 @@ pack:
 RESOLUTIONS='[]'
 ai-office project:pack:upgrade --project "$PROJECT_ID" --packs "$NEXT_PACKS" --resolutions "$RESOLUTIONS" --json
 ```
+
+This read-only command prints the plan and exits 1 if it contains issues.
 
 If the plan reports a conflict, inspect its exact source. Supported explicit
 resolutions include `remove_override` and, where valid,
