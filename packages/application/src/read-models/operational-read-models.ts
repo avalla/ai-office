@@ -373,6 +373,8 @@ export interface TaskFilters {
   priority?: number;
   agentId?: string;
   milestoneId?: string;
+  /** OR-matched milestone categories; includes "unassigned" for no milestone. */
+  milestoneIds?: readonly string[];
   unassigned?: boolean;
   sort?: TaskSort;
 }

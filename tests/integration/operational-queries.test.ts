@@ -485,6 +485,21 @@ describe("operational read repository", () => {
     });
     expect(filtered.tasks.items.map((task) => task.title)).toEqual(["A task"]);
 
+    const combined = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { status: "all", milestoneIds: [milestoneOne, milestoneTwo] },
+    });
+    expect(combined.tasks.items.map((task) => task.title)).toEqual([
+      "A task",
+      "Z task",
+    ]);
+    const withUnassigned = await context.queries.getProjectDetail("project-1", {
+      taskQuery: { status: "all", milestoneIds: [milestoneOne, "unassigned"] },
+    });
+    expect(withUnassigned.tasks.items.map((task) => task.title)).toEqual([
+      "A task",
+      "U task",
+    ]);
+
     const byName = await context.queries.getProjectDetail("project-1", {
       taskQuery: { status: "all", sort: "short_name" },
     });

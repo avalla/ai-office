@@ -1132,6 +1132,9 @@ export class OperationalQueryService {
     let hasUnassignedMilestone = false;
     const matches: TaskOperationalState[] = [];
     const search = filters.search?.toLowerCase();
+    const milestoneFilters =
+      filters.milestoneIds ??
+      (filters.milestoneId === undefined ? [] : [filters.milestoneId]);
     const batchSize = queryLimits.tasks.default;
     for (let cursor = 0; cursor < projectTaskCount; cursor += batchSize) {
       const records = await this.reads.listTasks(projectId, batchSize, cursor);
@@ -1190,12 +1193,12 @@ export class OperationalQueryService {
           continue;
         if (filters.unassigned && involved.length > 0) continue;
         if (
-          filters.milestoneId !== undefined &&
-          (filters.milestoneId === "unassigned"
-            ? milestones.length > 0
-            : !milestones.some(
-                (milestone) => milestone.milestoneId === filters.milestoneId,
-              ))
+          milestoneFilters.length > 0 &&
+          !milestoneFilters.some((id) =>
+            id === "unassigned"
+              ? milestones.length === 0
+              : milestones.some((milestone) => milestone.milestoneId === id),
+          )
         )
           continue;
         matches.push(task);

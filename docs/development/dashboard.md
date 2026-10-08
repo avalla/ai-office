@@ -311,12 +311,16 @@ operational status;
 priority is the persisted integer, including zero and negative values. Agent
 matches any active run or current assignment in an active pipeline, and
 "No current agent" matches neither. Historical run agents are excluded.
-Milestone matches any milestone linked through an explicitly linked requirement;
-"No milestone" matches tasks with no such link. Status, priority, agent, and
-milestone choices come from the project's actual tasks and project milestones.
+Selected milestones match any linked through an explicitly linked requirement;
+"No milestone" can be selected alongside named milestones and matches tasks
+with no such link. An empty selection includes all milestones. Status, priority,
+agent, and milestone choices come from the project's actual tasks and project
+milestones.
 
 The browser requests `GET /api/projects/:id?taskView=paged`, with optional
-`search`, `status`, `priority`, `agent`, `milestone`, `unassigned=true`, `sort`, and `offset` parameters.
+`search`, `status`, `priority`, `agent`, repeated `milestone`,
+`unassigned=true`, `sort`, and `offset` parameters. A single `milestone` value
+retains its existing query shape; repeated values use OR matching.
 Malformed filters return `400`; selecting both an agent and unassigned tasks is
 invalid. The response adds `taskPage` with applied filters, offset, page limit,
 and project-wide choices. Existing callers without `taskView=paged` retain the
@@ -337,6 +341,9 @@ reloads and task-detail round trips in the hash URL. Applying filters resets the
 preserve drafts and keyboard focus. Pagination reads current state rather than
 a frozen snapshot, so concurrent changes can move tasks between pages.
 Project summaries and attention counts always cover the whole project.
+The task page states the project-wide completed count and links directly to the
+Completed filter. This makes completed work reachable even when the first page
+of All statuses contains only open tasks due to sorting and pagination.
 
 ### Task details and progress
 
