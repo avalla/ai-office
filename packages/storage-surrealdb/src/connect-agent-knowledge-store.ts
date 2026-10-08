@@ -35,7 +35,18 @@ export async function connectSurrealAgentKnowledgeStore(
   };
   try {
     requireActive();
-    await db.connect(config.endpoint, { reconnect: false });
+    // `authentication` lets the SDK re-authenticate after the session token
+    // expires and after an automatic reconnect; without it a long-lived host
+    // loses knowledge access about an hour after startup.
+    await db.connect(config.endpoint, {
+      reconnect: true,
+      namespace: config.namespace,
+      database: config.database,
+      authentication: {
+        username: config.username,
+        password: config.password,
+      },
+    });
     requireActive();
     await db.signin({ username: config.username, password: config.password });
     requireActive();
