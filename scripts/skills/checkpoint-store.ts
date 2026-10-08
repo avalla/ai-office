@@ -9,6 +9,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -28,10 +29,19 @@ import { errorMessage, isRecord } from "./shared.ts";
  * Layout, per task (so successive tasks sharing a worktree never share
  * state), all of it under the repository's shared Git exclude:
  *
- *   .task-delivery/<task>/handoff.md              context-handoff packet (T1)
- *   .task-delivery/<task>/checkpoints/<seq>-<gate>.json   published, immutable
- *   .task-delivery/<task>/checkpoints/index.json          latest-valid pointer
- *   .task-delivery/<task>/checkpoints/.tmp-<uuid>         in flight, ignored
+ *   .task-delivery/<task>/handoff.md        context-handoff packet (T1)
+ *   .task-delivery/<task>/checkpoints/<seq>.json   published, immutable
+ *   .task-delivery/<task>/checkpoints/index.json    latest-valid pointer
+ *   .task-delivery/<task>/checkpoints/.tmp-<uuid>   in flight, ignored
+ *
+ * The published file name is the zero-padded sequence alone, so the
+ * exclusive-create reservation is per sequence, whatever the gate. A crash
+ * can leave a zero-byte file behind (reserved, not yet renamed over); the
+ * next publish removes such artifacts before computing the sequence, and a
+ * colliding file that does not validate as a checkpoint is removed on the
+ * retry path. Readers cross-check the index against a scan of published
+ * files, so a crash between the checkpoint rename and the index rename
+ * loses the update, never the store.
  */
 
 export const checkpointSchemaVersion = 1;
@@ -63,12 +73,14 @@ export class CheckpointFormatError extends CheckpointStoreError {
   override readonly name = "CheckpointFormatError";
 }
 
-const checkpointFilePattern = /^(\d{6})-([a-z0-9][a-z0-9_-]*)\.json$/u;
+const checkpointFilePattern = /^(\d{6})\.json$/u;
 const tempFilePattern = /^\.tmp-/u;
 const idPattern = /^[0-9a-zA-Z][0-9a-zA-Z ._-]{0,63}$/u;
 const shaPattern = /^[0-9a-f]{40,64}$/u;
 const sha256Pattern = /^[0-9a-f]{64}$/u;
-const timestampMinimum = "2000-01-01T00:00:00";
+const isoUtcPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
+const timestampMinimum = "2000-01-01T00:00:00.000Z";
+const maximumPublishAttempts = 3;
 
 export interface CheckpointEvidenceRef {
   readonly kind: "command" | "link" | "file";
@@ -165,6 +177,8 @@ export interface PublishOptions {
 export interface PublishResult {
   readonly checkpoint: Checkpoint;
   readonly pruned: readonly string[];
+  /** Retention is best-effort hygiene: its failure never fails the publish. */
+  readonly pruneError: string | null;
 }
 
 export interface ResumeAssessment {
@@ -195,17 +209,31 @@ function requireRecord(value: unknown, path: string): Record<string, unknown> {
 function requireString(
   value: unknown,
   path: string,
-  { pattern, minimum }: { pattern?: RegExp; minimum?: string } = {},
+  { pattern }: { pattern?: RegExp } = {},
 ): string {
   if (typeof value !== "string" || value === "")
     throw new CheckpointFormatError(`${path} must be a non-empty string`);
   if (pattern !== undefined && !pattern.test(value))
     throw new CheckpointFormatError(`${path} has an invalid value: ${value}`);
-  if (minimum !== undefined && value < minimum)
-    throw new CheckpointFormatError(
-      `${path} is not an ISO timestamp: ${value}`,
-    );
   return value;
+}
+
+function requireTimestamp(value: unknown, path: string): string {
+  const text = requireString(value, path);
+  if (!isoUtcPattern.test(text))
+    throw new CheckpointFormatError(
+      `${path} is not an ISO-8601 UTC timestamp: ${text}`,
+    );
+  const parsed = new Date(text);
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString() !== text ||
+    text < timestampMinimum
+  )
+    throw new CheckpointFormatError(
+      `${path} is not a valid ISO-8601 UTC timestamp: ${text}`,
+    );
+  return text;
 }
 
 function requireStringArray(value: unknown, path: string): string[] {
@@ -218,10 +246,7 @@ function requireStringArray(value: unknown, path: string): string[] {
   );
 }
 
-function requireOptionalString(
-  value: unknown,
-  path: string,
-): string | null {
+function requireOptionalString(value: unknown, path: string): string | null {
   if (value === undefined || value === null) return null;
   return requireString(value, path, { pattern: idPattern });
 }
@@ -369,9 +394,7 @@ export function parseCheckpoint(raw: string): Checkpoint {
       sha: requireString(head.sha, "checkpoint.head.sha", { pattern: shaPattern }),
       dirty,
       dirtyPaths,
-      capturedAt: requireString(head.capturedAt, "checkpoint.head.capturedAt", {
-        minimum: timestampMinimum,
-      }),
+      capturedAt: requireTimestamp(head.capturedAt, "checkpoint.head.capturedAt"),
     },
     stage: {
       gate: requireString(stage.gate, "checkpoint.stage.gate", {
@@ -404,9 +427,7 @@ export function parseCheckpoint(raw: string): Checkpoint {
       "checkpoint.knowledgeReferences",
     ),
     supersedes: requireOptionalString(root.supersedes, "checkpoint.supersedes"),
-    publishedAt: requireString(root.publishedAt, "checkpoint.publishedAt", {
-      minimum: timestampMinimum,
-    }),
+    publishedAt: requireTimestamp(root.publishedAt, "checkpoint.publishedAt"),
   };
 }
 
@@ -440,6 +461,15 @@ function checkpointsDirectory(taskDirectory: string): string {
   return join(taskDirectory, checkpointsDirectoryName);
 }
 
+function checkpointFileName(seq: number): string {
+  return `${String(seq).padStart(6, "0")}.json`;
+}
+
+function seqFromFileName(file: string): number | null {
+  const match = checkpointFilePattern.exec(file);
+  return match === null ? null : Number.parseInt(match[1] ?? "0", 10);
+}
+
 function parseIndex(raw: string): CheckpointIndex {
   let document: unknown;
   try {
@@ -465,8 +495,7 @@ function parseIndex(raw: string): CheckpointIndex {
     const file = requireString(entry.file, "index.latest.file", {
       pattern: checkpointFilePattern,
     });
-    const match = checkpointFilePattern.exec(file);
-    if (match === null || Number.parseInt(match[1] ?? "0", 10) !== seq)
+    if (seqFromFileName(file) !== seq)
       throw new CheckpointFormatError(
         `index.latest.seq ${String(seq)} does not match its file name ${file}`,
       );
@@ -482,17 +511,17 @@ function parseIndex(raw: string): CheckpointIndex {
   return {
     schemaVersion: 1,
     latest,
-    updatedAt: requireString(root.updatedAt, "index.updatedAt", {
-      minimum: timestampMinimum,
-    }),
+    updatedAt: requireTimestamp(root.updatedAt, "index.updatedAt"),
   };
 }
 
 /**
  * Writes `content` to `fileName` inside `directory` so readers never see a
- * partial file: unique temp file, fsync, atomic rename. When `exclusive` is
- * set, the final name is reserved with `O_EXCL` first, so a racing publisher
- * fails with {@link CheckpointExistsError} instead of overwriting.
+ * partial file: unique temp file, fsync, atomic rename, then a directory
+ * fsync so the rename itself is durable. When `exclusive` is set, the final
+ * name is reserved with `O_EXCL` first: a racing publisher fails with
+ * {@link CheckpointExistsError} instead of overwriting, and the reservation
+ * is the crash artifact the next publish cleans away.
  */
 function writeAtomic(
   directory: string,
@@ -522,13 +551,24 @@ function writeAtomic(
       if (error instanceof Error && "code" in error && error.code === "EEXIST")
         throw new CheckpointExistsError(
           `checkpoint ${fileName} already exists; a concurrent publisher won the sequence`,
-          Number.parseInt(checkpointFilePattern.exec(fileName)?.[1] ?? "0", 10),
+          seqFromFileName(fileName) ?? 0,
         );
       throw error;
     }
     closeSync(reservation);
   }
   renameSync(tempPath, finalPath);
+  fsyncDirectory(directory);
+}
+
+/** Makes a rename durable; best effort is not enough for crash recovery. */
+function fsyncDirectory(directory: string): void {
+  const descriptor = openSync(directory, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function readIndex(taskDirectory: string): CheckpointIndex | null {
@@ -549,25 +589,41 @@ function listPublishedFiles(taskDirectory: string): string[] {
   return files.sort();
 }
 
+function readPublishedCheckpoint(
+  directory: string,
+  file: string,
+): Checkpoint {
+  const checkpoint = parseCheckpoint(
+    readFileSync(join(directory, file), "utf8"),
+  );
+  if (seqFromFileName(file) !== checkpoint.stage.seq)
+    throw new CheckpointFormatError(
+      `checkpoint file ${file} disagrees with its content sequence ${String(checkpoint.stage.seq)}`,
+    );
+  return checkpoint;
+}
+
 /**
- * Rebuilds the latest entry by scanning published checkpoints, for recovery
- * after a crash between the checkpoint rename and the index rename. Files
- * that do not parse, or whose name disagrees with their content, are skipped
- * and left for inspection. Returns null when none parse.
+ * Finds the highest-sequence valid checkpoint by scanning published files,
+ * for recovery when the index is missing, stale, or its file failed the
+ * recorded hash. Files that do not parse, or whose name disagrees with
+ * their content, are skipped and left for inspection. Returns null when
+ * none parse.
  */
-function recoverLatest(taskDirectory: string): CheckpointIndexEntry | null {
+function scanLatest(
+  taskDirectory: string,
+): { entry: CheckpointIndexEntry; bytes: Buffer } | null {
   const directory = checkpointsDirectory(taskDirectory);
-  let best: CheckpointIndexEntry | null = null;
+  let best: { entry: CheckpointIndexEntry; bytes: Buffer } | null = null;
   for (const file of listPublishedFiles(taskDirectory)) {
-    const bytes = readFileSync(join(directory, file));
+    const path = join(directory, file);
+    const bytes = readFileSync(path);
     try {
       const checkpoint = parseCheckpoint(bytes.toString("utf8"));
-      const match = checkpointFilePattern.exec(file);
-      if (match === null) continue;
-      const seq = Number.parseInt(match[1] ?? "0", 10);
-      if (seq !== checkpoint.stage.seq) continue;
-      if (best === null || seq > best.seq)
-        best = { seq, file, id: checkpoint.id, sha256: sha256Hex(bytes) };
+      const seq = seqFromFileName(file);
+      if (seq === null || seq !== checkpoint.stage.seq) continue;
+      if (best === null || seq > best.entry.seq)
+        best = { entry: { seq, file, id: checkpoint.id, sha256: sha256Hex(bytes) }, bytes };
     } catch {
       // Not a valid checkpoint: it cannot be the latest one.
     }
@@ -576,34 +632,90 @@ function recoverLatest(taskDirectory: string): CheckpointIndexEntry | null {
 }
 
 /**
- * Loads the latest published checkpoint and its bytes. Prefers the index;
- * when the index is missing, stale, or its file fails the recorded hash, it
- * falls back to a scan so a crash mid-publish loses the update, never the
- * store. Throws {@link CheckpointFormatError} when nothing trustworthy reads.
+ * Removes zero-byte published files: the reservation artifact of a crash
+ * between the exclusive create and the rename. Runs at publish time only,
+ * so reads stay free of write side effects.
+ */
+function removeCrashedReservationArtifacts(directory: string): string[] {
+  const removed: string[] = [];
+  for (const file of readdirSync(directory)) {
+    if (!checkpointFilePattern.test(file)) continue;
+    const path = join(directory, file);
+    try {
+      if (statSync(path).size === 0) {
+        unlinkSync(path);
+        removed.push(file);
+      }
+    } catch {
+      // A racing cleanup wins; the publish attempt reports what it saw.
+    }
+  }
+  return removed;
+}
+
+/**
+ * Handles an exclusive-create collision at `seq`: a file that validates as
+ * a checkpoint is a lost race, left in place for the retry to re-read; a
+ * file that does not validate is a crashed or corrupt artifact and is
+ * removed so the retry can use the sequence.
+ */
+function handleSequenceCollision(directory: string, seq: number): void {
+  const file = checkpointFileName(seq);
+  const path = join(directory, file);
+  try {
+    readPublishedCheckpoint(directory, file);
+  } catch {
+    try {
+      unlinkSync(path);
+    } catch {
+      // Best effort; the retry reports the collision again if it persists.
+    }
+  }
+}
+
+/**
+ * Loads the latest published checkpoint and its bytes. Trusts the index
+ * only after cross-checking it against the scan: a crash between the
+ * checkpoint rename and the index rename leaves a stale-but-valid index,
+ * and the scan is what reveals the newer checkpoint. Throws
+ * {@link CheckpointFormatError} when an indexed file fails the recorded
+ * hash (a tamper signal) or when nothing trustworthy reads.
  */
 function loadLatestCheckpoint(
   taskDirectory: string,
 ): { entry: CheckpointIndexEntry; bytes: Buffer } | null {
   const directory = checkpointsDirectory(taskDirectory);
-  const indexed = readIndex(taskDirectory)?.latest ?? null;
-  if (indexed !== null && existsSync(join(directory, indexed.file))) {
-    const bytes = readFileSync(join(directory, indexed.file));
-    if (sha256Hex(bytes) !== indexed.sha256)
-      throw new CheckpointFormatError(
-        `checkpoint ${indexed.file} does not match the hash recorded in index.json`,
-      );
-    return { entry: indexed, bytes };
+  let indexed: { entry: CheckpointIndexEntry; bytes: Buffer } | null = null;
+  const indexEntry = readIndex(taskDirectory)?.latest ?? null;
+  if (indexEntry !== null) {
+    const path = join(directory, indexEntry.file);
+    if (!existsSync(path)) {
+      const recovered = scanLatest(taskDirectory);
+      if (recovered === null)
+        throw new CheckpointFormatError(
+          `checkpoint index points at ${indexEntry.file}, which is missing`,
+        );
+    } else {
+      const bytes = readFileSync(path);
+      if (sha256Hex(bytes) !== indexEntry.sha256)
+        throw new CheckpointFormatError(
+          `checkpoint ${indexEntry.file} does not match the hash recorded in index.json`,
+        );
+      indexed = { entry: indexEntry, bytes };
+    }
   }
-  const recovered = recoverLatest(taskDirectory);
-  if (recovered === null) return null;
-  return { entry: recovered, bytes: readFileSync(join(directory, recovered.file)) };
+  const scanned = scanLatest(taskDirectory);
+  if (indexed !== null && scanned !== null)
+    return scanned.entry.seq > indexed.entry.seq ? scanned : indexed;
+  return indexed ?? scanned;
 }
 
 /**
- * Publishes the next checkpoint for a task. The sequence number is one more
- * than the latest published; a concurrent publisher fails with
- * {@link CheckpointExistsError} and retries with a fresh read. Published
- * checkpoints are never modified; a newer one supersedes them by reference.
+ * Publishes the next checkpoint for a task. The sequence is one more than
+ * the latest valid checkpoint known to a fresh read; losing the exclusive
+ * reservation re-reads and retries, so a concurrent publisher can stall a
+ * sequence but never fork it. Published checkpoints are never modified; a
+ * newer one supersedes them by reference.
  */
 export function publishCheckpoint(
   taskDirectory: string,
@@ -622,6 +734,7 @@ export function publishCheckpoint(
 
   const directory = checkpointsDirectory(taskDirectory);
   mkdirSync(directory, { recursive: true, mode: 0o755 });
+  removeCrashedReservationArtifacts(directory);
 
   const headSha = git.headSha();
   const dirtyPaths = [...git.dirtyPaths()];
@@ -630,71 +743,95 @@ export function publishCheckpoint(
       `git provider returned something that is not a full commit sha: ${headSha}`,
     );
 
-  let previous: Checkpoint | null = null;
-  let seq = 1;
-  const current = loadLatestCheckpoint(taskDirectory);
-  if (current !== null) {
-    previous = parseCheckpoint(current.bytes.toString("utf8"));
-    seq = previous.stage.seq + 1;
-  }
-
   const timestamp = now().toISOString();
-  const checkpoint: Checkpoint = {
-    schemaVersion: checkpointSchemaVersion,
-    id: idGen(),
-    run: {
-      task: input.task,
-      milestone: input.milestone ?? null,
-      branch: input.branch,
-      base: input.base,
-    },
-    head: {
-      sha: headSha,
-      dirty: dirtyPaths.length > 0,
-      dirtyPaths,
-      capturedAt: timestamp,
-    },
-    stage: { gate: input.gate, seq },
-    profile: input.profile,
-    evidence: input.evidence ?? [],
-    openFindings: input.openFindings ?? [],
-    decisions: input.decisions ?? [],
-    unresolvedDependencies: input.unresolvedDependencies ?? [],
-    knownLimitations: input.knownLimitations ?? [],
-    nextAction: input.nextAction,
-    knowledgeReferences: input.knowledgeReferences ?? [],
-    supersedes: previous === null ? null : previous.id,
-    publishedAt: timestamp,
-  };
-  const body = `${JSON.stringify(checkpoint, null, 2)}\n`;
-  const fileName = `${String(seq).padStart(6, "0")}-${input.gate}.json`;
-  writeAtomic(directory, fileName, body, true);
-
-  const bytes = Buffer.from(body, "utf8");
-  const index: CheckpointIndex = {
-    schemaVersion: 1,
-    latest: { seq, file: fileName, id: checkpoint.id, sha256: sha256Hex(bytes) },
-    updatedAt: timestamp,
-  };
-  writeAtomic(
-    directory,
-    "index.json",
-    `${JSON.stringify(index, null, 2)}\n`,
-    false,
+  const id = idGen();
+  let lastCollision: CheckpointExistsError | null = null;
+  for (let attempt = 0; attempt < maximumPublishAttempts; attempt += 1) {
+    const current = loadLatestCheckpoint(taskDirectory);
+    const previous = current === null ? null : parseCheckpoint(current.bytes.toString("utf8"));
+    const seq = previous === null ? 1 : previous.stage.seq + 1;
+    const checkpoint: Checkpoint = {
+      schemaVersion: checkpointSchemaVersion,
+      id,
+      run: {
+        task: input.task,
+        milestone: input.milestone ?? null,
+        branch: input.branch,
+        base: input.base,
+      },
+      head: {
+        sha: headSha,
+        dirty: dirtyPaths.length > 0,
+        dirtyPaths,
+        capturedAt: timestamp,
+      },
+      stage: { gate: input.gate, seq },
+      profile: input.profile,
+      evidence: input.evidence ?? [],
+      openFindings: input.openFindings ?? [],
+      decisions: input.decisions ?? [],
+      unresolvedDependencies: input.unresolvedDependencies ?? [],
+      knownLimitations: input.knownLimitations ?? [],
+      nextAction: input.nextAction,
+      knowledgeReferences: input.knowledgeReferences ?? [],
+      supersedes: previous === null ? null : previous.id,
+      publishedAt: timestamp,
+    };
+    const body = `${JSON.stringify(checkpoint, null, 2)}\n`;
+    // Write/read symmetry: refuse to publish a document the reader would
+    // reject, whatever the provider or caller handed us.
+    try {
+      parseCheckpoint(body);
+    } catch (error) {
+      throw new CheckpointStoreError(
+        `refusing to publish a checkpoint its own reader would reject: ${errorMessage(error)}`,
+      );
+    }
+    try {
+      writeAtomic(directory, checkpointFileName(seq), body, true);
+      const bytes = Buffer.from(body, "utf8");
+      let pruned: readonly string[] = [];
+      let pruneError: string | null = null;
+      try {
+        pruned = pruneCheckpoints(
+          taskDirectory,
+          options.retentionCap ?? defaultCheckpointRetentionCap,
+        );
+      } catch (error) {
+        pruneError = errorMessage(error);
+      }
+      const index: CheckpointIndex = {
+        schemaVersion: 1,
+        latest: { seq, file: checkpointFileName(seq), id: checkpoint.id, sha256: sha256Hex(bytes) },
+        updatedAt: timestamp,
+      };
+      writeAtomic(
+        directory,
+        "index.json",
+        `${JSON.stringify(index, null, 2)}\n`,
+        false,
+      );
+      return { checkpoint, pruned, pruneError };
+    } catch (error) {
+      if (error instanceof CheckpointExistsError) {
+        lastCollision = error;
+        handleSequenceCollision(directory, error.seq);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw (
+    lastCollision ??
+    new CheckpointStoreError("publish failed without a recorded cause")
   );
-
-  const pruned = pruneCheckpoints(
-    taskDirectory,
-    options.retentionCap ?? defaultCheckpointRetentionCap,
-  );
-  return { checkpoint, pruned };
 }
 
 /** All published checkpoints of a task, oldest first; unparseable files throw. */
 export function listCheckpoints(taskDirectory: string): Checkpoint[] {
   const directory = checkpointsDirectory(taskDirectory);
   return listPublishedFiles(taskDirectory).map((file) =>
-    parseCheckpoint(readFileSync(join(directory, file), "utf8")),
+    readPublishedCheckpoint(directory, file),
   );
 }
 
@@ -706,9 +843,7 @@ function handoffCitedCheckpointIds(taskDirectory: string): Set<string> {
   const cited = new Set<string>();
   for (const file of listPublishedFiles(taskDirectory)) {
     try {
-      const checkpoint = parseCheckpoint(
-        readFileSync(join(directory, file), "utf8"),
-      );
+      const checkpoint = readPublishedCheckpoint(directory, file);
       if (text.includes(checkpoint.id)) cited.add(checkpoint.id);
     } catch {
       // Unparseable files have no id to cite.
@@ -718,10 +853,12 @@ function handoffCitedCheckpointIds(taskDirectory: string): Set<string> {
 }
 
 /**
- * Deletes the oldest published checkpoints beyond `cap`, never the latest
- * and never one whose id a handoff packet cites. Returns deleted file names.
- * Immutability means no mutation of what stays; deletion under an explicit
- * retention rule is the documented lifecycle of what goes.
+ * Deletes the oldest valid published checkpoints beyond `cap`, never the
+ * latest and never one whose id a handoff packet cites. Files that do not
+ * validate are not checkpoints: they are skipped, never deleted. Returns
+ * deleted file names. Immutability means no mutation of what stays;
+ * deletion under an explicit retention rule is the documented lifecycle of
+ * what goes.
  */
 export function pruneCheckpoints(
   taskDirectory: string,
@@ -732,7 +869,14 @@ export function pruneCheckpoints(
       `retention cap must be an integer >= 1, got: ${cap}`,
     );
   const directory = checkpointsDirectory(taskDirectory);
-  const published = listCheckpoints(taskDirectory);
+  const published: Checkpoint[] = [];
+  for (const file of listPublishedFiles(taskDirectory)) {
+    try {
+      published.push(readPublishedCheckpoint(directory, file));
+    } catch {
+      // Not a valid checkpoint: outside retention's remit.
+    }
+  }
   if (published.length <= cap) return [];
   const cited = handoffCitedCheckpointIds(taskDirectory);
   const latestId =
@@ -745,7 +889,7 @@ export function pruneCheckpoints(
   const excess = published.length - cap;
   const deleted: string[] = [];
   for (const checkpoint of deletable.slice(0, Math.max(0, excess))) {
-    const fileName = `${String(checkpoint.stage.seq).padStart(6, "0")}-${checkpoint.stage.gate}.json`;
+    const fileName = checkpointFileName(checkpoint.stage.seq);
     try {
       unlinkSync(join(directory, fileName));
       deleted.push(fileName);

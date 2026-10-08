@@ -14,16 +14,16 @@ successive tasks sharing a worktree never share state:
 
 ```text
 .task-delivery/<task>/handoff.md              context-handoff packet
-.task-delivery/<task>/checkpoints/<seq>-<gate>.json   published, immutable
+.task-delivery/<task>/checkpoints/<seq>.json          published, immutable
 .task-delivery/<task>/checkpoints/index.json          latest-valid pointer
 .task-delivery/<task>/checkpoints/.tmp-<uuid>         in flight, ignored
 ```
 
 `<task>` is the task identifier, or the branch name when there is no task
 identifier - the same rule as the handoff packet. `<seq>` is a six-digit,
-1-based sequence; `<gate>` is the gate id (`preflight`, `design`,
-`implementation`, `pull_request`, `review`, `second_review`, `qa`,
-`external_review`, `ready_for_merge`, `post_merge`).
+1-based sequence. The file name is the sequence alone, so the
+exclusive-create reservation is per sequence whatever the gate; the gate
+lives in the document and in the index.
 
 ## Schema, version 1
 
@@ -51,25 +51,36 @@ identifier - the same rule as the handoff packet. `<seq>` is a six-digit,
   carries the content `sha256`. Output is never pasted into the checkpoint.
 - `head.dirtyPaths` holds relative in-repository paths; `dirty` is exactly
   `dirtyPaths.length > 0`.
-- A reader rejects any `schemaVersion` it does not support and any unknown
-  key, so a newer or damaged document fails loudly instead of reading as a
-  partial state.
+- Timestamps are strict ISO-8601 UTC (`...T...Z`); a reader rejects any
+  `schemaVersion` it does not support and any unknown key, so a newer or
+  damaged document fails loudly instead of reading as a partial state.
 
 ## Storage rules
 
-- Writes are atomic: a unique temp file in the same directory, fsync, then
-  rename, so readers never see a partial checkpoint. A crash between the
-  checkpoint rename and the index rename loses the update, never the store:
-  the reader rebuilds the index by scanning published files.
-- Publishing uses exclusive create on the sequence name. A concurrent
-  publisher loses with a typed error and retries with a fresh read; an
-  existing checkpoint is never overwritten.
+- A publisher validates the document with its own reader before writing it,
+  so a checkpoint the reader would reject is refused at publish time, not
+  discovered as "corrupt" at resume.
+- Writes are atomic: a unique temp file in the same directory, fsync, atomic
+  rename, then a directory fsync, so readers never see a partial checkpoint
+  and the rename survives a crash.
+- Publishing reserves the sequence with an exclusive create. A concurrent
+  publisher loses the reservation, re-reads, and retries; losing can stall
+  a sequence but never fork it. A colliding file that does not validate as
+  a checkpoint is a crashed or corrupt artifact and is removed on the retry
+  path, as is a zero-byte file left by a crash between the reservation and
+  the rename (the next publish sweeps those first).
+- Readers cross-check the index against a scan of published files. A crash
+  between the checkpoint rename and the index rename leaves a stale-but-valid
+  index; the scan reveals the newer checkpoint, so the crash loses the
+  update, never the store. An indexed file that fails the recorded hash is
+  a tamper signal and stops the reader.
 - Published checkpoints are immutable. The only changes are new checkpoints
   (`supersedes` points at the previous one) and retention pruning.
-- Retention keeps the latest checkpoint plus the most recent ones under an
-  explicit cap, pruning the oldest superseded files after each publish and
-  on demand. The latest checkpoint and any checkpoint a handoff cites are
-  never pruned.
+- Retention runs after each publish and on demand; its failure never fails
+  the publish. It keeps the latest checkpoint plus the most recent ones
+  under an explicit cap, pruning the oldest superseded files. The latest
+  checkpoint, any checkpoint a handoff cites, and anything that does not
+  validate (not a checkpoint) are never pruned.
 
 ## Resume validation
 

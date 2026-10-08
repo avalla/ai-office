@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   mkdirSync,
@@ -10,7 +11,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assessResume,
-  CheckpointExistsError,
   CheckpointFormatError,
   defaultCheckpointRetentionCap,
   listCheckpoints,
@@ -38,7 +38,10 @@ function temporaryRoot(): string {
 const cleanSha = "ab".repeat(20);
 const dirtySha = "cd".repeat(20);
 
-function fakeGit(sha: string, dirtyPaths: readonly string[] = []): GitStateProvider {
+function fakeGit(
+  sha: string,
+  dirtyPaths: readonly string[] = [],
+): GitStateProvider {
   return { headSha: () => sha, dirtyPaths: () => dirtyPaths };
 }
 
@@ -56,7 +59,9 @@ function deterministicOptions(retentionCap?: number) {
   };
 }
 
-function baseInput(overrides: Partial<PublishCheckpointInput> = {}): PublishCheckpointInput {
+function baseInput(
+  overrides: Partial<PublishCheckpointInput> = {},
+): PublishCheckpointInput {
   return {
     task: "M19-T2",
     milestone: "55afba0f",
@@ -73,10 +78,18 @@ function taskDir(root: string, name = "M19-T2"): string {
   return taskCheckpointDirectory(root, name);
 }
 
+function checkpointsDir(root: string): string {
+  return join(taskDir(root), "checkpoints");
+}
+
+function sha256(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 describe("publishCheckpoint", () => {
   test("publishes the first checkpoint with sequence 1 and no supersedes", () => {
     const root = temporaryRoot();
-    const { checkpoint, pruned } = publishCheckpoint(
+    const { checkpoint, pruned, pruneError } = publishCheckpoint(
       taskDir(root),
       baseInput(),
       fakeGit(cleanSha),
@@ -91,27 +104,29 @@ describe("publishCheckpoint", () => {
       capturedAt: "2026-10-08T12:00:00.000Z",
     });
     expect(pruned).toEqual([]);
+    expect(pruneError).toBeNull();
     expect(checkpoint.run.task).toBe("M19-T2");
     expect(checkpoint.id).toBe("checkpoint-id-1");
-    const file = join(
-      taskDir(root),
-      "checkpoints",
-      "000001-design.json",
-    );
+    const file = join(checkpointsDir(root), "000001.json");
     expect(readFileSync(file, "utf8")).toBe(
       `${JSON.stringify(checkpoint, null, 2)}\n`,
     );
     const index = JSON.parse(
-      readFileSync(join(taskDir(root), "checkpoints", "index.json"), "utf8"),
+      readFileSync(join(checkpointsDir(root), "index.json"), "utf8"),
     ) as { latest: { seq: number; file: string; id: string; sha256: string } };
     expect(index.latest.seq).toBe(1);
-    expect(index.latest.file).toBe("000001-design.json");
+    expect(index.latest.file).toBe("000001.json");
     expect(index.latest.id).toBe(checkpoint.id);
   });
 
   test("each publish supersedes the previous one and bumps the sequence", () => {
     const root = temporaryRoot();
-    const first = publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
+    const first = publishCheckpoint(
+      taskDir(root),
+      baseInput(),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
     const second = publishCheckpoint(
       taskDir(root),
       baseInput({ gate: "implementation", nextAction: "write the module" }),
@@ -170,47 +185,124 @@ describe("publishCheckpoint", () => {
   test("rejects an unsafe gate, an empty next action, and a non-sha head", () => {
     const root = temporaryRoot();
     expect(() =>
-      publishCheckpoint(taskDir(root), baseInput({ gate: "Design" }), fakeGit(cleanSha), deterministicOptions()),
+      publishCheckpoint(
+        taskDir(root),
+        baseInput({ gate: "Design" }),
+        fakeGit(cleanSha),
+        deterministicOptions(),
+      ),
     ).toThrow(/gate must be lowercase/);
     expect(() =>
-      publishCheckpoint(taskDir(root), baseInput({ gate: "../escape" }), fakeGit(cleanSha), deterministicOptions()),
+      publishCheckpoint(
+        taskDir(root),
+        baseInput({ gate: "../escape" }),
+        fakeGit(cleanSha),
+        deterministicOptions(),
+      ),
     ).toThrow(/gate must be lowercase/);
     expect(() =>
-      publishCheckpoint(taskDir(root), baseInput({ nextAction: "  " }), fakeGit(cleanSha), deterministicOptions()),
+      publishCheckpoint(
+        taskDir(root),
+        baseInput({ nextAction: "  " }),
+        fakeGit(cleanSha),
+        deterministicOptions(),
+      ),
     ).toThrow(/nextAction must not be empty/);
     expect(() =>
-      publishCheckpoint(taskDir(root), baseInput(), fakeGit("not-a-sha"), deterministicOptions()),
+      publishCheckpoint(
+        taskDir(root),
+        baseInput(),
+        fakeGit("not-a-sha"),
+        deterministicOptions(),
+      ),
     ).toThrow(/not a full commit sha/);
   });
 
-  test("loses a race with a typed error instead of overwriting", () => {
+  test("refuses to publish a document its own reader would reject", () => {
     const root = temporaryRoot();
-    publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
-    // A concurrent publisher lands on the next sequence name first.
-    writeFileSync(
-      join(taskDir(root), "checkpoints", "000002-implementation.json"),
-      "{}",
-    );
-    let error: unknown;
-    try {
+    // Write/read symmetry: a provider handing absolute dirty paths must fail
+    // at publish time, not surface later as a "corrupt checkpoint".
+    expect(() =>
       publishCheckpoint(
         taskDir(root),
-        baseInput({ gate: "implementation" }),
+        baseInput(),
+        fakeGit(cleanSha, ["/etc/passwd"]),
+        deterministicOptions(),
+      ),
+    ).toThrow(/refusing to publish a checkpoint its own reader would reject/);
+    expect(() =>
+      publishCheckpoint(
+        taskDir(root),
+        baseInput({ task: "bad/task" }),
         fakeGit(cleanSha),
         deterministicOptions(),
-      );
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error).toBeInstanceOf(CheckpointExistsError);
-    expect((error as CheckpointExistsError).seq).toBe(2);
-    expect(readFileSync(join(taskDir(root), "checkpoints", "000002-implementation.json"), "utf8")).toBe("{}");
+      ),
+    ).toThrow(/refusing to publish a checkpoint its own reader would reject/);
+  });
+
+  test("recovers from a colliding corrupt artifact instead of deadlocking", () => {
+    const root = temporaryRoot();
+    publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
+    // A crashed or hand-dropped file occupies the next sequence name.
+    writeFileSync(join(checkpointsDir(root), "000002.json"), "{}");
+    const { checkpoint } = publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "implementation" }),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    expect(checkpoint.stage.seq).toBe(2);
+    expect(parseCheckpoint(readFileSync(join(checkpointsDir(root), "000002.json"), "utf8")).id).toBe(checkpoint.id);
+  });
+
+  test("removes a zero-byte reservation artifact left by a crash", () => {
+    const root = temporaryRoot();
+    publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
+    writeFileSync(join(checkpointsDir(root), "000002.json"), "");
+    const { checkpoint } = publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "implementation" }),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    expect(checkpoint.stage.seq).toBe(2);
+    expect(readFileSync(join(checkpointsDir(root), "000002.json"), "utf8")).not.toBe("");
+  });
+
+  test("never forks the sequence when a valid checkpoint occupies the next name", () => {
+    const root = temporaryRoot();
+    publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
+    // A sibling at the next sequence whose name disagrees with its content
+    // is an artifact, not a checkpoint; it is removed and the sequence reused.
+    const { checkpoint: orphan } = publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "implementation" }),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    writeFileSync(
+      join(checkpointsDir(root), "000003.json"),
+      JSON.stringify({ ...orphan, stage: { gate: "implementation", seq: 2 } }),
+    );
+    const { checkpoint } = publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "pull_request" }),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    expect(checkpoint.stage.seq).toBe(3);
+    expect(listCheckpoints(taskDir(root))).toHaveLength(3);
   });
 });
 
 describe("parseCheckpoint", () => {
   const valid = () =>
-    publishCheckpoint(taskDir(temporaryRoot()), baseInput(), fakeGit(cleanSha), deterministicOptions()).checkpoint;
+    publishCheckpoint(
+      taskDir(temporaryRoot()),
+      baseInput(),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    ).checkpoint;
 
   test("round-trips a published checkpoint", () => {
     const checkpoint = valid();
@@ -237,14 +329,23 @@ describe("parseCheckpoint", () => {
     ],
     [
       "a missing next action",
-      JSON.stringify(Object.fromEntries(Object.entries(valid()).filter(([k]) => k !== "nextAction"))),
+      JSON.stringify(
+        Object.fromEntries(
+          Object.entries(valid()).filter(([k]) => k !== "nextAction"),
+        ),
+      ),
       /nextAction must be a non-empty string/,
     ],
     [
       "an inconsistent dirty flag",
       JSON.stringify({
         ...valid(),
-        head: { sha: cleanSha, dirty: false, dirtyPaths: ["a.ts"], capturedAt: "2026-10-08T12:00:00.000Z" },
+        head: {
+          sha: cleanSha,
+          dirty: false,
+          dirtyPaths: ["a.ts"],
+          capturedAt: "2026-10-08T12:00:00.000Z",
+        },
       }),
       /dirty must be a boolean consistent with dirtyPaths/,
     ],
@@ -252,7 +353,12 @@ describe("parseCheckpoint", () => {
       "an absolute dirty path",
       JSON.stringify({
         ...valid(),
-        head: { sha: cleanSha, dirty: true, dirtyPaths: ["/etc/passwd"], capturedAt: "2026-10-08T12:00:00.000Z" },
+        head: {
+          sha: cleanSha,
+          dirty: true,
+          dirtyPaths: ["/etc/passwd"],
+          capturedAt: "2026-10-08T12:00:00.000Z",
+        },
       }),
       /not a relative in-repository path/,
     ],
@@ -260,7 +366,12 @@ describe("parseCheckpoint", () => {
       "a parent-traversing dirty path",
       JSON.stringify({
         ...valid(),
-        head: { sha: cleanSha, dirty: true, dirtyPaths: ["../escape"], capturedAt: "2026-10-08T12:00:00.000Z" },
+        head: {
+          sha: cleanSha,
+          dirty: true,
+          dirtyPaths: ["../escape"],
+          capturedAt: "2026-10-08T12:00:00.000Z",
+        },
       }),
       /not a relative in-repository path/,
     ],
@@ -268,7 +379,12 @@ describe("parseCheckpoint", () => {
       "a non-sha head",
       JSON.stringify({
         ...valid(),
-        head: { sha: "abc", dirty: false, dirtyPaths: [], capturedAt: "2026-10-08T12:00:00.000Z" },
+        head: {
+          sha: "abc",
+          dirty: false,
+          dirtyPaths: [],
+          capturedAt: "2026-10-08T12:00:00.000Z",
+        },
       }),
       /checkpoint.head.sha has an invalid value/,
     ],
@@ -299,9 +415,24 @@ describe("parseCheckpoint", () => {
       /seq must be an integer >= 1/,
     ],
     [
+      "a garbage timestamp",
+      JSON.stringify({ ...valid(), publishedAt: "zzzz" }),
+      /not an ISO-8601 UTC timestamp/,
+    ],
+    [
+      "an overflowing timestamp",
+      JSON.stringify({ ...valid(), publishedAt: "2026-13-45T99:99:99.000Z" }),
+      /not an ISO-8601 UTC timestamp|not a valid ISO-8601 UTC timestamp/,
+    ],
+    [
+      "a timestamp without milliseconds",
+      JSON.stringify({ ...valid(), publishedAt: "2026-10-08T12:00:00Z" }),
+      /not an ISO-8601 UTC timestamp/,
+    ],
+    [
       "a pre-2000 timestamp",
       JSON.stringify({ ...valid(), publishedAt: "1999-12-31T23:59:59.000Z" }),
-      /not an ISO timestamp/,
+      /not a valid ISO-8601 UTC timestamp/,
     ],
   ])("rejects %s", (_label, raw, pattern) => {
     expect(() => parseCheckpoint(raw)).toThrow(pattern);
@@ -340,14 +471,19 @@ describe("taskCheckpointDirectory", () => {
 describe("crash recovery", () => {
   test("recovers the latest checkpoint when the index is lost", () => {
     const root = temporaryRoot();
-    const first = publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
+    const first = publishCheckpoint(
+      taskDir(root),
+      baseInput(),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
     const second = publishCheckpoint(
       taskDir(root),
       baseInput({ gate: "implementation" }),
       fakeGit(cleanSha),
       deterministicOptions(),
     );
-    rmSync(join(taskDir(root), "checkpoints", "index.json"));
+    rmSync(join(checkpointsDir(root), "index.json"));
     const third = publishCheckpoint(
       taskDir(root),
       baseInput({ gate: "pull_request" }),
@@ -359,10 +495,52 @@ describe("crash recovery", () => {
     expect(first.checkpoint.id).not.toBe(second.checkpoint.id);
   });
 
+  test("a stale-but-valid index does not hide a newer published checkpoint", () => {
+    const root = temporaryRoot();
+    publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
+    const second = publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "implementation" }),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    // The documented crash: between the checkpoint rename and the index
+    // rename. Rewind the index to the first entry, as that crash would.
+    const firstBytes = readFileSync(join(checkpointsDir(root), "000001.json"));
+    const first = parseCheckpoint(firstBytes.toString("utf8"));
+    const staleIndex = {
+      schemaVersion: 1,
+      latest: {
+        seq: 1,
+        file: "000001.json",
+        id: first.id,
+        sha256: sha256(firstBytes),
+      },
+      updatedAt: first.publishedAt,
+    };
+    writeFileSync(
+      join(checkpointsDir(root), "index.json"),
+      JSON.stringify(staleIndex),
+    );
+    const assessment = assessResume(taskDir(root), fakeGit(cleanSha));
+    expect(assessment.usable).toBe(true);
+    expect(assessment.checkpoint?.id).toBe(second.checkpoint.id);
+    expect(assessment.checkpoint?.stage.seq).toBe(2);
+    // And publishing does not deadlock or fork: it continues at sequence 3.
+    const third = publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "pull_request" }),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    expect(third.checkpoint.stage.seq).toBe(3);
+    expect(third.checkpoint.supersedes).toBe(second.checkpoint.id);
+  });
+
   test("ignores leftover temp files from a crashed publish", () => {
     const root = temporaryRoot();
     publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
-    writeFileSync(join(taskDir(root), "checkpoints", ".tmp-deadbeef"), "{}");
+    writeFileSync(join(checkpointsDir(root), ".tmp-deadbeef"), "{}");
     const recovered = publishCheckpoint(
       taskDir(root),
       baseInput({ gate: "implementation" }),
@@ -375,12 +553,16 @@ describe("crash recovery", () => {
 
   test("skips published files whose name disagrees with their content", () => {
     const root = temporaryRoot();
-    const { checkpoint } = publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
-    // A hand-edited copy with a mismatched sequence is not the latest.
-    const renamed = { ...checkpoint, stage: { gate: "design", seq: 9 } };
+    const { checkpoint } = publishCheckpoint(
+      taskDir(root),
+      baseInput(),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    const mismatched = { ...checkpoint, stage: { gate: "design", seq: 2 } };
     writeFileSync(
-      join(taskDir(root), "checkpoints", "000009-design.json"),
-      JSON.stringify(renamed),
+      join(checkpointsDir(root), "000009.json"),
+      JSON.stringify(mismatched),
     );
     const next = publishCheckpoint(
       taskDir(root),
@@ -395,7 +577,12 @@ describe("crash recovery", () => {
 describe("assessResume", () => {
   test("reports a clean resume when head and tree match", () => {
     const root = temporaryRoot();
-    const { checkpoint } = publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
+    const { checkpoint } = publishCheckpoint(
+      taskDir(root),
+      baseInput(),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
     const assessment = assessResume(taskDir(root), fakeGit(cleanSha));
     expect(assessment.usable).toBe(true);
     expect(assessment.invalidReason).toBeNull();
@@ -435,7 +622,7 @@ describe("assessResume", () => {
   test("refuses a checkpoint that fails the recorded hash", () => {
     const root = temporaryRoot();
     publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
-    const path = join(taskDir(root), "checkpoints", "000001-design.json");
+    const path = join(checkpointsDir(root), "000001.json");
     writeFileSync(path, `${readFileSync(path, "utf8").trimEnd()} tampered\n`);
     const assessment = assessResume(taskDir(root), fakeGit(cleanSha));
     expect(assessment.usable).toBe(false);
@@ -445,11 +632,13 @@ describe("assessResume", () => {
   test("refuses an unsupported schema version rather than crashing", () => {
     const root = temporaryRoot();
     publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), deterministicOptions());
-    const file = join(taskDir(root), "checkpoints", "000001-design.json");
-    const tampered = JSON.parse(readFileSync(file, "utf8")) as { schemaVersion: number };
+    const file = join(checkpointsDir(root), "000001.json");
+    const tampered = JSON.parse(readFileSync(file, "utf8")) as {
+      schemaVersion: number;
+    };
     tampered.schemaVersion = 2;
     writeFileSync(file, JSON.stringify(tampered));
-    const indexPath = join(taskDir(root), "checkpoints", "index.json");
+    const indexPath = join(checkpointsDir(root), "index.json");
     const index = JSON.parse(readFileSync(indexPath, "utf8")) as {
       latest: { sha256: string };
     };
@@ -485,8 +674,8 @@ describe("retention", () => {
         options,
       );
       if (seq < 3) expect(pruned).toEqual([]);
-      else if (seq === 3) expect(pruned).toEqual(["000001-gate0.json"]);
-      else expect(pruned).toEqual(["000002-gate1.json"]);
+      else if (seq === 3) expect(pruned).toEqual(["000001.json"]);
+      else expect(pruned).toEqual(["000002.json"]);
     }
     const remaining = listCheckpoints(taskDir(root));
     expect(remaining.map((c) => c.stage.seq)).toEqual([3, 4, 5]);
@@ -495,8 +684,18 @@ describe("retention", () => {
   test("never prunes a checkpoint cited by the handoff packet", () => {
     const root = temporaryRoot();
     const options = deterministicOptions(2);
-    const first = publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), options);
-    publishCheckpoint(taskDir(root), baseInput({ gate: "implementation" }), fakeGit(cleanSha), options);
+    const first = publishCheckpoint(
+      taskDir(root),
+      baseInput(),
+      fakeGit(cleanSha),
+      options,
+    );
+    publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "implementation" }),
+      fakeGit(cleanSha),
+      options,
+    );
     mkdirSync(taskDir(root), { recursive: true });
     writeFileSync(
       join(taskDir(root), "handoff.md"),
@@ -509,7 +708,7 @@ describe("retention", () => {
       options,
     );
     // Cap 2 with 3 published: seq 1 is cited, seq 2 is the prune victim.
-    expect(third.pruned).toEqual(["000002-implementation.json"]);
+    expect(third.pruned).toEqual(["000002.json"]);
     expect(listCheckpoints(taskDir(root)).map((c) => c.stage.seq)).toEqual([1, 3]);
   });
 
@@ -517,17 +716,54 @@ describe("retention", () => {
     const root = temporaryRoot();
     const options = deterministicOptions();
     publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), options);
-    const second = publishCheckpoint(taskDir(root), baseInput({ gate: "implementation" }), fakeGit(cleanSha), options);
-    const third = publishCheckpoint(taskDir(root), baseInput({ gate: "pull_request" }), fakeGit(cleanSha), options);
+    const second = publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "implementation" }),
+      fakeGit(cleanSha),
+      options,
+    );
+    const third = publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "pull_request" }),
+      fakeGit(cleanSha),
+      options,
+    );
     writeFileSync(
       join(taskDir(root), "handoff.md"),
       `cites ${second.checkpoint.id}\n`,
     );
     const deleted = pruneCheckpoints(taskDir(root), 1);
-    expect(deleted).toEqual(["000001-design.json"]);
+    expect(deleted).toEqual(["000001.json"]);
     expect(listCheckpoints(taskDir(root))).toHaveLength(2);
     expect(third.checkpoint.id).not.toBe(second.checkpoint.id);
     expect(defaultCheckpointRetentionCap).toBe(20);
+  });
+
+  test("prune skips unparseable leftovers instead of failing the publish", () => {
+    const root = temporaryRoot();
+    const options = deterministicOptions(2);
+    publishCheckpoint(taskDir(root), baseInput(), fakeGit(cleanSha), options);
+    publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "implementation" }),
+      fakeGit(cleanSha),
+      options,
+    );
+    // Something corrupts the oldest file; retention must not explode, and
+    // the corrupt file is nobody's prune target.
+    writeFileSync(join(checkpointsDir(root), "000001.json"), "garbage");
+    const third = publishCheckpoint(
+      taskDir(root),
+      baseInput({ gate: "pull_request" }),
+      fakeGit(cleanSha),
+      options,
+    );
+    expect(third.pruneError).toBeNull();
+    expect(third.pruned).toEqual([]);
+    expect(readFileSync(join(checkpointsDir(root), "000001.json"), "utf8")).toBe("garbage");
+    const assessment = assessResume(taskDir(root), fakeGit(cleanSha));
+    expect(assessment.usable).toBe(true);
+    expect(assessment.checkpoint?.id).toBe(third.checkpoint.id);
   });
 });
 
