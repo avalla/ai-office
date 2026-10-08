@@ -253,7 +253,8 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   default, top-down optional), with each task showing status, priority, READY or
   its blocker count, and its first milestone (`+N` for more). Arrows point from
   a prerequisite to the task that needs it. Dashed amber edges are unmet
-  prerequisites, completed ones recede, the longest chain is thick red, and a
+  prerequisites (neither completed nor in review), satisfied ones (completed or
+  in review) recede, the longest chain is thick red, and a
   selected task's lineage is thick blue;
 - view controls beside the canvas (Fit graph, layout, longest chain overlay,
   minimap), distinct from the data filters;
@@ -261,8 +262,9 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   priority, tasks needing attention, the longest dependency chain, legend); with
   a selection, the task description and explicitly linked requirement titles,
   statuses and descriptions, followed by its blockers (only while it is waiting),
-  what completing it unblocks, its other dependents, completed prerequisites (also
-  when those tasks are hidden from the canvas), milestones, and an "Only this
+  what reaching review or completion unblocks, its other dependents, prerequisites
+  in review and completed prerequisites (also when those tasks are hidden from
+  the canvas), milestones, and an "Only this
   lineage" option that exists only while something is selected.
 
 Searching locates: results are listed from the whole project, Enter or a click
