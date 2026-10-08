@@ -140,6 +140,7 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
       <button
         type="button"
         aria-pressed={data.selected}
+        title={completedContext || undefined}
         aria-label={`${task.title}. ${statusLabel(task.operationalStatus)}. ${state}. Priority ${task.priority}.${
           milestone === null
             ? ""
@@ -199,9 +200,9 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
       {completedContext !== "" && (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute left-2 top-full z-10 mt-1 max-w-[240px] truncate rounded border border-border bg-surface px-1.5 text-xs leading-4 text-subtle shadow-sm"
+          className="pointer-events-none absolute left-2 top-full z-10 mt-1 max-w-[116px] truncate rounded border border-border bg-surface px-1.5 text-xs leading-4 text-subtle shadow-sm"
         >
-          ✓ {data.hiddenCompletedPrerequisites} completed prerequisite
+          ✓ {data.hiddenCompletedPrerequisites} prereq
           {data.hiddenCompletedPrerequisites === 1 ? "" : "s"}
         </span>
       )}
