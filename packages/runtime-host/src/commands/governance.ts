@@ -73,6 +73,24 @@ export async function handleGovernanceCommand(
         : { milestoneId: parsed.options.get("milestone")! }),
     });
     io.stdout(`Requirement created: ${id}`);
+    if (parsed.options.get("milestone") === undefined)
+      io.stderr(
+        "Warning: the requirement has no milestone, so its tasks do not appear under any milestone. " +
+          "Fix it with requirement:assign-milestone.",
+      );
+    return 0;
+  }
+  if (command === "requirement:assign-milestone") {
+    const parsed = parseArguments(
+      args,
+      new Set(["project", "requirement", "milestone"]),
+    );
+    await service.assignRequirementMilestone({
+      projectId: requiredOption(parsed, "project"),
+      requirementId: requiredOption(parsed, "requirement"),
+      milestoneId: requiredOption(parsed, "milestone"),
+    });
+    io.stdout("Requirement milestone assigned.");
     return 0;
   }
   if (command === "requirement:update") {
@@ -206,7 +224,9 @@ export async function handleGovernanceCommand(
         requirements
           .map(
             (requirement) =>
-              `${requirement.key} [${requirement.status}] ${requirement.id} — ${requirement.title}`,
+              `${requirement.key} [${requirement.status}] ${requirement.id} — ${requirement.title}${
+                requirement.milestoneId === null ? " (no milestone)" : ""
+              }`,
           )
           .join("\n"),
       );

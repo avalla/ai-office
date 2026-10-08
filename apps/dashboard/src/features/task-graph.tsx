@@ -61,6 +61,7 @@ import {
   type NeighborhoodMode,
   type GraphNodeDetail,
   type QuickFilter,
+  unassignedMilestoneNeighbours,
 } from "../lib/task-graph.ts";
 import {
   requirementStatusTone,
@@ -837,6 +838,10 @@ function TaskGraphCanvas({
     filters.milestones.length > 0 ||
     filters.quick !== "" ||
     !filters.hideCompleted;
+  const unassignedNeighbours = useMemo(
+    () => unassignedMilestoneNeighbours(graph, filters.milestones),
+    [graph, filters.milestones],
+  );
   const milestoneFilterLabel =
     filters.milestones.length === 0
       ? "All milestones"
@@ -1090,6 +1095,23 @@ function TaskGraphCanvas({
         }}
       >
         <div className="flex min-w-0 flex-col gap-2">
+          {unassignedNeighbours.length > 0 && (
+            <p
+              role="status"
+              className="rounded-lg border border-border bg-muted px-3 py-2 text-sm"
+            >
+              {unassignedNeighbours.length === 1
+                ? "1 open task is linked by dependency to this milestone but belongs to none, so it is not shown: "
+                : `${unassignedNeighbours.length} open tasks are linked by dependency to this milestone but belong to none, so they are not shown: `}
+              {unassignedNeighbours
+                .slice(0, 3)
+                .map((task) => task.title)
+                .join("; ")}
+              {unassignedNeighbours.length > 3 ? "; …" : ""}. Their
+              requirement probably has no milestone; assign one with
+              requirement:assign-milestone.
+            </p>
+          )}
           <div
             ref={canvasRef}
             className="h-[70vh] min-h-[26rem] overflow-hidden rounded-xl border border-border bg-surface"

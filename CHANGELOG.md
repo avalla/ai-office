@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add `ai-office requirement:assign-milestone` (`--project`, `--requirement`,
+  `--milestone`) to repair a `proposed` requirement recorded without a
+  milestone, whose tasks therefore appeared under no milestone. It assigns once
+  and never moves a milestone that is already set, so `requirement:update` and
+  the immutability of an existing milestone are unchanged; the change is
+  audited as a `requirement.updated` event. `requirement:create` now warns on
+  stderr when `--milestone` is omitted, `requirement:list` marks requirements
+  without a milestone, and the dashboard graph tells which open tasks linked by
+  dependency to the filtered milestone belong to none.
 - `task-delivery` 0.3.0: for a run over several tasks the summary offers to
   clarify every task before development starts - questions asked together,
   task by task, with the answers recorded in the project's tasks and

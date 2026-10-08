@@ -27,6 +27,7 @@ import {
   toggleMilestoneFilter,
   withGraphStatusOption,
   activeStatusOption,
+  unassignedMilestoneNeighbours,
 } from "../../apps/dashboard/src/lib/task-graph.ts";
 
 function node(
@@ -755,5 +756,33 @@ describe("dashboard task graph", () => {
         decideFraming({ ...jump, pendingKey: "t:a", selectedKey: "t:b" }),
       ).toBe("frame");
     });
+  });
+});
+
+describe("unassignedMilestoneNeighbours", () => {
+  test("lists open tasks without a milestone that touch the filtered milestone", () => {
+    // c depends on a; d depends on b. `done` is terminal and `lone` is isolated.
+    expect(ids(unassignedMilestoneNeighbours(graph, ["m1"]))).toEqual([
+      "c",
+      "d",
+    ]);
+  });
+
+  test("stays quiet without a concrete milestone filter", () => {
+    expect(unassignedMilestoneNeighbours(graph, [])).toEqual([]);
+    expect(unassignedMilestoneNeighbours(graph, ["none"])).toEqual([]);
+    expect(unassignedMilestoneNeighbours(graph, ["m1", "none"])).toEqual([]);
+  });
+
+  test("ignores neighbours that already belong to a milestone", () => {
+    const assigned: TaskGraph = {
+      ...graph,
+      tasks: graph.tasks.map((task) =>
+        task.taskId === "c" || task.taskId === "d"
+          ? { ...task, milestoneIds: ["m2"] }
+          : task,
+      ),
+    };
+    expect(unassignedMilestoneNeighbours(assigned, ["m1"])).toEqual([]);
   });
 });

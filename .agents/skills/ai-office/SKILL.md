@@ -215,7 +215,10 @@ before linking. Use `requirement:update` to correct only the title and/or
 description of a requirement that is still `proposed`; its identity, key,
 project, milestone and status are immutable through this command, and once a
 requirement is accepted or later in its lifecycle its wording can no longer be
-edited this way. Use `requirement:validate --requirement <uuid> --model
+edited this way. Use `requirement:assign-milestone` to give a proposed
+requirement that has no milestone its first one, so its tasks appear under that
+milestone; it never changes a milestone that is already set. Use
+`requirement:validate --requirement <uuid> --model
 <provider:model>` for metered, advisory LLM validation; it never changes stored
 status. Use `run:schedule`, `run:show`, `run:cancel`, or `run:tick` for agent
 execution. Ask for confirmation before consequential changes when the user has

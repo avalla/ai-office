@@ -270,6 +270,34 @@ export function hiddenCompletedPrerequisiteCounts(
   return counts;
 }
 
+/**
+ * Open tasks without any milestone that depend on, or are depended on by, a
+ * task of the milestones being filtered. A milestone is derived from a task's
+ * requirements, so such a neighbour is usually a task whose requirement was
+ * recorded without a milestone and silently drops out of the milestone view.
+ */
+export function unassignedMilestoneNeighbours(
+  graph: TaskGraph,
+  milestones: readonly string[],
+): readonly TaskGraphNode[] {
+  const selected = milestones.filter((id) => id !== "none");
+  if (selected.length === 0 || milestones.includes("none")) return [];
+  const inMilestone = new Set(
+    graph.tasks
+      .filter((task) => selected.some((id) => task.milestoneIds.includes(id)))
+      .map((task) => task.taskId),
+  );
+  const linked = new Set<string>();
+  for (const edge of graph.edges) {
+    if (inMilestone.has(edge.taskId)) linked.add(edge.dependsOnTaskId);
+    if (inMilestone.has(edge.dependsOnTaskId)) linked.add(edge.taskId);
+  }
+  return graph.tasks.filter(
+    (task) =>
+      linked.has(task.taskId) && task.milestoneIds.length === 0 && !task.terminal,
+  );
+}
+
 function matchesSearch(task: TaskGraphNode, search: string): boolean {
   return (
     task.taskId.toLowerCase().includes(search) ||

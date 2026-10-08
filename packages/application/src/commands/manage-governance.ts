@@ -231,6 +231,52 @@ export class ManageGovernance {
         `requirement ${requirement.id} was modified concurrently`,
       );
   }
+  /**
+   * Repairs a requirement recorded without a milestone. A milestone that is
+   * already set stays immutable: this only ever fills the empty slot.
+   */
+  async assignRequirementMilestone(input: {
+    projectId: string;
+    requirementId: string;
+    milestoneId: string;
+  }): Promise<void> {
+    await this.project(input.projectId);
+    const requirement = (
+      await this.governance.getSnapshot(input.projectId)
+    ).requirements.find((value) => value.id === input.requirementId);
+    if (requirement === undefined)
+      throw new GovernanceSubjectNotFoundError(
+        "requirement",
+        input.requirementId,
+      );
+    const milestoneProject = await this.governance.findMilestoneProject(
+      input.milestoneId,
+    );
+    if (milestoneProject === null)
+      throw new GovernanceSubjectNotFoundError("milestone", input.milestoneId);
+    if (milestoneProject !== input.projectId)
+      throw new GovernanceCrossProjectReferenceError("Requirement milestone");
+    if (!isRequirementEditable(requirement.status))
+      throw new RequirementNotEditableError(requirement.id, requirement.status);
+    if (requirement.milestoneId !== undefined)
+      throw new DomainValidationError(
+        `requirement ${requirement.key} already belongs to a milestone; its milestone cannot be changed`,
+      );
+    const assigned = await this.governance.assignRequirementMilestone(
+      requirement.id,
+      input.projectId,
+      input.milestoneId,
+      this.clock.now(),
+      {
+        id: this.ids.generate(),
+        metadata: { key: requirement.key, milestoneTo: input.milestoneId },
+      },
+    );
+    if (!assigned)
+      throw new DomainValidationError(
+        `requirement ${requirement.id} was modified concurrently`,
+      );
+  }
   async createAdr(input: {
     projectId: string;
     title: string;

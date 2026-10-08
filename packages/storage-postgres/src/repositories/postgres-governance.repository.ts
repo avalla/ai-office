@@ -302,6 +302,43 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
     });
   }
 
+  async assignRequirementMilestone(
+    id: string,
+    projectId: string,
+    milestoneId: string,
+    now: Date,
+    event: { id: string; metadata: Record<string, string> },
+  ): Promise<boolean> {
+    return this.database.transaction(async () => {
+      await this.assertProjectTenant(projectId);
+      // Assign-once: the NULL predicate keeps a milestone from being moved.
+      const rows = await this.database.query<{ id: string }>(
+        `
+          UPDATE core.requirement
+          SET milestone_id = $1, updated_at = $2
+          WHERE id = $3 AND project_id = $4 AND status = 'proposed'
+            AND milestone_id IS NULL
+            AND EXISTS (
+              SELECT 1 FROM core.project
+              WHERE id = $4 AND tenant_id = $5
+            )
+          RETURNING id
+        `,
+        [milestoneId, now, id, projectId, this.tenantId],
+      );
+      if (rows.length !== 1) return false;
+      await this.appendEvent({
+        id: event.id,
+        projectId,
+        eventType: "requirement.updated",
+        aggregateId: id,
+        metadata: event.metadata,
+        occurredAt: now,
+      });
+      return true;
+    });
+  }
+
   async saveAdr(value: AdrRecord): Promise<void> {
     await this.database.transaction(async () => {
       await this.assertProjectTenant(value.projectId);

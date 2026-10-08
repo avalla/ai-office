@@ -4,6 +4,7 @@ import { ManageGovernance } from "@ai-office/application/commands/manage-governa
 import { ProjectNotFoundError } from "@ai-office/application/errors.ts";
 import {
   DuplicateRequirementKeyError,
+  GovernanceCrossProjectReferenceError,
   GovernanceSubjectNotFoundError,
   RequirementNotEditableError,
 } from "@ai-office/application/governance-errors.ts";
@@ -452,6 +453,174 @@ export function defineGovernanceRepositoryContracts(
         .filter((event) => event.eventType === "requirement.updated")
         .map((event) => event.id),
     ).toEqual([`${prefix}-first-event`]);
+  });
+
+  test("assigns a missing requirement milestone once and audits it", async () => {
+    const project = await createProject(harness, `${prefix}-project`);
+    const other = await createProject(harness, `${prefix}-other-project`);
+    const milestone: MilestoneRecord = {
+      id: `${prefix}-milestone`,
+      projectId: project.id,
+      title: "Milestone",
+      status: "planned",
+      createdAt: date("2026-01-01T00:00:00.000Z"),
+      updatedAt: date("2026-01-01T00:00:00.000Z"),
+    };
+    const foreignMilestone: MilestoneRecord = {
+      ...milestone,
+      id: `${prefix}-foreign-milestone`,
+      projectId: other.id,
+    };
+    await harness.governance.saveMilestone(milestone);
+    await harness.governance.saveMilestone(foreignMilestone);
+    const orphan = requirement(project.id, `${prefix}-orphan`, "REQ-ORPHAN");
+    await harness.governance.saveRequirement(orphan);
+    const assignedAt = date("2026-01-02T00:00:00.000Z");
+    const service = governanceService(harness, assignedAt, `${prefix}-event`);
+    const stored = async () =>
+      (await harness.governance.getSnapshot(project.id)).requirements;
+    const audited = async () =>
+      (await harness.governance.listEvents(project.id)).filter(
+        (event) => event.eventType === "requirement.updated",
+      );
+
+    await service.assignRequirementMilestone({
+      projectId: project.id,
+      requirementId: orphan.id,
+      milestoneId: milestone.id,
+    });
+    // Only the milestone and the update time move.
+    expect(await stored()).toEqual([
+      { ...orphan, milestoneId: milestone.id, updatedAt: assignedAt },
+    ]);
+    expect(
+      (await audited()).map(({ id, aggregateId, metadata }) => ({
+        id,
+        aggregateId,
+        metadata,
+      })),
+    ).toEqual([
+      {
+        id: `${prefix}-event-1`,
+        aggregateId: orphan.id,
+        metadata: { key: "REQ-ORPHAN", milestoneTo: milestone.id },
+      },
+    ]);
+
+    // A milestone that is set stays immutable, even to the same value.
+    const second: MilestoneRecord = { ...milestone, id: `${prefix}-second` };
+    await harness.governance.saveMilestone(second);
+    for (const target of [second.id, milestone.id])
+      await expect(
+        service.assignRequirementMilestone({
+          projectId: project.id,
+          requirementId: orphan.id,
+          milestoneId: target,
+        }),
+      ).rejects.toBeInstanceOf(DomainValidationError);
+    expect(
+      await harness.governance.assignRequirementMilestone(
+        orphan.id,
+        project.id,
+        second.id,
+        assignedAt,
+        { id: `${prefix}-forced-event`, metadata: {} },
+      ),
+    ).toBe(false);
+    expect((await stored())[0]?.milestoneId).toBe(milestone.id);
+    expect(await audited()).toHaveLength(1);
+  });
+
+  test("refuses to assign a milestone to an unknown, foreign or settled requirement", async () => {
+    const project = await createProject(harness, `${prefix}-project`);
+    const other = await createProject(harness, `${prefix}-other-project`);
+    const milestone: MilestoneRecord = {
+      id: `${prefix}-milestone`,
+      projectId: project.id,
+      title: "Milestone",
+      status: "planned",
+      createdAt: date("2026-01-01T00:00:00.000Z"),
+      updatedAt: date("2026-01-01T00:00:00.000Z"),
+    };
+    const foreignMilestone: MilestoneRecord = {
+      ...milestone,
+      id: `${prefix}-foreign-milestone`,
+      projectId: other.id,
+    };
+    await harness.governance.saveMilestone(milestone);
+    await harness.governance.saveMilestone(foreignMilestone);
+    const orphan = requirement(project.id, `${prefix}-orphan`, "REQ-ORPHAN");
+    const foreign = requirement(other.id, `${prefix}-foreign`, "REQ-FOREIGN");
+    const settled = requirement(project.id, `${prefix}-settled`, "REQ-SETTLED");
+    for (const value of [orphan, foreign, settled])
+      await harness.governance.saveRequirement(value);
+    const at = date("2026-01-02T00:00:00.000Z");
+    const service = governanceService(harness, at, `${prefix}-event`);
+    await service.setStatus({
+      projectId: project.id,
+      kind: "requirement",
+      id: settled.id,
+      status: "rejected",
+    });
+    const assign = (requirementId: string, milestoneId: string) =>
+      service.assignRequirementMilestone({
+        projectId: project.id,
+        requirementId,
+        milestoneId,
+      });
+
+    await expect(assign(`${prefix}-missing`, milestone.id)).rejects.toBeInstanceOf(
+      GovernanceSubjectNotFoundError,
+    );
+    await expect(assign(foreign.id, milestone.id)).rejects.toBeInstanceOf(
+      GovernanceSubjectNotFoundError,
+    );
+    await expect(assign(orphan.id, `${prefix}-missing`)).rejects.toBeInstanceOf(
+      GovernanceSubjectNotFoundError,
+    );
+    await expect(assign(orphan.id, foreignMilestone.id)).rejects.toBeInstanceOf(
+      GovernanceCrossProjectReferenceError,
+    );
+    await expect(assign(settled.id, milestone.id)).rejects.toBeInstanceOf(
+      RequirementNotEditableError,
+    );
+    // The storage fence holds even when the application guards are skipped.
+    expect(
+      await harness.governance.assignRequirementMilestone(
+        settled.id,
+        project.id,
+        milestone.id,
+        at,
+        { id: `${prefix}-forced-settled`, metadata: {} },
+      ),
+    ).toBe(false);
+    expect(
+      await harness.governance.assignRequirementMilestone(
+        foreign.id,
+        project.id,
+        milestone.id,
+        at,
+        { id: `${prefix}-forced-foreign`, metadata: {} },
+      ),
+    ).toBe(false);
+    await expect(
+      service.assignRequirementMilestone({
+        projectId: `${prefix}-no-project`,
+        requirementId: orphan.id,
+        milestoneId: milestone.id,
+      }),
+    ).rejects.toBeInstanceOf(ProjectNotFoundError);
+
+    expect(
+      (await harness.governance.getSnapshot(project.id)).requirements.map(
+        (value) => value.milestoneId,
+      ),
+    ).toEqual([undefined, undefined]);
+    expect(
+      (await harness.governance.listEvents(project.id)).filter(
+        (event) => event.eventType === "requirement.updated",
+      ),
+    ).toEqual([]);
   });
 
   test("rejects duplicate requirement keys within a project", async () => {
