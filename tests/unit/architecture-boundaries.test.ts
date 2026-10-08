@@ -172,13 +172,14 @@ test("GP-09 legacy profile stays a derived read model outside scheduling, storag
       ).not.toMatch(/legacy_development|legacy_profile/u);
 });
 
-/** Every module specifier in a static import, re-export, or dynamic import. */
+/** Every module specifier in a static import, re-export, dynamic import, or require. */
 function importedSpecifiers(source: string): string[] {
   const specifiers: string[] = [];
   const patterns = [
     /(?:^|\n)\s*(?:import|export)[\s\S]*?from\s*["']([^"']+)["']/g,
     /(?:^|\n)\s*import\s*["']([^"']+)["']/g,
     /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
+    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
   ];
   for (const pattern of patterns) {
     let match = pattern.exec(source);
@@ -1363,6 +1364,12 @@ describe("GP-20 official Domain Packs use only public core contracts", () => {
     });
   }
 
+  function sourceFiles(directory: string): string[] {
+    return filesUnder(directory).filter((file) =>
+      /\.(?:ts|tsx|mts|cts|js|mjs|cjs)$/u.test(file),
+    );
+  }
+
   function forbiddenPackImports(
     file: string,
     source: string,
@@ -1418,8 +1425,7 @@ describe("GP-20 official Domain Packs use only public core contracts", () => {
           if (dependency !== "@ai-office/domain-pack-contracts")
             offenders.push(`${name} -> ${dependency}`);
       }
-      for (const file of filesUnder(packRoot)) {
-        if (!/\.(?:ts|tsx|mts|js|mjs)$/u.test(file)) continue;
+      for (const file of sourceFiles(packRoot)) {
         for (const specifier of forbiddenPackImports(
           file,
           readFileSync(file, "utf8"),
@@ -1441,9 +1447,9 @@ describe("GP-20 official Domain Packs use only public core contracts", () => {
           offenders.push(`packages/${layer}/package.json -> ${name}`);
       }
       for (const file of [
-        ...typescriptFiles(join(packagesRoot, "domain")),
-        ...typescriptFiles(join(packagesRoot, "application")),
-        ...typescriptFiles(join(packagesRoot, "runtime-host")),
+        ...sourceFiles(join(packagesRoot, "domain")),
+        ...sourceFiles(join(packagesRoot, "application")),
+        ...sourceFiles(join(packagesRoot, "runtime-host")),
       ]) {
         const source = readFileSync(file, "utf8");
         if (source.includes(manifest.id) || source.includes(name))
@@ -1475,6 +1481,34 @@ describe("GP-20 official Domain Packs use only public core contracts", () => {
       "@ai-office/domain/project/project.ts",
       "node:fs",
     ]);
+  });
+
+  test("the purity scan catches forbidden CommonJS requires in .cjs and .cts files", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ai-office-gp20-commonjs-"));
+    try {
+      const cjsFile = join(directory, "probe.cjs");
+      const ctsFile = join(directory, "probe.cts");
+      writeFileSync(cjsFile, 'const fs = require("node:fs");\n');
+      writeFileSync(
+        ctsFile,
+        'const app = require("@ai-office/application/domain-pack");\n',
+      );
+      const offenders = sourceFiles(directory)
+        .flatMap((file) =>
+          forbiddenPackImports(
+            file,
+            readFileSync(file, "utf8"),
+            "domain-pack-legal",
+          ).map((specifier) => `${file} -> ${specifier}`),
+        )
+        .sort();
+      expect(offenders).toEqual([
+        `${cjsFile} -> node:fs`,
+        `${ctsFile} -> @ai-office/application/domain-pack`,
+      ]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test("the core scan recognizes bare vertical and qualified-name branches", () => {
