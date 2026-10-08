@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { TaskGraphNode } from "@ai-office/application/read-models/operational-read-models.ts";
@@ -144,6 +145,21 @@ test("graph node tiers preserve accessible identity, selection, and fixed footpr
   expect(visible(compact)).toContain("not started");
   expect(visible(compact)).not.toContain("2 blockers");
   expect(visible(compact)).not.toContain("Current milestone");
+});
+
+test("shipped dashboard CSS includes the compact node utilities", () => {
+  const styles = readFileSync(
+    new URL("../../apps/dashboard/src/assets/styles.css", import.meta.url),
+    "utf8",
+  );
+  for (const selector of [
+    ".h-11{",
+    ".w-40{",
+    ".text-center{",
+    ".text-\\[10px\\]{",
+  ]) {
+    expect(styles).toContain(selector);
+  }
 });
 
 test("selected task panel shows task text and linked requirement details in bounded pages", () => {
