@@ -87,15 +87,29 @@ console.log(JSON.stringify(tuple));
 The host chooses trusted installer IDs. A manifest cannot trust itself. The
 catalog rechecks bytes, both digests, schema, compatibility and provenance.
 Its registrations are process-local; project bindings are separate persistent
-state. The [reference tests](#exercise-the-four-examples) supply trusted
-catalogs to Runtime test hosts. The shipped persistent host supplies no
-official packs, so a nonempty selection there reports unavailable packs.
+state. This `bun -e` process exits immediately: it neither starts a Runtime
+host nor installs the pack into an existing daemon. The [reference
+tests](#exercise-the-four-examples) supply trusted catalogs when they start
+their own Runtime test hosts. The shipped persistent host supplies no official
+packs, so a nonempty selection there reports unavailable packs.
 
-## Select and customize definitions
+## Project operations in a test host
 
-The commands below are the actual CLI surface. They require a reachable
-Runtime, an existing `PROJECT_ID`, and, for a nonempty selection, a trusted
-host that has registered the exact artifacts. `project:create "Pack demo"`
+The commands below show the actual CLI syntax used by test-host scenarios;
+they are **not a runnable nonempty-pack workflow on the shipped daemon**.
+The runnable local path is the [Unix-socket CLI test](../../tests/e2e/daemon-cli.test.ts):
+it registers a fixture in a trusted catalog, passes that catalog to `bootstrap`
+when starting an isolated daemon, then sends these commands over its socket.
+Run it from the repository root:
+
+```bash
+bunx --bun vitest run tests/e2e/daemon-cli.test.ts -t 'previews and applies an explicit project pack binding over the socket|previews, blocks and applies a pack upgrade over the socket'
+```
+
+The CLI commands require a reachable Runtime, an existing `PROJECT_ID`, and,
+for a nonempty selection, a test host whose injected catalog contains the
+exact artifacts. A standalone `bun -e` registration does not satisfy that
+requirement. `project:create "Pack demo"`
 creates a project. With `--json`, its output contains `projectId` and
 `created`; set `PROJECT_ID` from that value before using the commands:
 
@@ -267,14 +281,6 @@ the repository root:
 
 ```bash
 bunx --bun vitest run tests/integration/development-pack-parity.test.ts tests/integration/legal-reference-pack.test.ts tests/integration/manufacturing-reference-pack.test.ts tests/integration/custom-domain-definitions.test.ts tests/integration/four-domain-definition-gate.test.ts
-```
-
-The [Unix-socket CLI tests](../../tests/e2e/daemon-cli.test.ts) exercise the
-`project:pack:*`, `project:definition:*` and
-`project:configuration:show` commands with test-supplied catalogs:
-
-```bash
-bunx --bun vitest run tests/e2e/daemon-cli.test.ts -t 'previews and applies an explicit project pack binding over the socket|previews, blocks and applies a pack upgrade over the socket'
 ```
 
 The [M16 plan](generic-core-domain-packs.md) records detailed conflict and
