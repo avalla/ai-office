@@ -8,6 +8,15 @@ import type {
 
 export const nodeSize = { width: 264, height: 96 } as const;
 
+export type GraphNodeDetail = "full" | "medium" | "compact";
+
+/** The node footprint stays fixed; only its presentation changes with zoom. */
+export function graphNodeDetail(zoom: number): GraphNodeDetail {
+  if (zoom >= 0.85) return "full";
+  if (zoom >= 0.4) return "medium";
+  return "compact";
+}
+
 export type GraphDirection = "LR" | "TB";
 
 /**

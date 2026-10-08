@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { TaskGraphNode } from "@ai-office/application/read-models/operational-read-models.ts";
 import {
+  GraphTaskNodeButton,
   GraphTaskDetailSections,
   OverviewTaskLists,
 } from "../../apps/dashboard/src/features/task-graph.tsx";
@@ -97,6 +98,52 @@ describe("graph overview task lists", () => {
     expect(laterPage).not.toContain("Title r0");
     expect(laterPage).not.toContain("Title a0");
   });
+});
+
+test("graph node tiers preserve accessible identity, selection, and fixed footprint", () => {
+  const task = {
+    ...node("selected"),
+    title: "Selected task with a complete name",
+    priority: 3,
+    ready: false,
+    waiting: true,
+    unmetPrerequisiteIds: ["first", "second"],
+  };
+  const data = {
+    task,
+    milestone: { title: "Current milestone", more: 0 },
+    dimmed: false,
+    selected: true,
+    onChain: false,
+    direction: "LR" as const,
+    onSelect: () => {},
+  };
+  const render = (detail: "full" | "medium" | "compact") =>
+    renderToStaticMarkup(createElement(GraphTaskNodeButton, { data, detail }));
+  const full = render("full");
+  const medium = render("medium");
+  const compact = render("compact");
+  const name = full.match(/aria-label="([^"]+)"/)?.[1];
+
+  expect(name).toContain("Selected task with a complete name");
+  expect(name).toContain("2 blockers");
+  expect(name).toContain("Current milestone");
+  for (const html of [full, medium, compact]) {
+    expect(html).toContain(`aria-label="${name}"`);
+    expect(html).toContain('aria-pressed="true"');
+    expect(html).toContain("ring-2 ring-primary");
+    expect(html).toContain('style="width:264px;height:96px"');
+  }
+  // Remove the full accessible name to inspect only the visible tier content.
+  const visible = (html: string) => html.replace(/aria-label="[^"]+"/, "");
+  expect(visible(full)).toContain("Current milestone");
+  expect(visible(full)).toContain("P3");
+  expect(visible(medium)).toContain("2 blockers");
+  expect(visible(medium)).not.toContain("Current milestone");
+  expect(visible(medium)).not.toContain("P3");
+  expect(visible(compact)).toContain("not started");
+  expect(visible(compact)).not.toContain("2 blockers");
+  expect(visible(compact)).not.toContain("Current milestone");
 });
 
 test("selected task panel shows task text and linked requirement details in bounded pages", () => {
