@@ -72,8 +72,8 @@ export function projectTaskGraphNodes(
         unmetPrerequisiteIds: unmet,
         // The admission rule of ManageTaskDependencies.readiness, not a copy.
         ready: isTaskRunnable(task.recordedStatus) && unmet.length === 0,
-        terminal: isTerminalTaskStatus(task.recordedStatus),
-        waiting: !isTerminalTaskStatus(task.recordedStatus) && unmet.length > 0,
+        terminal: task.terminal,
+        waiting: !task.terminal && unmet.length > 0,
         needsAttention: task.attentionReasons.length > 0,
         completionUnblocks: (unblocks.get(task.taskId) ?? []).sort(),
       };
@@ -93,9 +93,7 @@ export function projectLongestDependencyChain(
   edges: readonly TaskGraphEdge[],
 ): string[] {
   const unfinished = new Set(
-    nodes
-      .filter((node) => !isTerminalTaskStatus(node.recordedStatus))
-      .map((node) => node.taskId),
+    nodes.filter((node) => !node.terminal).map((node) => node.taskId),
   );
   const dependents = new Map<string, string[]>();
   const waitingOn = new Map<string, number>();

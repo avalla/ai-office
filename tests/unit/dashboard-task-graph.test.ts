@@ -54,6 +54,7 @@ const graph: TaskGraph = {
     node("done", {
       recordedStatus: "completed",
       operationalStatus: "completed",
+      terminal: true,
       ready: false,
     }),
     node("a", { milestoneIds: ["m1"] }),
@@ -333,12 +334,21 @@ describe("dashboard task graph", () => {
         node("x", {
           operationalStatus: "failed",
           recordedStatus: "failed",
+          terminal: true,
           ready: false,
           waiting: false,
           unmetPrerequisiteIds: ["a"],
         }),
       ),
     ).toBe("Failed");
+    expect(
+      nodeStateLabel(
+        node("retry", {
+          operationalStatus: "failed",
+          ready: false,
+        }),
+      ),
+    ).toBe("Not startable");
     expect(
       nodeStateLabel(
         node("y", {
