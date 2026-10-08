@@ -42,6 +42,7 @@ import {
   statusLabel,
   defaultGraphFilters,
   filterGraph,
+  graphStatusOption,
   hiddenCompletedPrerequisiteCounts,
   graphEdgeKey,
   neighborhoodModes,
@@ -51,8 +52,12 @@ import {
   quickFilters,
   searchTasks,
   taskKey,
+  toggleMilestoneFilter,
+  withGraphStatusOption,
+  activeStatusOption,
   type GraphDirection,
   type GraphFilters,
+  type GraphStatusOption,
   type NeighborhoodMode,
   type GraphNodeDetail,
   type QuickFilter,
@@ -829,9 +834,17 @@ function TaskGraphCanvas({
   const filtered =
     query !== "" ||
     filters.status !== "" ||
-    filters.milestone !== "" ||
+    filters.milestones.length > 0 ||
     filters.quick !== "" ||
     !filters.hideCompleted;
+  const milestoneFilterLabel =
+    filters.milestones.length === 0
+      ? "All milestones"
+      : filters.milestones.length === 1
+        ? filters.milestones[0] === "none"
+          ? "No milestone"
+          : (milestonesById.get(filters.milestones[0]!)?.title ?? "1 milestone")
+        : `${filters.milestones.length} milestones`;
 
   if (graph.tasks.length === 0)
     return (
@@ -949,13 +962,13 @@ function TaskGraphCanvas({
         <label className="flex flex-col gap-1 text-xs text-subtle">
           Operational status
           <Select
-            value={filters.status}
-            onChange={(event) =>
-              patch({
-                status: event.target.value as TaskOperationalStatus | "",
-              })
-            }
+            value={graphStatusOption(filters)}
+            onChange={(event) => {
+              const option = event.target.value as GraphStatusOption;
+              setFilters((current) => withGraphStatusOption(current, option));
+            }}
           >
+            <option value={activeStatusOption}>Active statuses</option>
             <option value="">All statuses</option>
             {statusOptions.map((status) => (
               <option key={status} value={status}>
@@ -964,21 +977,55 @@ function TaskGraphCanvas({
             ))}
           </Select>
         </label>
-        <label className="flex flex-col gap-1 text-xs text-subtle">
-          Milestone
-          <Select
-            value={filters.milestone}
-            onChange={(event) => patch({ milestone: event.target.value })}
+        <details className="w-full text-sm">
+          <summary
+            aria-label={`Milestone filter: ${milestoneFilterLabel}`}
+            className="flex h-10 w-fit max-w-full cursor-pointer items-center rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <option value="">All milestones</option>
-            <option value="none">No milestone</option>
-            {graph.milestones.map((m) => (
-              <option key={m.milestoneId} value={m.milestoneId}>
-                {m.title}
-              </option>
+            <span className="truncate">{milestoneFilterLabel}</span>
+          </summary>
+          <div
+            role="group"
+            aria-label="Select milestones"
+            className="mt-2 flex max-h-64 w-full flex-col gap-2 overflow-y-auto rounded-md border border-border bg-surface p-3"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs font-semibold">Milestones</span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={filters.milestones.length === 0}
+                onClick={() => patch({ milestones: [] })}
+              >
+                Clear
+              </Button>
+            </div>
+            {[
+              { id: "none", title: "No milestone" },
+              ...graph.milestones.map((m) => ({
+                id: m.milestoneId,
+                title: m.title,
+              })),
+            ].map(({ id, title }) => (
+              <label key={id} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={filters.milestones.includes(id)}
+                  onChange={() =>
+                    setFilters((current) => ({
+                      ...current,
+                      milestones: toggleMilestoneFilter(current.milestones, id),
+                    }))
+                  }
+                />
+                <span className="truncate" title={title}>
+                  {title}
+                </span>
+              </label>
             ))}
-          </Select>
-        </label>
+          </div>
+        </details>
         <details className="relative text-sm">
           <summary className="flex h-10 cursor-pointer items-center rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             More filters

@@ -248,7 +248,7 @@ what can run now, what is blocked and why, and what completing a task unblocks:
 
 - a summary row (Ready, Waiting on prerequisites, Blocked, In progress, Needs
   attention) whose buttons are filter shortcuts;
-- data filters (find, status, milestone, and under "More filters" hide
+- data filters (find, status, multiple milestones, and under "More filters" hide
   completed, operational view, filter-by-search);
 - a React Flow canvas of task→task dependencies only (dagre, left-to-right by
   default, top-down optional), with each task showing status, priority, READY or
@@ -300,10 +300,15 @@ cancelled tasks that block no open work are hidden by default. A cancelled
 prerequisite remains visible with its edge when it still blocks a non-terminal
 task; an explicit search or filter may narrow it away. An operational shortcut
 or status filter overrides the default hiding rule.
+The Status control calls that default **Active statuses**. Selecting **All
+statuses** explicitly turns off Hide completed and includes completed tasks;
+the separate checkbox can switch the view back. The milestone selector matches
+tasks belonging to any selected milestone. "No milestone" can be combined with
+named milestones, and clearing the selection shows all milestones.
 
 Filter and selection state is component state, so it survives live refresh and
 resets when the project changes, but is not in the URL. Persisting search,
-status, milestone and the operational view
+status, selected milestones and the operational view
 in the hash would refetch the graph on every change with the current route
 model, so it is a follow-up (it needs section-level query parameters that do not
 trigger a refetch). The Graph route fetches only the exhaustive graph endpoint;

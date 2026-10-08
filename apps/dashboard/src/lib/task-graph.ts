@@ -47,8 +47,8 @@ export interface GraphFilters {
   /** Applied only when the user asked to filter the graph by the search text. */
   search: string;
   status: TaskOperationalStatus | "";
-  /** "" = all, "none" = tasks without a milestone, otherwise a milestone id. */
-  milestone: string;
+  /** Empty = all; "none" includes tasks without a milestone. Other values are IDs. */
+  milestones: readonly string[];
   quick: QuickFilter | "";
   hideCompleted: boolean;
 }
@@ -56,10 +56,41 @@ export interface GraphFilters {
 export const defaultGraphFilters: GraphFilters = {
   search: "",
   status: "",
-  milestone: "",
+  milestones: [],
   quick: "",
   hideCompleted: true,
 };
+
+export const activeStatusOption = "__active__" as const;
+export type GraphStatusOption =
+  TaskOperationalStatus | "" | typeof activeStatusOption;
+
+/** Keep the compact default explicit in the status control. */
+export function graphStatusOption(filters: GraphFilters): GraphStatusOption {
+  return filters.status === "" && filters.hideCompleted
+    ? activeStatusOption
+    : filters.status;
+}
+
+export function withGraphStatusOption(
+  filters: GraphFilters,
+  option: GraphStatusOption,
+): GraphFilters {
+  if (option === activeStatusOption)
+    return { ...filters, status: "", hideCompleted: true };
+  if (option === "") return { ...filters, status: "", hideCompleted: false };
+  return { ...filters, status: option };
+}
+
+/** Selected categories are an OR filter; keep their order deterministic. */
+export function toggleMilestoneFilter(
+  selected: readonly string[],
+  value: string,
+): string[] {
+  return selected.includes(value)
+    ? selected.filter((id) => id !== value)
+    : [...selected, value].sort();
+}
 
 export function matchesQuickFilter(
   task: TaskGraphNode,
@@ -162,12 +193,13 @@ export function filterGraph(
       return false;
     if (filters.quick !== "" && !matchesQuickFilter(task, filters.quick))
       return false;
-    if (filters.milestone === "none" && task.milestoneIds.length > 0)
-      return false;
     if (
-      filters.milestone !== "" &&
-      filters.milestone !== "none" &&
-      !task.milestoneIds.includes(filters.milestone)
+      filters.milestones.length > 0 &&
+      !filters.milestones.some((id) =>
+        id === "none"
+          ? task.milestoneIds.length === 0
+          : task.milestoneIds.includes(id),
+      )
     )
       return false;
     if (search !== "" && !matchesSearch(task, search)) return false;
