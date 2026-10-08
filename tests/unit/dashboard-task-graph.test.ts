@@ -19,6 +19,7 @@ import {
   filterGraph,
   layoutGraph,
   lineage,
+  relationshipEdgeKind,
   taskKey,
 } from "../../apps/dashboard/src/lib/task-graph.ts";
 
@@ -103,6 +104,39 @@ const ids = (tasks: readonly TaskGraphNode[]) => tasks.map((t) => t.taskId);
 const all = { ...defaultGraphFilters, hideCompleted: false };
 
 describe("dashboard task graph", () => {
+  test("classifies direct links and transitive lineage from existing edges", () => {
+    const selected = "b";
+    const tree = lineage(graph.edges, selected);
+    const related = new Set([selected, ...tree.upstream, ...tree.downstream]);
+    expect(
+      relationshipEdgeKind(
+        { taskId: "b", dependsOnTaskId: "a" },
+        selected,
+        related,
+      ),
+    ).toBe("direct");
+    expect(
+      relationshipEdgeKind(
+        { taskId: "d", dependsOnTaskId: "b" },
+        selected,
+        related,
+      ),
+    ).toBe("direct");
+    expect(
+      relationshipEdgeKind(
+        { taskId: "a", dependsOnTaskId: "done" },
+        selected,
+        related,
+      ),
+    ).toBe("transitive");
+    expect(
+      relationshipEdgeKind(
+        { taskId: "d", dependsOnTaskId: "c" },
+        selected,
+        related,
+      ),
+    ).toBeNull();
+  });
   test("hides completed work by default but keeps counts exact", () => {
     const visible = filterGraph(graph, defaultGraphFilters);
     expect(ids(visible.tasks)).toEqual(["a", "b", "c", "d", "lone"]);
