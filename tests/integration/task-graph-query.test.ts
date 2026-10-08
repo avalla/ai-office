@@ -253,9 +253,10 @@ describe("task dependency graph read model", () => {
     await link("other", "foreign", await requirement("other", "REQ-OTHER"));
 
     const snapshot = await f.reads.readTaskGraphSnapshot("p");
-    expect(snapshot.unmilestonedRequirementTaskIds).toEqual([
+    expect(snapshot.requirementLinkedTaskIds).toEqual([
       "both",
       "orphaned",
+      "owned",
     ]);
     const gap = Object.fromEntries(
       (await f.queries.getTaskGraph("p")).tasks.map((task) => [
@@ -268,6 +269,41 @@ describe("task dependency graph read model", () => {
       both: null,
       none: "no_requirement",
       orphaned: "requirement_without_milestone",
+    });
+  });
+
+  test("a milestone missing from the milestone read never turns a requirement into no requirement", async () => {
+    const f = await fixture();
+    await f.project("p");
+    await f.task("p", "owned");
+    const milestoneId = await f.governance.createMilestone({
+      projectId: "p",
+      title: "M1",
+    });
+    const requirementId = await f.governance.createRequirement({
+      projectId: "p",
+      key: "REQ-OWNED",
+      title: "Owned",
+      description: "Owned",
+      milestoneId,
+    });
+    await f.taskRequirements.link({
+      projectId: "p",
+      taskId: "owned",
+      requirementId,
+      now,
+    });
+    // The milestone read happens outside the task snapshot; simulate it
+    // losing the milestone the snapshot still links.
+    const milestones = vi
+      .spyOn(f.reads, "listMilestones")
+      .mockResolvedValue([]);
+    const graph = await f.queries.getTaskGraph("p");
+    milestones.mockRestore();
+
+    expect(graph.tasks[0]).toMatchObject({
+      milestoneIds: [],
+      milestoneGap: "requirement_without_milestone",
     });
   });
 

@@ -341,6 +341,18 @@ export class SqliteGovernanceRepository implements GovernanceRepository {
     );
   }
 
+  async findRequirement(
+    id: string,
+    projectId: string,
+  ): Promise<RequirementRecord | null> {
+    const row = this.database
+      .query<Record<string, unknown>, [string, string]>(
+        "SELECT * FROM requirement WHERE id=? AND project_id=?",
+      )
+      .get(id, projectId);
+    return row === null ? null : this.requirementFromRow(row);
+  }
+
   async findSubjectProject(
     type: ReviewSubjectType,
     id: string,

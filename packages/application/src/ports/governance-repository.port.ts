@@ -92,6 +92,11 @@ export interface GovernanceRepository {
   saveAdr(value: AdrRecord): Promise<void>;
   saveReview(value: ReviewRecord): Promise<void>;
   findMilestoneProject(id: string): Promise<string | null>;
+  /** One requirement of the project, or null; no whole-snapshot read. */
+  findRequirement(
+    id: string,
+    projectId: string,
+  ): Promise<RequirementRecord | null>;
   findSubjectProject(
     type: ReviewSubjectType,
     id: string,

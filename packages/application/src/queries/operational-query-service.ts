@@ -1080,7 +1080,7 @@ export class OperationalQueryService {
     const tasks = projectTaskGraphNodes(
       states,
       edges,
-      new Set(snapshot.unmilestonedRequirementTaskIds),
+      new Set(snapshot.requirementLinkedTaskIds),
     );
     return {
       generatedAt: now.toISOString(),

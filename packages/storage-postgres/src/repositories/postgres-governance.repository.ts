@@ -423,6 +423,25 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
     return row?.project_id ?? null;
   }
 
+  async findRequirement(
+    id: string,
+    projectId: string,
+  ): Promise<RequirementRecord | null> {
+    const [row] = await this.database.query<RequirementRow>(
+      `
+        SELECT item.id, item.project_id, item.milestone_id, item.requirement_key,
+               item.title, item.description, item.status, item.created_at,
+               item.updated_at
+        FROM core.requirement AS item
+        JOIN core.project AS project ON project.id = item.project_id
+        WHERE item.id = $1 AND item.project_id = $2
+          AND project.tenant_id = $3
+      `,
+      [id, projectId, this.tenantId],
+    );
+    return row === undefined ? null : requirementFromRow(row);
+  }
+
   async findSubjectProject(
     type: ReviewSubjectType,
     id: string,

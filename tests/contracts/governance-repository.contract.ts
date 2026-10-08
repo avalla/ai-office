@@ -27,6 +27,9 @@ export interface GovernanceRepositoryContractHarness {
   projects: ProjectRepository;
   governance: GovernanceRepository;
   seedEvent(value: GovernanceEventRecord): Promise<void>;
+  /** Makes appending the audit event with this id fail, as a storage fault. */
+  failEventAppend(eventId: string): Promise<void>;
+  restoreEventAppend(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -552,7 +555,12 @@ export function defineGovernanceRepositoryContracts(
     const orphan = requirement(project.id, `${prefix}-orphan`, "REQ-ORPHAN");
     const foreign = requirement(other.id, `${prefix}-foreign`, "REQ-FOREIGN");
     const settled = requirement(project.id, `${prefix}-settled`, "REQ-SETTLED");
-    for (const value of [orphan, foreign, settled])
+    const accepted = requirement(
+      project.id,
+      `${prefix}-accepted`,
+      "REQ-ACCEPTED",
+    );
+    for (const value of [orphan, foreign, settled, accepted])
       await harness.governance.saveRequirement(value);
     const at = date("2026-01-02T00:00:00.000Z");
     const service = governanceService(harness, at, `${prefix}-event`);
@@ -562,6 +570,12 @@ export function defineGovernanceRepositoryContracts(
       id: settled.id,
       status: "rejected",
     });
+    await service.setStatus({
+      projectId: project.id,
+      kind: "requirement",
+      id: accepted.id,
+      status: "accepted",
+    });
     const assign = (requirementId: string, milestoneId: string) =>
       service.assignRequirementMilestone({
         projectId: project.id,
@@ -569,9 +583,9 @@ export function defineGovernanceRepositoryContracts(
         milestoneId,
       });
 
-    await expect(assign(`${prefix}-missing`, milestone.id)).rejects.toBeInstanceOf(
-      GovernanceSubjectNotFoundError,
-    );
+    await expect(
+      assign(`${prefix}-missing`, milestone.id),
+    ).rejects.toBeInstanceOf(GovernanceSubjectNotFoundError);
     await expect(assign(foreign.id, milestone.id)).rejects.toBeInstanceOf(
       GovernanceSubjectNotFoundError,
     );
@@ -584,6 +598,9 @@ export function defineGovernanceRepositoryContracts(
     await expect(assign(settled.id, milestone.id)).rejects.toBeInstanceOf(
       RequirementNotEditableError,
     );
+    await expect(assign(accepted.id, milestone.id)).rejects.toBeInstanceOf(
+      RequirementNotEditableError,
+    );
     // The storage fence holds even when the application guards are skipped.
     expect(
       await harness.governance.assignRequirementMilestone(
@@ -592,6 +609,16 @@ export function defineGovernanceRepositoryContracts(
         milestone.id,
         at,
         { id: `${prefix}-forced-settled`, metadata: {} },
+      ),
+    ).toBe(false);
+    // A status change that wins the race leaves the storage fence to refuse.
+    expect(
+      await harness.governance.assignRequirementMilestone(
+        accepted.id,
+        project.id,
+        milestone.id,
+        at,
+        { id: `${prefix}-forced-accepted`, metadata: {} },
       ),
     ).toBe(false);
     expect(
@@ -615,13 +642,134 @@ export function defineGovernanceRepositoryContracts(
       (await harness.governance.getSnapshot(project.id)).requirements.map(
         (value) => value.milestoneId,
       ),
-    ).toEqual([undefined, undefined]);
+    ).toEqual([undefined, undefined, undefined]);
     expect(
       (await harness.governance.listEvents(project.id)).filter(
         (event) => event.eventType === "requirement.updated",
       ),
     ).toEqual([]);
   });
+
+  test("an audit failure rolls the milestone assignment back", async () => {
+    const project = await createProject(harness, `${prefix}-project`);
+    const milestone: MilestoneRecord = {
+      id: `${prefix}-milestone`,
+      projectId: project.id,
+      title: "Milestone",
+      status: "planned",
+      createdAt: date("2026-01-01T00:00:00.000Z"),
+      updatedAt: date("2026-01-01T00:00:00.000Z"),
+    };
+    await harness.governance.saveMilestone(milestone);
+    const orphan = requirement(project.id, `${prefix}-orphan`, "REQ-ORPHAN");
+    await harness.governance.saveRequirement(orphan);
+    const eventId = `${prefix}-failing-event`;
+    await harness.failEventAppend(eventId);
+    try {
+      await expect(
+        harness.governance.assignRequirementMilestone(
+          orphan.id,
+          project.id,
+          milestone.id,
+          date("2026-01-02T00:00:00.000Z"),
+          { id: eventId, metadata: { key: orphan.key } },
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await harness.restoreEventAppend();
+    }
+    // Neither half of the change survived: the update and its audit are one unit.
+    expect(
+      (await harness.governance.getSnapshot(project.id)).requirements,
+    ).toEqual([orphan]);
+    expect(
+      (await harness.governance.listEvents(project.id)).filter(
+        (event) => event.eventType === "requirement.updated",
+      ),
+    ).toEqual([]);
+  });
+
+  test("two concurrent assignments let exactly one win and audit once", async () => {
+    const project = await createProject(harness, `${prefix}-project`);
+    const milestones = ["first", "second"].map((name): MilestoneRecord => ({
+      id: `${prefix}-${name}`,
+      projectId: project.id,
+      title: name,
+      status: "planned",
+      createdAt: date("2026-01-01T00:00:00.000Z"),
+      updatedAt: date("2026-01-01T00:00:00.000Z"),
+    }));
+    for (const value of milestones)
+      await harness.governance.saveMilestone(value);
+    const orphan = requirement(project.id, `${prefix}-orphan`, "REQ-ORPHAN");
+    await harness.governance.saveRequirement(orphan);
+    const at = date("2026-01-02T00:00:00.000Z");
+
+    const results = await Promise.all(
+      milestones.map((value, index) =>
+        harness.governance.assignRequirementMilestone(
+          orphan.id,
+          project.id,
+          value.id,
+          at,
+          { id: `${prefix}-race-${index}`, metadata: {} },
+        ),
+      ),
+    );
+
+    expect(results.filter(Boolean)).toHaveLength(1);
+    const winner = milestones[results.indexOf(true)]!;
+    expect(
+      (await harness.governance.getSnapshot(project.id)).requirements[0]
+        ?.milestoneId,
+    ).toBe(winner.id);
+    expect(
+      (await harness.governance.listEvents(project.id)).filter(
+        (event) => event.eventType === "requirement.updated",
+      ),
+    ).toHaveLength(1);
+  });
+
+  test.each(["cancelled", "archived"] as const)(
+    "refuses to assign a %s milestone",
+    async (status) => {
+      const project = await createProject(harness, `${prefix}-project`);
+      const milestone: MilestoneRecord = {
+        id: `${prefix}-milestone`,
+        projectId: project.id,
+        title: "Abandoned",
+        status: "planned",
+        createdAt: date("2026-01-01T00:00:00.000Z"),
+        updatedAt: date("2026-01-01T00:00:00.000Z"),
+      };
+      await harness.governance.saveMilestone(milestone);
+      const orphan = requirement(project.id, `${prefix}-orphan`, "REQ-ORPHAN");
+      await harness.governance.saveRequirement(orphan);
+      const at = date("2026-01-02T00:00:00.000Z");
+      const service = governanceService(harness, at, `${prefix}-event`);
+      for (const next of status === "archived"
+        ? (["active", "completed", "archived"] as const)
+        : (["cancelled"] as const))
+        await service.setStatus({
+          projectId: project.id,
+          kind: "milestone",
+          id: milestone.id,
+          status: next,
+        });
+
+      await expect(
+        service.assignRequirementMilestone({
+          projectId: project.id,
+          requirementId: orphan.id,
+          milestoneId: milestone.id,
+        }),
+      ).rejects.toBeInstanceOf(DomainValidationError);
+      expect(
+        (await harness.governance.getSnapshot(project.id)).requirements[0]
+          ?.milestoneId,
+      ).toBeUndefined();
+    },
+  );
 
   test("rejects duplicate requirement keys within a project", async () => {
     const project = await createProject(harness, `${prefix}-project`);

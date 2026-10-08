@@ -379,7 +379,7 @@ export function milestoneGapNotes(tasks: readonly TaskGraphNode[]) {
     string[]
   >();
   for (const task of tasks) {
-    if (task.milestoneGap === null) continue;
+    if (typeof task.milestoneGap !== "string") continue;
     groups.set(task.milestoneGap, [
       ...(groups.get(task.milestoneGap) ?? []),
       task.title,

@@ -21,7 +21,11 @@ describe.skipIf(connectionString === undefined)(
       await migratePostgres(database, migrationDirectory);
       await database.query(
         "INSERT INTO core.tenant(id, name, created_at, updated_at) VALUES ($1, $2, $3, $3) ON CONFLICT DO NOTHING",
-        [tenantId, "Governance Contract Tenant", new Date("2026-01-01T00:00:00.000Z")],
+        [
+          tenantId,
+          "Governance Contract Tenant",
+          new Date("2026-01-01T00:00:00.000Z"),
+        ],
       );
     });
 
@@ -45,6 +49,31 @@ describe.skipIf(connectionString === undefined)(
             value.metadata,
             value.occurredAt,
           ],
+        );
+      },
+      async failEventAppend(eventId: string): Promise<void> {
+        await database.query(
+          `CREATE OR REPLACE FUNCTION core.inject_event_failure()
+           RETURNS trigger LANGUAGE plpgsql AS $$
+           BEGIN
+             IF NEW.id = TG_ARGV[0] THEN
+               RAISE EXCEPTION 'injected audit failure';
+             END IF;
+             RETURN NEW;
+           END $$`,
+        );
+        await database.query(
+          `DROP TRIGGER IF EXISTS inject_event_failure ON core.governance_event`,
+        );
+        await database.query(
+          `CREATE TRIGGER inject_event_failure
+           BEFORE INSERT ON core.governance_event
+           FOR EACH ROW EXECUTE FUNCTION core.inject_event_failure('${eventId.replaceAll("'", "''")}')`,
+        );
+      },
+      async restoreEventAppend(): Promise<void> {
+        await database.query(
+          "DROP TRIGGER IF EXISTS inject_event_failure ON core.governance_event",
         );
       },
       async close(): Promise<void> {},

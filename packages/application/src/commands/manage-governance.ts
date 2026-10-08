@@ -241,10 +241,11 @@ export class ManageGovernance {
     milestoneId: string;
   }): Promise<void> {
     await this.project(input.projectId);
-    const requirement = (
-      await this.governance.getSnapshot(input.projectId)
-    ).requirements.find((value) => value.id === input.requirementId);
-    if (requirement === undefined)
+    const requirement = await this.governance.findRequirement(
+      input.requirementId,
+      input.projectId,
+    );
+    if (requirement === null)
       throw new GovernanceSubjectNotFoundError(
         "requirement",
         input.requirementId,
@@ -256,6 +257,17 @@ export class ManageGovernance {
       throw new GovernanceSubjectNotFoundError("milestone", input.milestoneId);
     if (milestoneProject !== input.projectId)
       throw new GovernanceCrossProjectReferenceError("Requirement milestone");
+    // The assignment is irreversible, so never pin a requirement to a
+    // milestone that has already been abandoned.
+    const milestoneStatus = await this.governance.findStatus(
+      "milestone",
+      input.milestoneId,
+      input.projectId,
+    );
+    if (milestoneStatus === "cancelled" || milestoneStatus === "archived")
+      throw new DomainValidationError(
+        `milestone ${input.milestoneId} is ${milestoneStatus}; a requirement cannot be assigned to it`,
+      );
     if (!isRequirementEditable(requirement.status))
       throw new RequirementNotEditableError(requirement.id, requirement.status);
     if (requirement.milestoneId !== undefined)

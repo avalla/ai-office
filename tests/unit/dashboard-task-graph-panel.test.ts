@@ -432,6 +432,10 @@ describe("milestone gap notes", () => {
     expect(notes[0]!.text).toContain("Title a");
     expect(notes[1]!.text).toContain("task:link-requirement");
     expect(notes[1]!.text).not.toContain("assign-milestone");
+    // A node from a daemon that predates the field is skipped, not rendered.
+    expect(
+      milestoneGapNotes([{ ...node("old"), milestoneGap: undefined as never }]),
+    ).toEqual([]);
     // Long lists are clipped.
     expect(notes[1]!.text).toContain("Title b; Title c; Title d; …");
     expect(notes[1]!.text).not.toContain("Title e");

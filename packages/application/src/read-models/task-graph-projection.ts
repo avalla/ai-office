@@ -23,10 +23,12 @@ import type {
  */
 function milestoneGap(
   task: TaskOperationalState,
-  unmilestonedRequirementTaskIds: ReadonlySet<string>,
+  requirementLinkedTaskIds: ReadonlySet<string>,
 ): TaskMilestoneGap | null {
   if ((task.milestones ?? []).length > 0) return null;
-  return unmilestonedRequirementTaskIds.has(task.taskId)
+  // A task outside every milestone that still has a requirement: that
+  // requirement carries no (surviving) milestone.
+  return requirementLinkedTaskIds.has(task.taskId)
     ? "requirement_without_milestone"
     : "no_requirement";
 }
@@ -34,8 +36,8 @@ function milestoneGap(
 export function projectTaskGraphNodes(
   tasks: readonly TaskOperationalState[],
   edges: readonly TaskGraphEdge[],
-  /** Tasks linked to a requirement that has no milestone. */
-  unmilestonedRequirementTaskIds: ReadonlySet<string>,
+  /** Tasks linked to at least one requirement, whatever its milestone. */
+  requirementLinkedTaskIds: ReadonlySet<string>,
 ): TaskGraphNode[] {
   const statuses = new Map(
     tasks.map((task) => [task.taskId, task.recordedStatus]),
@@ -87,7 +89,7 @@ export function projectTaskGraphNodes(
         operationalStatus: task.operationalStatus,
         assignedAgent: task.assignedAgent,
         milestoneIds: (task.milestones ?? []).map((m) => m.milestoneId).sort(),
-        milestoneGap: milestoneGap(task, unmilestonedRequirementTaskIds),
+        milestoneGap: milestoneGap(task, requirementLinkedTaskIds),
         unmetPrerequisiteIds: unmet,
         // The admission rule of ManageTaskDependencies.readiness, not a copy.
         ready: isTaskRunnable(task.recordedStatus) && unmet.length === 0,
