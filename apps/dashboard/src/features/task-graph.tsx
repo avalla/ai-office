@@ -820,17 +820,17 @@ function TaskGraphCanvas({
             ))}
           </Select>
         </label>
-        <details className="relative text-sm">
+        <details className="w-full text-sm">
           <summary
             aria-label={`Milestone filter: ${milestoneFilterLabel}`}
-            className="flex h-10 max-w-48 cursor-pointer items-center rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            className="flex h-10 w-fit max-w-full cursor-pointer items-center rounded-md border border-border bg-surface px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <span className="truncate">{milestoneFilterLabel}</span>
           </summary>
           <div
             role="group"
             aria-label="Select milestones"
-            className="absolute right-0 z-20 mt-2 flex max-h-64 w-72 flex-col gap-2 overflow-y-auto rounded-md border border-border bg-surface p-3 shadow-lg"
+            className="mt-2 flex max-h-64 w-full flex-col gap-2 overflow-y-auto rounded-md border border-border bg-surface p-3"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-semibold">Milestones</span>
