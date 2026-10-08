@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router-dom";
 import type {
   TaskGraph,
   TaskGraphNode,
@@ -10,8 +11,10 @@ import {
   CompletedPrerequisiteCue,
   GraphTaskNodeButton,
   GraphTaskDetailSections,
+  Legend,
   OverviewTaskLists,
   TaskGraphView,
+  TaskPanel,
 } from "../../apps/dashboard/src/features/task-graph.tsx";
 
 function node(id: string): TaskGraphNode {
@@ -161,6 +164,9 @@ test("graph node tiers preserve accessible identity, selection, and fixed footpr
 
   expect(name).toContain("Selected task with a complete name");
   expect(name).toContain("2 blockers");
+  expect(full).toContain(
+    "2 blockers: prerequisites neither completed nor in review",
+  );
   expect(name).toContain("Current milestone");
   expect(name).toContain("2 completed prerequisites hidden from graph");
   for (const html of [full, medium, compact]) {
@@ -314,4 +320,89 @@ test("selected task panel shows task text and linked requirement details in boun
   expect(html).toContain("REQ-7");
   expect(html).not.toContain("REQ-8");
   expect(html).toContain("Show more requirements (1 remaining)");
+});
+
+describe("task panel prerequisite wording", () => {
+  const panel = (
+    task: TaskGraphNode,
+    others: readonly TaskGraphNode[],
+    prerequisites: readonly string[],
+  ) =>
+    renderToStaticMarkup(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(TaskPanel, {
+          projectId: "p",
+          task,
+          detail: null,
+          detailLoading: false,
+          detailError: false,
+          onRetryDetail: () => {},
+          tasksById: new Map([task, ...others].map((t) => [t.taskId, t])),
+          prerequisites,
+          dependents: [],
+          lineage: {
+            upstream: new Set<string>(),
+            downstream: new Set<string>(),
+          },
+          milestones: [],
+          neighborhoodMode: null,
+          onNeighborhoodMode: () => {},
+          onFocus: () => {},
+          onClear: () => {},
+        }),
+      ),
+    );
+
+  test("separates prerequisites in review from completed ones", () => {
+    const reviewed = {
+      ...node("rev"),
+      recordedStatus: "waiting_review" as const,
+    };
+    const done = {
+      ...node("done"),
+      recordedStatus: "completed" as const,
+      terminal: true,
+    };
+    const html = panel(
+      { ...node("t"), ready: true },
+      [reviewed, done],
+      ["rev", "done"],
+    );
+    expect(html).toContain("every prerequisite is completed or in review.");
+    expect(html).toContain("Prerequisites in review");
+    expect(html).toContain("Completed prerequisites");
+    expect(html.indexOf("Prerequisites in review")).toBeLessThan(
+      html.indexOf("Title rev"),
+    );
+    expect(html.indexOf("Title rev")).toBeLessThan(
+      html.indexOf("Completed prerequisites"),
+    );
+    expect(html.indexOf("Title done")).toBeGreaterThan(
+      html.indexOf("Completed prerequisites"),
+    );
+  });
+
+  test("names review in the unblock and waiting wording", () => {
+    const pending = { ...node("pre"), completionUnblocks: ["t"] };
+    const html = panel(
+      {
+        ...node("t"),
+        ready: false,
+        waiting: true,
+        unmetPrerequisiteIds: ["pre"],
+      },
+      [pending],
+      ["pre"],
+    );
+    expect(html).toContain("Unblocks when in review or completed");
+    expect(html).not.toContain("Unblocks when completed");
+  });
+
+  test("legend does not equate satisfied with completed", () => {
+    const html = renderToStaticMarkup(createElement(Legend));
+    expect(html).toContain("prerequisite neither completed nor in review");
+    expect(html).toContain("prerequisite completed or in review");
+  });
 });

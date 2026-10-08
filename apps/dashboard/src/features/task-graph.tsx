@@ -317,7 +317,7 @@ export function GraphTaskNodeButton({
               </span>
             ) : task.waiting ? (
               <span
-                title={`${blockers(waitingOn)}: prerequisites not completed`}
+                title={`${blockers(waitingOn)}: prerequisites neither completed nor in review`}
                 className="rounded border border-amber-400 px-1 text-amber-800 dark:text-amber-300"
               >
                 <Hourglass aria-hidden="true" className="mr-1 inline h-3 w-3" />
@@ -1491,7 +1491,7 @@ function PagedTaskList({
   );
 }
 
-function TaskPanel({
+export function TaskPanel({
   projectId,
   task,
   detail,
@@ -1526,6 +1526,8 @@ function TaskPanel({
 }) {
   const unmet = new Set(task.unmetPrerequisiteIds);
   const waitingOn = task.unmetPrerequisiteIds.length;
+  // Satisfied prerequisites are completed or submitted for review.
+  const satisfied = prerequisites.filter((id) => !unmet.has(id));
   return (
     <>
       <div className="space-y-2">
@@ -1548,7 +1550,7 @@ function TaskPanel({
         </div>
         <p className="text-xs">
           {task.ready
-            ? "Ready: its status allows work and every prerequisite is completed."
+            ? "Ready: its status allows work and every prerequisite is completed or in review."
             : task.waiting
               ? `Waiting on ${blockers(waitingOn)}.`
               : `${idleState(task)}.`}
@@ -1628,7 +1630,7 @@ function TaskPanel({
       {task.waiting ? (
         <PagedTaskList
           title="Waiting on"
-          empty="No unfinished prerequisites."
+          empty="No unmet prerequisites."
           ids={task.unmetPrerequisiteIds}
           tasksById={tasksById}
           onFocus={onFocus}
@@ -1637,7 +1639,7 @@ function TaskPanel({
         task.unmetPrerequisiteIds.length > 0 && (
           // A finished task is not waiting, but the record stays honest.
           <PagedTaskList
-            title="Prerequisites never completed"
+            title="Prerequisites neither completed nor in review"
             empty=""
             ids={task.unmetPrerequisiteIds}
             tasksById={tasksById}
@@ -1647,8 +1649,8 @@ function TaskPanel({
       )}
       {!task.terminal && (
         <PagedTaskList
-          title="Unblocks when completed"
-          empty="Completing it makes no other task ready on its own."
+          title="Unblocks when in review or completed"
+          empty="Submitting it for review or completing it makes no other task ready on its own."
           ids={task.completionUnblocks}
           tasksById={tasksById}
           showPriority
@@ -1663,9 +1665,20 @@ function TaskPanel({
         onFocus={onFocus}
       />
       <PagedTaskList
+        title="Prerequisites in review"
+        empty="None."
+        ids={satisfied.filter(
+          (id) => tasksById.get(id)?.recordedStatus === "waiting_review",
+        )}
+        tasksById={tasksById}
+        onFocus={onFocus}
+      />
+      <PagedTaskList
         title="Completed prerequisites"
         empty="None."
-        ids={prerequisites.filter((id) => !unmet.has(id))}
+        ids={satisfied.filter(
+          (id) => tasksById.get(id)?.recordedStatus === "completed",
+        )}
         tasksById={tasksById}
         onFocus={onFocus}
       />
@@ -1764,7 +1777,7 @@ export function GraphTaskDetailSections({
   );
 }
 
-function Legend() {
+export function Legend() {
   const swatch = (hex: string, dashed = false, thick = false) => (
     <span
       aria-hidden="true"
@@ -1780,8 +1793,13 @@ function Legend() {
         Legend
       </h3>
       <ul className="space-y-1 text-xs text-subtle">
-        <li>{swatch(colour.unmet, true)} dashed: prerequisite not completed</li>
-        <li>{swatch(colour.neutral)} faint: prerequisite completed</li>
+        <li>
+          {swatch(colour.unmet, true)} dashed: prerequisite neither completed
+          nor in review
+        </li>
+        <li>
+          {swatch(colour.neutral)} faint: prerequisite completed or in review
+        </li>
         <li>{swatch(colour.chain, false, true)} thick red: longest chain</li>
         <li>
           {swatch(colour.lineage, false, true)} thick blue: selected lineage

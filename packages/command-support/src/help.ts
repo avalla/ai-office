@@ -86,7 +86,7 @@ Commands:
   task:transitions --project <id> --task <id> [--json]   # read-only preflight
   task:dependency:add --project <id> --task <id> --depends-on <task-id> [--json]
   task:dependency:remove --project <id> --task <id> --depends-on <task-id> [--json]
-  task:readiness --project <id> --task <id> [--json]  # incomplete hard prerequisites block admission
+  task:readiness --project <id> --task <id> [--json]  # completed or review-submitted prerequisites admit work; completing needs all completed
   task:start --project <id> --task <id>
   task:submit-review --project <id> --task <id>
   task:complete --project <id> --task <id>

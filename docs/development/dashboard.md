@@ -211,9 +211,9 @@ only presents it:
 
 - `ready`: `isTaskRunnable` accepts the recorded status (`pending`, `assigned`,
   `running`, `waiting_review`; never `blocked` or terminal) and every
-  prerequisite's recorded status is `completed`: the same rule as
-  `ManageTaskDependencies.readiness`. A cancelled or failed prerequisite keeps
-  its dependents unmet.
+  prerequisite's recorded status is `completed` or `waiting_review`: the same
+  rule as `ManageTaskDependencies.readiness`. A cancelled or failed prerequisite
+  keeps its dependents unmet.
 - `terminal`: the recorded status is terminal (`isTerminalTaskStatus`); not the
   same as an operational `failed`, which a runnable task can show after a failed
   run. The task list's `active` filter, project open-task counts, and graph
@@ -223,10 +223,11 @@ only presents it:
   `unmetPrerequisiteIds` lists them.
 - `needsAttention`: the task carries an authoritative attention reason
   (blocked, failed, and the other documented attention kinds).
-- `completionUnblocks`: the dependents that become ready when the task
-  completes (it is their only unmet prerequisite and their status allows work);
+- `completionUnblocks`: the dependents that become ready when the task reaches
+  `waiting_review` or `completed` (it is their only unmet prerequisite and their
+  status allows work);
   empty for a terminal task (a completed task is nobody's unmet prerequisite
-  any more; a failed or cancelled one can never complete).
+  any more; a failed or cancelled one can never reach review or completion).
 - `summary`: counts of `ready`, `waiting`, operationally `blocked`,
   `inProgress` and `needsAttention`, derived from the same nodes (a task counts
   in every bucket that applies).
@@ -244,7 +245,7 @@ task→requirement→milestone link; there is no task→milestone dependency, an
 milestones never take part in the dependency layout.
 
 The **Graph** project section is an operational view of the project, answering
-what can run now, what is blocked and why, and what completing a task unblocks:
+what can run now, what is blocked and why, and what reaching review or completion unblocks:
 
 - a summary row (Ready, Waiting on prerequisites, Blocked, In progress, Needs
   attention) whose buttons are filter shortcuts;
@@ -254,7 +255,8 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   default, top-down optional), with each task showing status, priority, READY or
   its blocker count, and its first milestone (`+N` for more). Arrows point from
   a prerequisite to the task that needs it. Dashed amber edges are unmet
-  prerequisites, completed ones recede, the longest chain is thick red, and a
+  prerequisites (neither completed nor in review), satisfied ones (completed or
+  in review) recede, the longest chain is thick red, and a
   selected task's lineage is thick blue;
 - graph nodes reduce visible detail as the user zooms out: full task detail at
   high zoom, title/status/ready or blocker state at medium zoom, and a compact
@@ -272,8 +274,9 @@ what can run now, what is blocked and why, and what completing a task unblocks:
   priority, tasks needing attention, the longest dependency chain, legend); with
   a selection, the task description and explicitly linked requirement titles,
   statuses and descriptions, followed by its blockers (only while it is waiting),
-  what completing it unblocks, its other dependents, completed prerequisites (also
-  when those tasks are hidden from the canvas), milestones, and a neighborhood
+  what reaching review or completion unblocks, its other dependents,
+  prerequisites in review and completed prerequisites (also when those tasks
+  are hidden from the canvas), milestones, and a neighborhood
   selector that exists only while something is selected. Direct relations shows
   incident dependencies; 1 hop keeps the same tasks and also draws dependencies
   among them; 2 hops extends up to two levels along prerequisite and dependent

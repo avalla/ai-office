@@ -228,6 +228,96 @@ describe("CLI to daemon end-to-end", () => {
       ).toBe(0);
       expect(profileOutput.stdout[0]).toContain("TypeScript");
       expect(profileOutput.stderr).toEqual([]);
+
+      const invoke = async (args: string[]) => {
+        const output = captureIo();
+        const code = await runDaemonCli(args, {
+          projectRoot,
+          socketPath,
+          io: output.io,
+        });
+        return { code, ...output };
+      };
+      const prerequisite = await invoke([
+        "task:create",
+        "--project",
+        projectId,
+        "--title",
+        "Prerequisite",
+      ]);
+      const dependent = await invoke([
+        "task:create",
+        "--project",
+        projectId,
+        "--title",
+        "Dependent",
+      ]);
+      expect(prerequisite.code).toBe(0);
+      expect(dependent.code).toBe(0);
+      const prerequisiteId = prerequisite.stdout[0]!.replace(
+        "Task created: ",
+        "",
+      );
+      const dependentId = dependent.stdout[0]!.replace("Task created: ", "");
+      expect(
+        (
+          await invoke([
+            "task:dependency:add",
+            "--project",
+            projectId,
+            "--task",
+            dependentId,
+            "--depends-on",
+            prerequisiteId,
+          ])
+        ).code,
+      ).toBe(0);
+      expect(
+        (
+          await invoke([
+            "task:start",
+            "--project",
+            projectId,
+            "--task",
+            prerequisiteId,
+          ])
+        ).code,
+      ).toBe(0);
+      expect(
+        (
+          await invoke([
+            "task:submit-review",
+            "--project",
+            projectId,
+            "--task",
+            prerequisiteId,
+          ])
+        ).code,
+      ).toBe(0);
+      const readiness = await invoke([
+        "task:readiness",
+        "--project",
+        projectId,
+        "--task",
+        dependentId,
+        "--json",
+      ]);
+      expect(readiness.code).toBe(0);
+      expect(JSON.parse(readiness.stdout[0]!)).toMatchObject({
+        runnable: true,
+        blockedBy: [],
+      });
+      expect(
+        (
+          await invoke([
+            "task:start",
+            "--project",
+            projectId,
+            "--task",
+            dependentId,
+          ])
+        ).stdout[0],
+      ).toBe(`Task ${dependentId} is now running`);
     } finally {
       controller.abort();
       await running;

@@ -41,9 +41,9 @@ export function projectTaskGraphNodes(
         .map((blocker) => blocker.taskId)
         .sort(),
     );
-  // A dependent is unblocked by completing X when X is its only unmet
-  // prerequisite and its own status would then allow work. A prerequisite that
-  // is already terminal can never complete, so it unblocks nothing.
+  // A dependent is unblocked when X reaches review or completion as its only
+  // unmet prerequisite and its own status would then allow work. A terminal
+  // prerequisite can never move into review or completion, so it unblocks nothing.
   const unblocks = new Map<string, string[]>();
   for (const task of tasks) {
     const unmet = unmetById.get(task.taskId) ?? [];

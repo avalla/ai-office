@@ -953,16 +953,20 @@ export interface TaskGraphNode {
   assignedAgent: AgentReference | null;
   /** Milestones derived from explicit task→requirement→milestone links. */
   milestoneIds: readonly string[];
-  /** Prerequisites whose recorded status is not `completed`, sorted by id. */
+  /**
+   * Prerequisites whose recorded status is neither `completed` nor
+   * `waiting_review` (the `blockingPrerequisites` rule), sorted by id.
+   */
   unmetPrerequisiteIds: readonly string[];
   /**
    * Runnable by the admission rule (`isTaskRunnable`) and every prerequisite is
-   * completed: exactly `ManageTaskDependencies.readiness().runnable`, evaluated
+   * completed or in review (`waiting_review`): exactly `ManageTaskDependencies.readiness().runnable`, evaluated
    * over the whole project. A blocked or terminal task is never ready.
    */
   ready: boolean;
   /**
-   * Not finished and at least one prerequisite is not completed (it is
+   * Not finished and at least one prerequisite is neither completed nor in
+   * review (it is
    * `unmetPrerequisiteIds.length > 0` on non-terminal work). A task can be both
    * waiting and in any non-terminal status.
    */
@@ -976,10 +980,12 @@ export interface TaskGraphNode {
    */
   terminal: boolean;
   /**
-   * Dependents that become ready when this task completes: this task is their
-   * only unmet prerequisite and their own status allows work. Empty for a
+   * Dependents that become ready when this task reaches `waiting_review` or
+   * `completed`: this task is their only unmet prerequisite and their own
+   * status allows work. The field name is kept for compatibility. Empty for a
    * terminal task: a completed task is nobody's unmet prerequisite any more, and
-   * a failed or cancelled one can never complete. Sorted by id.
+   * a failed or cancelled one can never reach review or completion. Sorted by
+   * id.
    */
   completionUnblocks: readonly string[];
 }

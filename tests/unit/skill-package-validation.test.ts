@@ -574,6 +574,10 @@ describe("task-delivery workflow invariants", () => {
       /A\s+task\s+starts\s+only\s+on\s+a\s+base\s+that\s+contains\s+the\s+work\s+of\s+each\s+of\s+its\s+prerequisites/u,
     ],
     [
+      "policy:review-heads-before-start",
+      /If several prerequisites are under review, the starting head must\s+contain every one of their current review heads\. Verify this before marking the\s+task started/u,
+    ],
+    [
       "policy:repeated-offer-spares-created-bases",
       /The\s+repeated\s+offer\s+applies\s+only\s+to\s+tasks\s+not\s+yet\s+started/u,
     ],
@@ -931,6 +935,10 @@ describe("task-delivery workflow invariants", () => {
         "Declining run-wide stacking leaves separately approved Git branch dependencies unchanged.",
         "Every other task starts from the integration branch unless another separately approved Git branch dependency applies.",
         "A separately approved Git branch dependency takes precedence over the run chain for its task.",
+        "When a prerequisite is under review, the dependent task may start before it is DONE only if its starting head contains that prerequisite's current review head.",
+        "If several prerequisites are under review, the starting head must contain every one of their current review heads.",
+        "Verify this before marking the task started, and record the heads in the task's delivery evidence.",
+        "The logical dependencies remain unresolved until their tasks are DONE.",
         "Stacking the run changes where branches start and how a stop spreads along the stack, and nothing else: every task keeps its own pull request and gates, and its task dependencies stay as they were.",
         "When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it, directly or through other tasks, stop too, and so does every later task of the chain that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts.",
         "If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them.",
@@ -1287,6 +1295,7 @@ describe("task-delivery workflow invariants", () => {
         "SKILL.md: A selected prerequisite is planned, not resolved: for the task that needs it, it stays unresolved until it is DONE.",
         "SKILL.md: Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
         "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
+        "SKILL.md: The logical dependencies remain unresolved until their tasks are DONE.",
         "SKILL.md: The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has approved the required Git branch dependency, separately or by accepting run-wide stacking.",
         "SKILL.md: A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency.",
         "SKILL.md: For a single named task, make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
@@ -1349,7 +1358,7 @@ describe("task-delivery workflow invariants", () => {
         /it never satisfies the task dependency\. - \*\*Red baseline\.\*\*/u,
       );
       expect(reference("lifecycle.md")).toMatch(
-        /a stacked base never resolves a task dependency\. - Confirm the working tree is clean/u,
+        /a stacked base never resolves a task dependency\. - For each under-review prerequisite used as a base, verify that the proposed starting head contains its current review head\. With several such prerequisites, verify every head and record the commit IDs before marking the task started\. - Confirm the working tree is clean/u,
       );
     });
   });

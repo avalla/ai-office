@@ -85,6 +85,8 @@ describe("project database migrations", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -142,6 +144,8 @@ describe("project database migrations", () => {
       { version: "0045_project_agent_disable.sql" },
       { version: "0046_project_workflow_override.sql" },
       { version: "0047_milestone_archived_status.sql" },
+      { version: "0048_review_ready_task_dependencies.sql" },
+      { version: "0049_task_completion_requires_completed_prerequisites.sql" },
     ]);
     database.close();
   });

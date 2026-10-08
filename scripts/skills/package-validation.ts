@@ -204,6 +204,11 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
           /A task starts only on a base that contains the work of each of its prerequisites/u,
       },
       {
+        id: "policy:review-heads-before-start",
+        pattern:
+          /If several prerequisites are under review, the starting head must contain every one of their current review heads\. Verify this before marking the task started/u,
+      },
+      {
         id: "policy:repeated-offer-spares-created-bases",
         pattern:
           /The repeated offer applies only to tasks not yet started: a base already created under an accepted stacking answer stays approved, and only an explicit decision of the authorizer changes it\./u,

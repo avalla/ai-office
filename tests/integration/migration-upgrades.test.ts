@@ -132,6 +132,8 @@ describe("migration upgrades", () => {
         "0045_project_agent_disable.sql",
         "0046_project_workflow_override.sql",
         "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
       ]);
       expect(
         database.query("SELECT * FROM role WHERE id='role'").get(),
@@ -253,6 +255,8 @@ describe("migration upgrades", () => {
         "0045_project_agent_disable.sql",
         "0046_project_workflow_override.sql",
         "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
       ]);
       expect(
         database
@@ -444,7 +448,7 @@ describe("migration upgrades", () => {
         .run(definition, timestamp, timestamp);
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0047_milestone_archived_status.sql",
+        "0049_task_completion_requires_completed_prerequisites.sql",
       );
       const stored = database
         .query<{ manifest_json: string }, []>(
@@ -529,7 +533,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0047_milestone_archived_status.sql",
+        "0049_task_completion_requires_completed_prerequisites.sql",
       );
       expect(
         database
@@ -643,6 +647,8 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
     ]);
     insertEvent.run(
       "updated",
@@ -741,6 +747,8 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
     ]);
     expect(
       database
@@ -824,6 +832,8 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
     ]);
     expect(
       database
@@ -987,6 +997,8 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
     ]);
     expect(
       database
@@ -1054,6 +1066,8 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
     ]);
     database
       .prepare(
@@ -1395,6 +1409,8 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
     ]);
     expect(
       upgraded
@@ -1464,6 +1480,8 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
     ]);
     expect(
       database
