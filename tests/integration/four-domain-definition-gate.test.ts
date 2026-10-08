@@ -34,9 +34,11 @@ function nextVersion(bytes: Uint8Array): Uint8Array {
   const manifest = verifyDomainPackManifest(bytes, 1);
   const roles = manifest.contributions.roles;
   const second = roles[1]!;
+  const [major, minor, patch] = manifest.version.split(".").map(Number);
+  const version = `${major}.${minor}.${patch! + 1}`;
   const draft = {
     ...manifest,
-    version: manifest.version === "0.5.0" ? "0.5.1" : "0.1.1",
+    version,
     contributions: {
       ...manifest.contributions,
       roles: roles.map((role) =>

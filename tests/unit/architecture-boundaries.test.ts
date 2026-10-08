@@ -1378,6 +1378,14 @@ describe("GP-20 official Domain Packs use only public core contracts", () => {
     });
   }
 
+  function verticalLiteralPattern(vertical: string): RegExp | null {
+    // The existing development router is legacy behavior retained in M16.
+    if (vertical === "development") return null;
+    if (!/^[a-z0-9-]+$/u.test(vertical))
+      throw new Error(`Unsupported pack package name: ${vertical}`);
+    return new RegExp(`['"]${vertical}(?:[-./][a-z0-9_-]+)?['"]`, "u");
+  }
+
   test("every official pack imports only itself or the contracts package", () => {
     for (const name of [
       "domain-pack-development",
@@ -1422,6 +1430,8 @@ describe("GP-20 official Domain Packs use only public core contracts", () => {
       const manifest = JSON.parse(
         readFileSync(join(packRoot, "manifest.json"), "utf8"),
       ) as { id: string };
+      const vertical = name.slice("domain-pack-".length);
+      const verticalLiteral = verticalLiteralPattern(vertical);
       for (const layer of ["domain", "application", "runtime-host"]) {
         const packageSource = readFileSync(
           join(packagesRoot, layer, "package.json"),
@@ -1438,6 +1448,14 @@ describe("GP-20 official Domain Packs use only public core contracts", () => {
         const source = readFileSync(file, "utf8");
         if (source.includes(manifest.id) || source.includes(name))
           offenders.push(`${relative(repositoryRoot, file)} names ${name}`);
+        if (
+          verticalLiteral !== null &&
+          !relative(repositoryRoot, file).startsWith(
+            "packages/runtime-host/",
+          ) &&
+          verticalLiteral.test(source)
+        )
+          offenders.push(`${relative(repositoryRoot, file)} names ${vertical}`);
       }
     }
     expect(offenders).toEqual([]);
@@ -1463,5 +1481,15 @@ describe("GP-20 official Domain Packs use only public core contracts", () => {
       "@ai-office/domain/project/project.ts",
       "node:fs",
     ]);
+  });
+
+  test("the core scan recognizes bare vertical and qualified-name branches", () => {
+    const pattern = verticalLiteralPattern("legal")!;
+    expect(pattern.test('if (domain === "legal") return true;')).toBe(true);
+    expect(pattern.test('case "legal-reviewer": return true;')).toBe(true);
+    expect(pattern.test('if (domain === "development") return true;')).toBe(
+      false,
+    );
+    expect(verticalLiteralPattern("development")).toBeNull();
   });
 });
