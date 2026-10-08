@@ -117,7 +117,7 @@ Commands:
   cost:list --project <id> [--group-by <project|task|agent|agent_run>]
   milestone:create --project <id> --title <title> [--description <description>]
   milestone:update --project <id> --milestone <id> (--title <title> | --description <text>)
-  milestone:set-status --project <id> --milestone <id> --status <status>
+  milestone:set-status --project <id> --milestone <id> --status <planned|active|completed|cancelled|archived>
   requirement:create --project <id> --key <key> --title <title> --description <description> [--milestone <id>]
   requirement:list --project <id> [--json]  # lists exact requirement IDs for linking
   requirement:validate --project <id> --requirement <id> --model <provider:model> [--json]  # advisory, metered LLM analysis; does not change status

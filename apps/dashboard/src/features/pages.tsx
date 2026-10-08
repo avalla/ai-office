@@ -46,7 +46,9 @@ import { TaskGraphView } from "./task-graph.tsx";
 import { elapsed, formatDuration, formatTimestamp } from "../lib/formatting.ts";
 import { taskFilterQuery, type TaskFilterValues } from "../lib/task-filters.ts";
 import {
+  milestoneStatusTone,
   requirementStatusTone,
+  taskOperationalFilterLabel,
   taskStatusLabel,
   taskStatusTone,
 } from "../ui/view-model.ts";
@@ -874,7 +876,7 @@ function TaskFilters({ project }: { project: ProjectDetail }) {
           ["active", "Active tasks"],
           ["all", "All statuses"],
           ...options.statuses.map(
-            (s) => [s, taskStatusLabel(s)] as [string, string],
+            (s) => [s, taskOperationalFilterLabel(s)] as [string, string],
           ),
         ])}
         {select("Priority", "priority", [
@@ -958,14 +960,19 @@ function ProjectTasks({ project }: { project: ProjectDetail }) {
   );
 }
 function ProjectMilestones({ project }: { project: ProjectDetail }) {
-  const [status, setStatus] = useState("");
+  const [status, setStatus] = useState("current");
+  const archivedCount = project.milestones.filter(
+    (milestone) => milestone.status === "archived",
+  ).length;
   const visible = project.milestones.filter(
-    (m) => !status || m.status === status,
+    (m) =>
+      status === "all" ||
+      (status === "current" ? m.status !== "archived" : m.status === status),
   );
   return (
     <Section
       title="Milestones"
-      detail={`${project.summary.activeMilestoneCount} active of ${project.summary.milestoneCount}`}
+      detail={`${project.summary.activeMilestoneCount} active · ${archivedCount} archived · ${project.summary.milestoneCount} total`}
     >
       <label className="flex w-52 flex-col gap-1 text-xs text-subtle">
         Status
@@ -973,8 +980,14 @@ function ProjectMilestones({ project }: { project: ProjectDetail }) {
           value={status}
           onChange={(event) => setStatus(event.target.value)}
         >
-          <option value="">All statuses</option>
-          {[...new Set(project.milestones.map((m) => m.status))].map((s) => (
+          <option value="current">Current (hide archived)</option>
+          <option value="all">All statuses</option>
+          {[
+            ...new Set([
+              ...project.milestones.map((m) => m.status),
+              "archived",
+            ]),
+          ].map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
@@ -991,13 +1004,7 @@ function ProjectMilestones({ project }: { project: ProjectDetail }) {
               <h3 className="font-semibold">{m.title}</h3>
               <StatusBadge
                 label={m.status}
-                tone={
-                  m.status === "completed"
-                    ? "good"
-                    : m.status === "active"
-                      ? "active"
-                      : "neutral"
-                }
+                tone={milestoneStatusTone(m.status)}
               />
             </div>
             <p className="mt-3 text-sm">

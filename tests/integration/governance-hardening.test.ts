@@ -282,6 +282,37 @@ describe("governance lifecycles, audit, and projection", () => {
       title: "Requirement",
       description: "Description",
     });
+    await service.setStatus({
+      projectId: "project-1",
+      kind: "milestone",
+      id: milestone,
+      status: "archived",
+    });
+    expect(
+      (await repository.getSnapshot("project-1")).milestones[0]?.status,
+    ).toBe("archived");
+    expect(
+      database
+        .query<{ status: string; archived_at: string | null }, [string]>(
+          "SELECT status, archived_at FROM milestone WHERE id=?",
+        )
+        .get(milestone),
+    ).toEqual({ status: "completed", archived_at: now.toISOString() });
+    expect(
+      database
+        .query<{ milestone_id: string }, [string]>(
+          "SELECT milestone_id FROM requirement WHERE id=?",
+        )
+        .get(requirement)?.milestone_id,
+    ).toBe(milestone);
+    await expect(
+      service.setStatus({
+        projectId: "project-1",
+        kind: "milestone",
+        id: milestone,
+        status: "active",
+      }),
+    ).rejects.toThrow("Cannot transition milestone");
     for (const status of ["accepted", "implemented", "verified"] as const)
       await service.setStatus({
         projectId: "project-1",
@@ -325,6 +356,7 @@ describe("governance lifecycles, audit, and projection", () => {
       "milestone.status_changed",
       "milestone.status_changed",
       "requirement.created",
+      "milestone.status_changed",
       "requirement.status_changed",
       "requirement.status_changed",
       "requirement.status_changed",

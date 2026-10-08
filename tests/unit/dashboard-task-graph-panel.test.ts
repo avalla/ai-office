@@ -2,11 +2,15 @@ import { describe, expect, test } from "vitest";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { TaskGraphNode } from "@ai-office/application/read-models/operational-read-models.ts";
+import type {
+  TaskGraph,
+  TaskGraphNode,
+} from "@ai-office/application/read-models/operational-read-models.ts";
 import {
   GraphTaskNodeButton,
   GraphTaskDetailSections,
   OverviewTaskLists,
+  TaskGraphView,
 } from "../../apps/dashboard/src/features/task-graph.tsx";
 
 function node(id: string): TaskGraphNode {
@@ -28,6 +32,33 @@ function node(id: string): TaskGraphNode {
 }
 
 describe("graph overview task lists", () => {
+  test("labels the graph status filter as operational without changing its value", () => {
+    const graph: TaskGraph = {
+      generatedAt: "2026-10-07T10:00:00.000Z",
+      projectId: "p",
+      projectName: "P",
+      tasks: [node("a")],
+      milestones: [],
+      edges: [],
+      summary: {
+        total: 1,
+        ready: 1,
+        waiting: 0,
+        blocked: 0,
+        inProgress: 0,
+        needsAttention: 0,
+      },
+      longestDependencyChain: [],
+    };
+    const markup = renderToStaticMarkup(
+      createElement(TaskGraphView, { graph, projectId: "p" }),
+    );
+    expect(markup).toMatch(/Operational status.*?<select/s);
+    expect(markup).toContain(
+      '<option value="failed">Failed (operational)</option>',
+    );
+    expect(markup).toContain('<option value="completed">completed</option>');
+  });
   test("keeps chain positions across pages", () => {
     const chain = Array.from({ length: 30 }, (_, i) => node(`c${i}`));
     const html = renderToStaticMarkup(

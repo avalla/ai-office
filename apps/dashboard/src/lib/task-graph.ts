@@ -435,11 +435,7 @@ export const blockers = (count: number) =>
 
 /** Wording for a task that is neither ready nor waiting (read-model flags). */
 export function idleState(task: TaskGraphNode): string {
-  const finished =
-    task.operationalStatus === "completed" ||
-    task.operationalStatus === "cancelled" ||
-    task.operationalStatus === "failed";
-  return finished
+  return task.terminal
     ? statusLabel(task.operationalStatus).replace(/^./, (c) => c.toUpperCase())
     : "Not startable";
 }

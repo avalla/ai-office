@@ -863,6 +863,7 @@ test("upgrading legacy runs preserves unknown provenance and protects new dispat
     "0044_project_role_omission.sql",
     "0045_project_agent_disable.sql",
     "0046_project_workflow_override.sql",
+    "0047_milestone_archived_status.sql",
   ]);
   expect(
     (await f.runs.findRun("legacy"))?.snapshot().execution,

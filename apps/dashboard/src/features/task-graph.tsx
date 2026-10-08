@@ -55,6 +55,7 @@ import {
 } from "../lib/task-graph.ts";
 import {
   requirementStatusTone,
+  taskOperationalFilterLabel,
   taskStatusTone,
   type ToneName,
 } from "../ui/view-model.ts";
@@ -838,7 +839,7 @@ function TaskGraphCanvas({
           )}
         </div>
         <label className="flex flex-col gap-1 text-xs text-subtle">
-          Status
+          Operational status
           <Select
             value={filters.status}
             onChange={(event) =>
@@ -850,7 +851,7 @@ function TaskGraphCanvas({
             <option value="">All statuses</option>
             {statusOptions.map((status) => (
               <option key={status} value={status}>
-                {statusLabel(status)}
+                {taskOperationalFilterLabel(status)}
               </option>
             ))}
           </Select>

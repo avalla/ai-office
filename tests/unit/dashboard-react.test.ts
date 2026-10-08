@@ -206,6 +206,7 @@ const task: TaskOperationalState = {
   description: "A clear and readable description.",
   priority: 0,
   recordedStatus: "pending",
+  terminal: false,
   operationalStatus: "in_progress",
   divergesFromRecordedStatus: true,
   divergenceReasons: ["agent_run_active_without_task_transition"],
@@ -717,7 +718,74 @@ describe("operational presentation", () => {
     expect(html(ProjectPage, { data: page, section: "pipeline" })).toContain(
       "Stage timeline",
     );
+    expect(html(ProjectPage, { data: page, section: "milestones" })).toContain(
+      'value="archived"',
+    );
     expect(html(TaskTable, { tasks: [task] })).toContain("No linked milestone");
+  });
+  test("labels the task status filter as operational without changing its value", () => {
+    const markup = html(ProjectPage, {
+      data: {
+        kind: "project",
+        project: {
+          ...project,
+          taskPage: {
+            filters: { status: "failed" },
+            offset: 0,
+            limit: 20,
+            options: {
+              statuses: ["failed", "completed"],
+              priorities: [],
+              agents: [],
+              hasUnassigned: false,
+            },
+          },
+        },
+        activePipelines: { total: 0, items: [], truncated: false },
+        activeRuns: { total: 0, items: [], truncated: false },
+      },
+      section: "tasks",
+    });
+    expect(markup).toMatch(/Operational status.*?<select/s);
+    expect(markup).toContain(
+      '<option value="failed">Failed (operational)</option>',
+    );
+    expect(markup).toContain('<option value="completed">completed</option>');
+  });
+  test("hides archived milestones in the default project view", () => {
+    const page = {
+      kind: "project",
+      project: {
+        ...project,
+        milestones: [
+          {
+            milestoneId: "current",
+            title: "Current phase",
+            status: "active",
+            requirements: summary.requirements,
+            createdAt: now,
+            updatedAt: now,
+          },
+          {
+            milestoneId: "old",
+            title: "Old phase",
+            status: "archived",
+            requirements: summary.requirements,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+      },
+      activePipelines: { total: 0, items: [], truncated: false },
+      activeRuns: { total: 0, items: [], truncated: false },
+    };
+    const markup = html(ProjectPage, { data: page, section: "milestones" });
+    expect(markup).toContain("Current phase");
+    expect(markup).not.toContain("Old phase");
+    expect(markup).toContain("Current (hide archived)");
+    expect(markup).toContain("All statuses");
+    expect(markup).toContain('value="archived"');
+    expect(markup).toContain("1 archived");
   });
   test("renders run failure and controlled action facts safely", () => {
     const report = {
