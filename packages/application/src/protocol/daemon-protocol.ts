@@ -45,6 +45,24 @@ export interface DaemonHealthResponse {
   };
 }
 
+/**
+ * Read-only Runtime status behind `GET /api/status`. Subsystem state reuses
+ * the exact shapes `/health` reports; identity fields are observed at request
+ * time. `sourceRevision` is `null` when the checkout's HEAD is not
+ * authoritatively known — never a guess.
+ */
+export interface RuntimeStatus {
+  protocolVersion: typeof daemonProtocolVersion;
+  status: "ok";
+  productVersion: string;
+  sourceRevision: string | null;
+  startedAt: string;
+  uptimeSeconds: number;
+  knowledge: NonNullable<DaemonHealthResponse["knowledge"]>;
+  queue: NonNullable<DaemonHealthResponse["queue"]>;
+  storage: { project: "available" | "unavailable" };
+}
+
 export interface DaemonErrorResponse {
   protocolVersion: typeof daemonProtocolVersion;
   requestId: string;

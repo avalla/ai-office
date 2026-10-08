@@ -1981,3 +1981,143 @@ export function MemoryPage({
     </div>
   );
 }
+
+export function RuntimePage({
+  data,
+}: {
+  data: Extract<DashboardData, { kind: "runtime" }>;
+}) {
+  const { status } = data;
+  const knowledgeTone =
+    status.knowledge.startup === "connected"
+      ? "good"
+      : status.knowledge.startup === "disabled"
+        ? "muted"
+        : "attention";
+  const redisTone =
+    status.queue.redis === "reachable"
+      ? "good"
+      : status.queue.redis === "unreachable"
+        ? "attention"
+        : "muted";
+  return (
+    <div className="page-stack">
+      {heading("Runtime", "Daemon identity and subsystem state · read-only")}
+      <Section
+        title="Daemon"
+        detail="The local Runtime host answering these queries"
+      >
+        <Card>
+          <FactGrid
+            facts={[
+              {
+                label: "Status",
+                value: <StatusBadge label={status.status} tone="good" />,
+              },
+              { label: "Protocol version", value: status.protocolVersion },
+              { label: "Started", value: formatTimestamp(status.startedAt) },
+              {
+                label: "Uptime",
+                value: formatDuration(status.uptimeSeconds * 1000),
+              },
+            ]}
+          />
+        </Card>
+      </Section>
+      <Section
+        title="Knowledge store"
+        detail="Connection result observed at startup, not a live probe"
+      >
+        <Card>
+          <FactGrid
+            facts={[
+              { label: "Provider", value: status.knowledge.provider },
+              {
+                label: "Startup",
+                value: (
+                  <StatusBadge
+                    label={status.knowledge.startup}
+                    tone={knowledgeTone}
+                  />
+                ),
+              },
+            ]}
+          />
+          {status.knowledge.startup === "disabled" && (
+            <p className="mt-3 text-sm text-subtle">
+              Agent knowledge is disabled on this Runtime.
+            </p>
+          )}
+        </Card>
+      </Section>
+      <Section title="Queue" detail="Durable job queue and workers">
+        <Card>
+          <FactGrid
+            facts={[
+              { label: "Provider", value: status.queue.provider },
+              {
+                label: "Redis",
+                value: (
+                  <StatusBadge label={status.queue.redis} tone={redisTone} />
+                ),
+              },
+              { label: "Outbox pending", value: status.queue.outboxPending },
+              {
+                label: "Orchestration worker",
+                value: status.queue.orchestrationWorker ? "yes" : "no",
+              },
+              {
+                label: "Agent run worker",
+                value: status.queue.agentRunWorker ? "yes" : "no",
+              },
+            ]}
+          />
+        </Card>
+      </Section>
+      <Section title="Storage" detail="Authoritative project state">
+        <Card>
+          <FactGrid
+            facts={[
+              {
+                label: "Project store",
+                value: (
+                  <StatusBadge
+                    label={status.storage.project}
+                    tone={
+                      status.storage.project === "available"
+                        ? "good"
+                        : "attention"
+                    }
+                  />
+                ),
+              },
+            ]}
+          />
+        </Card>
+      </Section>
+      <Section title="Distribution" detail="How the running code was obtained">
+        <Card>
+          <FactGrid
+            facts={[
+              { label: "Product version", value: status.productVersion },
+              {
+                label: "Source revision",
+                value:
+                  status.sourceRevision === null ? (
+                    "Unknown"
+                  ) : (
+                    <code
+                      className="font-mono text-xs"
+                      title={status.sourceRevision}
+                    >
+                      {status.sourceRevision.slice(0, 12)}
+                    </code>
+                  ),
+              },
+            ]}
+          />
+        </Card>
+      </Section>
+    </div>
+  );
+}

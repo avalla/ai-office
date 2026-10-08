@@ -365,6 +365,7 @@ describe("React dashboard routes", () => {
     "#/agents",
     "#/runs/run-1",
     "#/memory",
+    "#/runtime",
   ])("round trips %s", (hash) =>
     expect(routeHref(parseRoute(hash))).toBe(hash),
   );
@@ -384,6 +385,20 @@ describe("React dashboard routes", () => {
     expect(html).toMatch(
       /href="\/projects\/project-1\/graph"[^>]*>.*?Graph<\/a>/,
     );
+  });
+  test("shows Runtime in the workspace navigation", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(SidebarLinks, {
+          currentProject: null,
+          path: "/runtime",
+        }),
+      ),
+    );
+    expect(html).toMatch(/href="\/runtime"[^>]*>.*?Runtime<\/a>/);
+    expect(html).toContain('aria-current="page"');
   });
   test("rejects malformed task filters", () =>
     expect(parseRoute("#/projects/project-1/tasks?priority=abc").kind).toBe(

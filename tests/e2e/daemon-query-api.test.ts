@@ -520,6 +520,43 @@ describe("daemon query API", () => {
     }
   });
 
+  test("runtime status reports identity and subsystem state through the socket", async () => {
+    const harness = await startDaemon();
+    try {
+      const health = await harness.client.health();
+      const { status, body } = await harness.get("/api/status");
+      expect(status).toBe(200);
+      expect(body.queryApiVersion).toBe(queryApiVersion);
+      const runtime = body.status as Record<string, unknown>;
+      expect(runtime).toMatchObject({
+        protocolVersion: 1,
+        status: "ok",
+        productVersion: expect.any(String),
+        storage: { project: "available" },
+      });
+      expect(typeof runtime.startedAt).toBe("string");
+      expect(typeof runtime.uptimeSeconds).toBe("number");
+      // Fail-soft: a known revision is a Git SHA, otherwise null.
+      expect(
+        runtime.sourceRevision === null ||
+          typeof runtime.sourceRevision === "string",
+      ).toBe(true);
+      if (typeof runtime.sourceRevision === "string")
+        expect(runtime.sourceRevision).toMatch(/^[0-9a-f]{40}$/);
+      // Both subsystems republish exactly what /health reports.
+      expect(runtime.knowledge).toEqual(health.knowledge);
+      expect(runtime.queue).toEqual(health.queue);
+
+      // Behaves like every other read-only route.
+      expect((await harness.get("/api/status/extra")).status).toBe(404);
+      expect(
+        (await harness.raw("/api/status", { method: "POST" })).status,
+      ).toBe(405);
+    } finally {
+      await harness.stop();
+    }
+  });
+
   test("reflects state created through the command protocol", async () => {
     const harness = await startDaemon();
     try {

@@ -6,8 +6,12 @@ import type {
   AgentRunDetail,
   AgentRunState,
 } from "@ai-office/application/read-models/operational-read-models.ts";
+import type { RuntimeStatus } from "@ai-office/application/protocol/daemon-protocol.ts";
 import type { WorkerOutput } from "@ai-office/application/ports/worker-runtime.port.ts";
-import { RunPage } from "../../apps/dashboard/src/features/pages.tsx";
+import {
+  RunPage,
+  RuntimePage,
+} from "../../apps/dashboard/src/features/pages.tsx";
 
 const now = "2026-10-02T12:00:00.000Z";
 const inputHash = "a".repeat(64);
@@ -214,5 +218,78 @@ describe("Run Detail operational provenance", () => {
     expect(rendered).toContain("Worker report");
     expect(rendered).toContain("Not reported");
     expect(rendered).not.toContain("Gateway metering");
+  });
+});
+
+describe("Runtime status page", () => {
+  const revision = "0123456789abcdef0123456789abcdef01234567";
+  const base: RuntimeStatus = {
+    protocolVersion: 1,
+    status: "ok",
+    productVersion: "0.1.0",
+    sourceRevision: revision,
+    startedAt: now,
+    uptimeSeconds: 3_661,
+    knowledge: { provider: "surrealdb", startup: "connected" },
+    queue: {
+      provider: "configured",
+      redis: "reachable",
+      outboxPending: 3,
+      orchestrationWorker: true,
+      agentRunWorker: false,
+    },
+    storage: { project: "available" },
+  };
+  function render(status: RuntimeStatus): string {
+    return renderToStaticMarkup(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(RuntimePage, { data: { kind: "runtime", status } }),
+      ),
+    );
+  }
+
+  test("renders daemon, knowledge, queue, storage and distribution state", () => {
+    const rendered = render(base);
+    for (const expected of [
+      "Daemon",
+      "Protocol version",
+      "Started",
+      "Uptime",
+      "1h 1m",
+      "Knowledge store",
+      "surrealdb",
+      "connected",
+      "Queue",
+      "configured",
+      "reachable",
+      "Outbox pending",
+      "3</dd>",
+      "Orchestration worker",
+      "Agent run worker",
+      "Project store",
+      "available",
+      "Product version",
+      "0.1.0",
+      "Source revision",
+      revision.slice(0, 12),
+    ]) {
+      expect(rendered).toContain(expected);
+    }
+    // The short SHA is displayed; the full revision is the tooltip.
+    expect(rendered).toContain(`title="${revision}"`);
+    expect(rendered).not.toContain(`>${revision}<`);
+  });
+
+  test("a disabled knowledge store reads as disabled, not as an error", () => {
+    const rendered = render({
+      ...base,
+      knowledge: { provider: "none", startup: "disabled" },
+      sourceRevision: null,
+    });
+    expect(rendered).toContain("Agent knowledge is disabled on this Runtime.");
+    expect(rendered).toContain(">none<");
+    expect(rendered).toContain("Unknown");
   });
 });
