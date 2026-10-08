@@ -376,7 +376,21 @@ describe("GP-09 committed legacy fixtures", () => {
     const pinned = pin();
     expect(active.currentStage()!.stageId).toBe("design");
 
-    for (const agent of ["architect", "developer", "reviewer"])
+    const staleVersion = active.snapshot().version;
+    await completeActiveStage(
+      stores,
+      runId,
+      legacyActivePipelineTaskId,
+      "architect",
+    );
+    // The pre-pack run's optimistic fence still rejects a stale transition.
+    active.cancel("stale-operator", stores.clock.now());
+    expect(await stores.pipelines.save(active, staleVersion)).toBe(false);
+    expect(
+      (await stores.pipelineRuns.show(legacyProjectId, runId)).currentStage(),
+    ).toMatchObject({ stageId: "implement", status: "active" });
+
+    for (const agent of ["developer", "reviewer"])
       await completeActiveStage(
         stores,
         runId,
