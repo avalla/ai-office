@@ -312,6 +312,9 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
     return this.database.transaction(async () => {
       await this.assertProjectTenant(projectId);
       // Assign-once: the NULL predicate keeps a milestone from being moved.
+      // FOR SHARE keeps a concurrent cancel or archive of the target from
+      // committing between the status check and this write: it waits for us,
+      // or we re-evaluate the predicate against its committed result.
       const rows = await this.database.query<{ id: string }>(
         `
           UPDATE core.requirement
@@ -326,6 +329,7 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
               SELECT 1 FROM core.milestone
               WHERE id = $1 AND project_id = $4 AND status <> 'cancelled'
                 AND archived_at IS NULL
+              FOR SHARE
             )
           RETURNING id
         `,

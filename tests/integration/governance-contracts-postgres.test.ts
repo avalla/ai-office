@@ -1,8 +1,9 @@
 import { join } from "node:path";
-import { afterAll, beforeAll, describe } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import type { GovernanceEventRecord } from "@ai-office/application/ports/governance-repository.port.ts";
 import { PostgresClient } from "@ai-office/storage-postgres/database/postgres-client.ts";
 import { migratePostgres } from "@ai-office/storage-postgres/database/migrate-postgres.ts";
+import { Project } from "@ai-office/domain/project/project.ts";
 import { PostgresGovernanceRepository } from "@ai-office/storage-postgres/repositories/postgres-governance.repository.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { defineGovernanceRepositoryContracts } from "../contracts/governance-repository.contract.ts";
@@ -31,6 +32,69 @@ describe.skipIf(connectionString === undefined)(
 
     afterAll(async () => {
       await database.close();
+    });
+
+    test("a cancel racing the assignment is either waited for or refused", async () => {
+      // Two connections: one holds an uncommitted cancel of the target while
+      // the other tries the assignment. Without a lock on the milestone row the
+      // assignment would read the old status and attach the requirement to a
+      // milestone that is about to be cancelled.
+      const rival = new PostgresClient(connectionString!);
+      try {
+        const id = `race-${crypto.randomUUID()}`;
+        const at = new Date("2026-01-02T00:00:00.000Z");
+        const projects = new PostgresProjectRepository(database, tenantId);
+        const governance = new PostgresGovernanceRepository(database, tenantId);
+        await projects.save(
+          Project.create({ id: `${id}-project`, name: id, now: at }),
+        );
+        await governance.saveMilestone({
+          id: `${id}-milestone`,
+          projectId: `${id}-project`,
+          title: "Racing",
+          status: "planned",
+          createdAt: at,
+          updatedAt: at,
+        });
+        await governance.saveRequirement({
+          id: `${id}-requirement`,
+          projectId: `${id}-project`,
+          key: "REQ-RACE",
+          title: "Racing",
+          description: "Racing",
+          status: "proposed",
+          createdAt: at,
+          updatedAt: at,
+        });
+
+        let assignment: Promise<boolean> | undefined;
+        await database.transaction(async () => {
+          await database.query(
+            "UPDATE core.milestone SET status = 'cancelled' WHERE id = $1",
+            [`${id}-milestone`],
+          );
+          assignment = new PostgresGovernanceRepository(
+            rival,
+            tenantId,
+          ).assignRequirementMilestone(
+            `${id}-requirement`,
+            `${id}-project`,
+            `${id}-milestone`,
+            at,
+            { id: `${id}-event`, metadata: {} },
+          );
+          // Give the rival time to reach the lock before the cancel commits.
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        });
+
+        expect(await assignment).toBe(false);
+        expect(
+          (await governance.getSnapshot(`${id}-project`)).requirements[0]
+            ?.milestoneId,
+        ).toBeUndefined();
+      } finally {
+        await rival.close();
+      }
     });
 
     defineGovernanceRepositoryContracts(async () => ({
