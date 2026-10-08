@@ -2074,7 +2074,10 @@ export function RuntimePage({
           />
         </Card>
       </Section>
-      <Section title="Storage" detail="Authoritative project state">
+      <Section
+        title="Storage"
+        detail="Authoritative project state · opened at Runtime startup, not a live probe"
+      >
         <Card>
           <FactGrid
             facts={[
@@ -2093,6 +2096,10 @@ export function RuntimePage({
               },
             ]}
           />
+          <p className="mt-3 text-sm text-subtle">
+            The project store opened when the Runtime started; this page does
+            not probe it live.
+          </p>
         </Card>
       </Section>
       <Section title="Distribution" detail="How the running code was obtained">

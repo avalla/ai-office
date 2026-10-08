@@ -60,6 +60,11 @@ export interface RuntimeStatus {
   uptimeSeconds: number;
   knowledge: NonNullable<DaemonHealthResponse["knowledge"]>;
   queue: NonNullable<DaemonHealthResponse["queue"]>;
+  /**
+   * Observed at startup, not a live probe: reaching this composition means
+   * the authoritative project store opened, so a responding daemon reports
+   * "available".
+   */
   storage: { project: "available" | "unavailable" };
 }
 

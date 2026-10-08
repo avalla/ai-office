@@ -280,6 +280,13 @@ describe("Runtime status page", () => {
     // The short SHA is displayed; the full revision is the tooltip.
     expect(rendered).toContain(`title="${revision}"`);
     expect(rendered).not.toContain(`>${revision}<`);
+    // Startup state must not read like a live health check.
+    expect(rendered).toContain(
+      "opened at Runtime startup, not a live probe",
+    );
+    expect(rendered).toContain(
+      "The project store opened when the Runtime started; this page does not probe it live.",
+    );
   });
 
   test("a disabled knowledge store reads as disabled, not as an error", () => {
