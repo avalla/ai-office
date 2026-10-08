@@ -68,10 +68,10 @@ async function waitFor(condition: () => boolean, timeoutMs: number, label: strin
   }
 }
 
-function withDeadline(promise: Promise<void>, timeoutMs: number, label: string): Promise<void> {
+function withDeadline<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return Promise.race([
     promise,
-    new Promise<void>((_, reject) =>
+    new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms waiting for ${label}`)), timeoutMs),
     ),
   ]);
@@ -300,9 +300,14 @@ it("rejects with the cancellation error when aborted mid-connect", async () => {
     const connecting = connectSurrealAgentKnowledgeStore(connectConfig(fake.endpoint), controller.signal);
     await waitFor(() => fake.connections.length === 1, 5_000, "first websocket connection");
     controller.abort();
-    await expect(connecting).rejects.toThrow("Agent knowledge connection cancelled");
+    await expect(
+      withDeadline(connecting, 5_000, "settlement of the aborted connect"),
+    ).rejects.toThrow("Agent knowledge connection cancelled");
     // The aborted connect must still close its socket server-side.
     await withDeadline(fake.connections[0]!.closeObserved, 5_000, "server-side socket close after aborted connect");
+    // Closing the socket must not trigger the SDK's automatic reconnect.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(fake.connections).toHaveLength(1);
   } finally {
     fake.stop();
   }
