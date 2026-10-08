@@ -8,6 +8,15 @@ import type {
 
 export const nodeSize = { width: 264, height: 96 } as const;
 
+export type GraphNodeDetail = "full" | "medium" | "compact";
+
+/** The node footprint stays fixed; only its presentation changes with zoom. */
+export function graphNodeDetail(zoom: number): GraphNodeDetail {
+  if (zoom >= 0.85) return "full";
+  if (zoom >= 0.4) return "medium";
+  return "compact";
+}
+
 export type GraphDirection = "LR" | "TB";
 
 /**
@@ -90,6 +99,10 @@ export interface GraphNeighborhood {
   edgeKeys?: ReadonlySet<string>;
 }
 
+/** A tuple encoding keeps arbitrary task IDs from colliding at an edge key. */
+export const graphEdgeKey = (prerequisiteId: string, taskId: string): string =>
+  JSON.stringify([prerequisiteId, taskId]);
+
 /** Compute scope from the complete dependency index, independent of filters. */
 function graphNeighborhoodFromIndex(
   index: LineageIndex,
@@ -122,9 +135,9 @@ function graphNeighborhoodFromIndex(
   if (mode !== "direct") return { taskIds };
   const edgeKeys = new Set<string>();
   for (const prerequisite of index.prerequisites.get(taskId) ?? [])
-    edgeKeys.add(`${prerequisite}>${taskId}`);
+    edgeKeys.add(graphEdgeKey(prerequisite, taskId));
   for (const dependent of index.dependents.get(taskId) ?? [])
-    edgeKeys.add(`${taskId}>${dependent}`);
+    edgeKeys.add(graphEdgeKey(taskId, dependent));
   return { taskIds, edgeKeys };
 }
 
@@ -195,7 +208,7 @@ export function filterGraph(
         ids.has(edge.taskId) &&
         ids.has(edge.dependsOnTaskId) &&
         (onlyEdges === undefined ||
-          onlyEdges.has(`${edge.dependsOnTaskId}>${edge.taskId}`)),
+          onlyEdges.has(graphEdgeKey(edge.dependsOnTaskId, edge.taskId))),
     ),
     hiddenTaskCount: graph.tasks.length - tasks.length,
   };
@@ -500,11 +513,7 @@ export const blockers = (count: number) =>
 
 /** Wording for a task that is neither ready nor waiting (read-model flags). */
 export function idleState(task: TaskGraphNode): string {
-  const finished =
-    task.operationalStatus === "completed" ||
-    task.operationalStatus === "cancelled" ||
-    task.operationalStatus === "failed";
-  return finished
+  return task.terminal
     ? statusLabel(task.operationalStatus).replace(/^./, (c) => c.toUpperCase())
     : "Not startable";
 }
@@ -518,7 +527,7 @@ export function nodeStateLabel(task: TaskGraphNode): string {
 }
 
 /**
- * `prerequisite>dependent` keys for every unmet prerequisite, including those
+ * Collision-free keys for every unmet prerequisite, including those
  * of terminal dependents. Built from the per-task read model, never from
  * statuses reconstructed in the browser.
  */
@@ -528,6 +537,6 @@ export function unmetEdgeKeys(
   const keys = new Set<string>();
   for (const task of tasks)
     for (const id of task.unmetPrerequisiteIds)
-      keys.add(`${id}>${task.taskId}`);
+      keys.add(graphEdgeKey(id, task.taskId));
   return keys;
 }

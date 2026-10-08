@@ -11,6 +11,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
+  useStore,
   type Edge,
   type Node,
   type NodeProps,
@@ -41,7 +42,9 @@ import {
   statusLabel,
   defaultGraphFilters,
   filterGraph,
+  graphEdgeKey,
   neighborhoodModes,
+  graphNodeDetail,
   nodeSize,
   otherDependentIds,
   quickFilters,
@@ -50,10 +53,12 @@ import {
   type GraphDirection,
   type GraphFilters,
   type NeighborhoodMode,
+  type GraphNodeDetail,
   type QuickFilter,
 } from "../lib/task-graph.ts";
 import {
   requirementStatusTone,
+  taskOperationalFilterLabel,
   taskStatusTone,
   type ToneName,
 } from "../ui/view-model.ts";
@@ -127,11 +132,10 @@ type TaskFlowNode = Node<TaskNodeData, "task">;
 const hiddenHandle = "!h-1 !w-1 !border-0 !bg-transparent !min-h-0 !min-w-0";
 
 function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
-  const { task, milestone } = data;
+  // Select only the visual tier so ordinary zoom ticks do not rerender nodes.
+  const detail = useStore((store) => graphNodeDetail(store.transform[2]));
   const target = data.direction === "LR" ? Position.Left : Position.Top;
   const source = data.direction === "LR" ? Position.Right : Position.Bottom;
-  const waitingOn = task.unmetPrerequisiteIds.length;
-  const state = nodeStateLabel(task);
   return (
     <>
       <Handle
@@ -140,65 +144,7 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
         className={hiddenHandle}
         isConnectable={false}
       />
-      <button
-        type="button"
-        aria-pressed={data.selected}
-        aria-label={`${task.title}. ${statusLabel(task.operationalStatus)}. ${state}. Priority ${task.priority}.${
-          milestone === null
-            ? ""
-            : ` Milestone ${milestone.title}${milestone.more > 0 ? ` and ${milestone.more} more` : ""}.`
-        }`}
-        onClick={() => data.onSelect(taskKey(task.taskId))}
-        style={{ width: nodeSize.width, height: nodeSize.height }}
-        className={cn(
-          "flex cursor-pointer flex-col justify-between rounded-lg border bg-surface px-3 py-2 text-left shadow-sm transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-          data.selected
-            ? "border-primary ring-2 ring-primary"
-            : data.onChain
-              ? "border-red-500"
-              : "border-border",
-          data.dimmed && "opacity-25",
-        )}
-      >
-        <span className="line-clamp-2 text-sm font-medium leading-snug">
-          {task.title}
-        </span>
-        <span className="flex items-center justify-between gap-2 [&_span]:whitespace-nowrap">
-          <StatusBadge
-            label={statusLabel(task.operationalStatus)}
-            tone={taskStatusTone(task.operationalStatus)}
-          />
-          {milestone !== null && (
-            <span
-              title={`Milestone: ${milestone.title}`}
-              className="max-w-[8rem] truncate rounded border border-border bg-muted px-1.5 text-xs text-subtle"
-            >
-              {milestone.title}
-              {milestone.more > 0 && ` +${milestone.more}`}
-            </span>
-          )}
-        </span>
-        <span className="flex items-center justify-between gap-2 text-xs tabular-nums">
-          {task.ready ? (
-            <span className="rounded border border-emerald-400 px-1 font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-600 dark:text-emerald-300">
-              Ready
-            </span>
-          ) : task.waiting ? (
-            <span
-              title={`${blockers(waitingOn)}: prerequisites not completed`}
-              className="rounded border border-amber-400 px-1 text-amber-800 dark:text-amber-300"
-            >
-              <Hourglass aria-hidden="true" className="mr-1 inline h-3 w-3" />
-              {blockers(waitingOn)}
-            </span>
-          ) : (
-            <span />
-          )}
-          <span className="text-subtle" title="Priority">
-            P{task.priority}
-          </span>
-        </span>
-      </button>
+      <GraphTaskNodeButton data={data} detail={detail} />
       <Handle
         type="source"
         position={source}
@@ -206,6 +152,137 @@ function TaskNodeView({ data }: NodeProps<TaskFlowNode>) {
         isConnectable={false}
       />
     </>
+  );
+}
+
+export function GraphTaskNodeButton({
+  data,
+  detail,
+}: {
+  data: TaskNodeData;
+  detail: GraphNodeDetail;
+}) {
+  const { task, milestone } = data;
+  const waitingOn = task.unmetPrerequisiteIds.length;
+  const state = nodeStateLabel(task);
+  const compact = detail === "compact";
+  const operationalFailure = task.operationalStatus === "failed";
+  const compactTone = operationalFailure
+    ? "attention"
+    : task.ready
+      ? "good"
+      : task.waiting
+        ? "attention"
+        : taskStatusTone(task.operationalStatus);
+  const compactSupplement =
+    operationalFailure && !task.terminal
+      ? task.ready
+        ? "Ready"
+        : task.waiting
+          ? blockers(waitingOn)
+          : null
+      : null;
+  const compactState = operationalFailure
+    ? task.terminal
+      ? "Failed task"
+      : "Failed run"
+    : task.ready
+      ? "Ready"
+      : task.waiting
+        ? blockers(waitingOn)
+        : statusLabel(task.operationalStatus);
+  return (
+    <button
+      type="button"
+      aria-pressed={data.selected}
+      aria-label={`${task.title}. ${statusLabel(task.operationalStatus)}. ${state}. Priority ${task.priority}.${
+        milestone === null
+          ? ""
+          : ` Milestone ${milestone.title}${milestone.more > 0 ? ` and ${milestone.more} more` : ""}.`
+      }`}
+      onClick={() => data.onSelect(taskKey(task.taskId))}
+      style={{
+        width: nodeSize.width,
+        height: nodeSize.height,
+        ...(compact ? { borderLeftColor: miniMapColour[compactTone] } : {}),
+      }}
+      className={cn(
+        "flex cursor-pointer flex-col rounded-lg border bg-surface px-3 text-left shadow-sm transition-opacity focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        compact
+          ? "justify-center gap-1 border-l-[12px] py-1"
+          : "justify-between py-2",
+        data.selected
+          ? "border-primary ring-2 ring-primary"
+          : data.onChain
+            ? "border-red-500"
+            : "border-border",
+        data.dimmed && "opacity-25",
+      )}
+    >
+      {compact ? (
+        <>
+          <span className="w-full truncate text-xl font-semibold leading-tight">
+            {task.title}
+          </span>
+          <span
+            className={cn(
+              "w-full truncate font-bold uppercase leading-tight",
+              compactSupplement === null ? "text-2xl" : "text-xl",
+            )}
+          >
+            {compactState}
+          </span>
+          {compactSupplement !== null && (
+            <span className="w-full truncate text-xl font-bold uppercase leading-tight">
+              {compactSupplement}
+            </span>
+          )}
+        </>
+      ) : (
+        <>
+          <span className="line-clamp-2 text-sm font-medium leading-snug">
+            {task.title}
+          </span>
+          <span className="flex items-center justify-between gap-2 [&_span]:whitespace-nowrap">
+            <StatusBadge
+              label={statusLabel(task.operationalStatus)}
+              tone={taskStatusTone(task.operationalStatus)}
+            />
+            {detail === "full" && milestone !== null && (
+              <span
+                title={`Milestone: ${milestone.title}`}
+                className="max-w-[8rem] truncate rounded border border-border bg-muted px-1.5 text-xs text-subtle"
+              >
+                {milestone.title}
+                {milestone.more > 0 && ` +${milestone.more}`}
+              </span>
+            )}
+          </span>
+          <span className="flex items-center justify-between gap-2 text-xs tabular-nums">
+            {task.ready ? (
+              <span className="rounded border border-emerald-400 px-1 font-semibold uppercase tracking-wide text-emerald-700 dark:border-emerald-600 dark:text-emerald-300">
+                Ready
+              </span>
+            ) : task.waiting ? (
+              <span
+                title={`${blockers(waitingOn)}: prerequisites not completed`}
+                className="rounded border border-amber-400 px-1 text-amber-800 dark:text-amber-300"
+              >
+                <Hourglass aria-hidden="true" className="mr-1 inline h-3 w-3" />
+                {blockers(waitingOn)}
+              </span>
+            ) : (
+              <span />
+            )}
+            {detail === "full" && (
+              <span className="text-subtle" title="Priority">
+                P{task.priority}
+              </span>
+            )}
+          </span>
+        </>
+      )}
+    </button>
   );
 }
 
@@ -401,7 +478,7 @@ function TaskGraphCanvas({
     if (!showChain) return pairs;
     const chain = graph.longestDependencyChain;
     for (let i = 1; i < chain.length; i += 1)
-      pairs.add(`${chain[i - 1]}>${chain[i]}`);
+      pairs.add(graphEdgeKey(chain[i - 1]!, chain[i]!));
     return pairs;
   }, [graph.longestDependencyChain, showChain]);
 
@@ -474,14 +551,15 @@ function TaskGraphCanvas({
         : null;
     if (tooLarge) return [];
     return visible.edges.map((edge) => {
-      const unmet = unmetPairs.has(`${edge.dependsOnTaskId}>${edge.taskId}`);
+      const edgeKey = graphEdgeKey(edge.dependsOnTaskId, edge.taskId);
+      const unmet = unmetPairs.has(edgeKey);
       const onLineage =
         lineageScope !== null &&
         ((lineageScope.up.has(edge.taskId) &&
           lineageScope.up.has(edge.dependsOnTaskId)) ||
           (lineageScope.down.has(edge.taskId) &&
             lineageScope.down.has(edge.dependsOnTaskId)));
-      const onChain = chainEdges.has(`${edge.dependsOnTaskId}>${edge.taskId}`);
+      const onChain = chainEdges.has(edgeKey);
       const stroke = onLineage
         ? colour.lineage
         : onChain
@@ -490,7 +568,7 @@ function TaskGraphCanvas({
             ? colour.unmet
             : colour.neutral;
       return {
-        id: `d:${edge.dependsOnTaskId}>${edge.taskId}`,
+        id: `d:${edgeKey}`,
         source: taskKey(edge.dependsOnTaskId),
         target: taskKey(edge.taskId),
         type: "smoothstep",
@@ -815,7 +893,7 @@ function TaskGraphCanvas({
           )}
         </div>
         <label className="flex flex-col gap-1 text-xs text-subtle">
-          Status
+          Operational status
           <Select
             value={filters.status}
             onChange={(event) =>
@@ -827,7 +905,7 @@ function TaskGraphCanvas({
             <option value="">All statuses</option>
             {statusOptions.map((status) => (
               <option key={status} value={status}>
-                {statusLabel(status)}
+                {taskOperationalFilterLabel(status)}
               </option>
             ))}
           </Select>
@@ -1420,6 +1498,12 @@ function TaskPanel({
             ))}
           </Select>
         </label>
+        {(neighborhoodMode === "direct" || neighborhoodMode === "one_hop") && (
+          <p className="text-xs text-subtle">
+            Direct relations shows only links touching this task. 1 hop also
+            shows links between its neighbors.
+          </p>
+        )}
       </div>
       {detailLoading ? (
         <p role="status" className="text-xs text-subtle">

@@ -18,7 +18,11 @@ import type {
   PipelineRunProps,
   PipelineStageRunProps,
 } from "@ai-office/domain/pipeline/pipeline-run.ts";
-import type { TaskProps, TaskStatus } from "@ai-office/domain/task/task.ts";
+import {
+  isTerminalTaskStatus,
+  type TaskProps,
+  type TaskStatus,
+} from "@ai-office/domain/task/task.ts";
 import type {
   AgentActiveStageRecord,
   OperationalAgentRecord,
@@ -85,12 +89,6 @@ const taskStatuses = [
   "failed",
   "cancelled",
 ] as const satisfies readonly TaskStatus[];
-
-const terminalTaskStatuses = new Set<TaskStatus>([
-  "completed",
-  "failed",
-  "cancelled",
-]);
 
 const requirementStatuses = [
   "proposed",
@@ -192,8 +190,7 @@ export function projectTaskCounts(
   for (const record of records) {
     counts.byStatus[record.status] += record.count;
     counts.total += record.count;
-    if (terminalTaskStatuses.has(record.status))
-      counts.terminal += record.count;
+    if (isTerminalTaskStatus(record.status)) counts.terminal += record.count;
     else counts.open += record.count;
   }
   return counts;
@@ -844,7 +841,7 @@ export function projectTaskOperationalState(input: {
         ? "agent_run_active_without_task_transition"
         : "agent_run_scheduled_without_task_transition",
     );
-  if (!terminalTaskStatuses.has(input.task.status) && stoppedOnFailure)
+  if (!isTerminalTaskStatus(input.task.status) && stoppedOnFailure)
     divergenceReasons.push("agent_run_failed_without_task_transition");
   if (
     input.task.status !== "waiting_review" &&
@@ -917,6 +914,7 @@ export function projectTaskOperationalState(input: {
     description: input.task.description ?? null,
     priority: input.task.priority,
     recordedStatus: input.task.status,
+    terminal: isTerminalTaskStatus(input.task.status),
     operationalStatus,
     divergesFromRecordedStatus: divergenceReasons.length > 0,
     divergenceReasons,

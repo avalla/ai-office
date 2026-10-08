@@ -17,6 +17,8 @@ import {
   searchTasks,
   defaultGraphFilters,
   filterGraph,
+  graphEdgeKey,
+  graphNodeDetail,
   layoutGraph,
   lineage,
   taskKey,
@@ -54,6 +56,7 @@ const graph: TaskGraph = {
     node("done", {
       recordedStatus: "completed",
       operationalStatus: "completed",
+      terminal: true,
       ready: false,
     }),
     node("a", { milestoneIds: ["m1"] }),
@@ -103,6 +106,15 @@ const ids = (tasks: readonly TaskGraphNode[]) => tasks.map((t) => t.taskId);
 const all = { ...defaultGraphFilters, hideCompleted: false };
 
 describe("dashboard task graph", () => {
+  test("changes presentation only at the two zoom thresholds", () => {
+    expect(graphNodeDetail(0.05)).toBe("compact");
+    expect(graphNodeDetail(0.399)).toBe("compact");
+    expect(graphNodeDetail(0.4)).toBe("medium");
+    expect(graphNodeDetail(0.849)).toBe("medium");
+    expect(graphNodeDetail(0.85)).toBe("full");
+    expect(graphNodeDetail(1.75)).toBe("full");
+  });
+
   test("hides completed work by default but keeps counts exact", () => {
     const visible = filterGraph(graph, defaultGraphFilters);
     expect(ids(visible.tasks)).toEqual(["a", "b", "c", "d", "lone"]);
@@ -333,12 +345,21 @@ describe("dashboard task graph", () => {
         node("x", {
           operationalStatus: "failed",
           recordedStatus: "failed",
+          terminal: true,
           ready: false,
           waiting: false,
           unmetPrerequisiteIds: ["a"],
         }),
       ),
     ).toBe("Failed");
+    expect(
+      nodeStateLabel(
+        node("retry", {
+          operationalStatus: "failed",
+          ready: false,
+        }),
+      ),
+    ).toBe("Not startable");
     expect(
       nodeStateLabel(
         node("y", {
@@ -361,13 +382,15 @@ describe("dashboard task graph", () => {
         unmetPrerequisiteIds: ["a"],
       }),
     ];
-    expect([...unmetEdgeKeys(tasks)].sort()).toEqual([
-      "a>b",
-      "a>c",
-      "a>z",
-      "b>d",
-      "c>d",
-    ]);
+    expect(unmetEdgeKeys(tasks)).toEqual(
+      new Set([
+        graphEdgeKey("a", "b"),
+        graphEdgeKey("a", "c"),
+        graphEdgeKey("a", "z"),
+        graphEdgeKey("b", "d"),
+        graphEdgeKey("c", "d"),
+      ]),
+    );
   });
 
   test("computes the transitive lineage over the whole graph", () => {
@@ -474,6 +497,40 @@ describe("dashboard task graph", () => {
     expect(ids(scoped("direct").tasks)).toEqual(["focus", "before", "after"]);
     expect(scoped("direct").edges).toEqual(triangle.edges.slice(0, 2));
     expect(scoped("one_hop").edges).toEqual(triangle.edges);
+  });
+
+  test("edge identities remain distinct when task IDs contain the old delimiter", () => {
+    const collision: TaskGraph = {
+      ...graph,
+      tasks: [node("a"), node("b>c"), node("a>b"), node("c")],
+      edges: [
+        { taskId: "b>c", dependsOnTaskId: "a" },
+        { taskId: "c", dependsOnTaskId: "a>b" },
+        { taskId: "a>b", dependsOnTaskId: "a" },
+        { taskId: "a", dependsOnTaskId: "c" },
+      ],
+    };
+    expect(graphEdgeKey("a", "b>c")).not.toBe(graphEdgeKey("a>b", "c"));
+    const relationships = createGraphRelationshipMemo();
+    const direct = relationships(collision.edges, "a").neighborhood("direct");
+    const oneHop = relationships(collision.edges, "a").neighborhood("one_hop");
+    const scoped = (scope: typeof direct) =>
+      filterGraph(collision, defaultGraphFilters, {
+        only: scope.taskIds,
+        ...(scope.edgeKeys === undefined ? {} : { onlyEdges: scope.edgeKeys }),
+      });
+    expect(scoped(direct).edges).toEqual([
+      collision.edges[0],
+      collision.edges[2],
+      collision.edges[3],
+    ]);
+    expect(scoped(oneHop).edges).toEqual(collision.edges);
+    expect(
+      unmetEdgeKeys([
+        node("b>c", { unmetPrerequisiteIds: ["a"] }),
+        node("c", { unmetPrerequisiteIds: ["a>b"] }),
+      ]).size,
+    ).toBe(2);
   });
 
   test("lays prerequisites before their dependents in both directions", () => {

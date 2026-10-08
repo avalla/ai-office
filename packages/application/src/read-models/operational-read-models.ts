@@ -359,10 +359,6 @@ export const taskOperationalStatuses = [
 ] as const;
 export type TaskOperationalStatus = (typeof taskOperationalStatuses)[number];
 
-/** Operational statuses omitted by the dashboard's default active-task view. */
-export const terminalTaskOperationalStatuses: readonly TaskOperationalStatus[] =
-  ["failed", "completed", "cancelled"];
-
 export type TaskStatusFilter = TaskOperationalStatus | "active" | "all";
 
 export type TaskSort = "milestone" | "short_name";
@@ -499,6 +495,8 @@ export interface TaskOperationalState {
   priority: number;
   /** Exactly what `task.status` holds. */
   recordedStatus: TaskStatus;
+  /** Whether the recorded task lifecycle is terminal. */
+  terminal: boolean;
   /** The authoritative interpretation used by every presentation surface. */
   operationalStatus: TaskOperationalStatus;
   divergesFromRecordedStatus: boolean;
