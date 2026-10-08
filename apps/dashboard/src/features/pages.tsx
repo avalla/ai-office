@@ -11,7 +11,10 @@ import type {
   TaskGraph,
   TaskPageQuery,
 } from "@ai-office/application/read-models/operational-read-models.ts";
-import { taskPageParameters } from "@ai-office/application/protocol/query-protocol.ts";
+import {
+  queryLimits,
+  taskPageParameters,
+} from "@ai-office/application/protocol/query-protocol.ts";
 import type { DashboardData } from "../api/client.ts";
 import {
   ActivityList,
@@ -44,7 +47,11 @@ import {
 } from "../components/ui/primitives.tsx";
 import { TaskGraphView } from "./task-graph.tsx";
 import { elapsed, formatDuration, formatTimestamp } from "../lib/formatting.ts";
-import { taskFilterQuery, type TaskFilterValues } from "../lib/task-filters.ts";
+import {
+  milestoneChoiceDisabled,
+  taskFilterQuery,
+  type TaskFilterValues,
+} from "../lib/task-filters.ts";
 import {
   milestoneStatusTone,
   requirementStatusTone,
@@ -921,6 +928,11 @@ function TaskFilters({ project }: { project: ProjectDetail }) {
                 Clear
               </Button>
             </div>
+            <p className="text-xs text-subtle" aria-live="polite">
+              {values.milestones?.length === queryLimits.maxTaskMilestoneFilters
+                ? `Limit of ${queryLimits.maxTaskMilestoneFilters} reached. Deselect one to choose another.`
+                : `Select up to ${queryLimits.maxTaskMilestoneFilters} milestone categories.`}
+            </p>
             {[
               ...(options.hasUnassignedMilestone
                 ? [{ id: "unassigned", title: "No milestone" }]
@@ -934,6 +946,10 @@ function TaskFilters({ project }: { project: ProjectDetail }) {
                 <input
                   type="checkbox"
                   checked={values.milestones?.includes(id) ?? false}
+                  disabled={milestoneChoiceDisabled(
+                    values.milestones ?? [],
+                    id,
+                  )}
                   onChange={() =>
                     setValues((current) => ({
                       ...current,

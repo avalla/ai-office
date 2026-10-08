@@ -29,7 +29,10 @@ import {
   parseRoute,
   routeHref,
 } from "../../apps/dashboard/src/ui/view-model.ts";
-import { taskFilterQuery } from "../../apps/dashboard/src/lib/task-filters.ts";
+import {
+  milestoneChoiceDisabled,
+  taskFilterQuery,
+} from "../../apps/dashboard/src/lib/task-filters.ts";
 import {
   parseTaskPageQuery,
   taskPageParameters,
@@ -837,6 +840,10 @@ describe("task filters", () => {
     expect(() => parseTaskPageQuery(duplicates)).toThrow(
       "Too many milestone filters",
     );
+    const selected = Array.from({ length: 50 }, (_, index) => `m-${index}`);
+    expect(milestoneChoiceDisabled(selected, "m-49")).toBe(false);
+    expect(milestoneChoiceDisabled(selected, "m-50")).toBe(true);
+    expect(milestoneChoiceDisabled(selected.slice(1), "m-50")).toBe(false);
   });
   test("shows the completed shortcut when all results are paginated", () => {
     const tasksPage: ProjectDetail = {

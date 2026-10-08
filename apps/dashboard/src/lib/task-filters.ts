@@ -1,5 +1,8 @@
 import type { TaskPageQuery } from "@ai-office/application/read-models/operational-read-models.ts";
-import { parseTaskPageQuery } from "@ai-office/application/protocol/query-protocol.ts";
+import {
+  parseTaskPageQuery,
+  queryLimits,
+} from "@ai-office/application/protocol/query-protocol.ts";
 
 export interface TaskFilterValues {
   search: string;
@@ -9,6 +12,17 @@ export interface TaskFilterValues {
   milestone?: string;
   milestones?: readonly string[];
   sort?: string;
+}
+
+/** The picker enforces the same bound as the query parser. */
+export function milestoneChoiceDisabled(
+  selected: readonly string[],
+  id: string,
+): boolean {
+  return (
+    selected.length >= queryLimits.maxTaskMilestoneFilters &&
+    !selected.includes(id)
+  );
 }
 /** Applying a filter returns to page one and uses the daemon's parser. */
 export function taskFilterQuery(values: TaskFilterValues): TaskPageQuery {

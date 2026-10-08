@@ -320,7 +320,8 @@ milestones.
 The browser requests `GET /api/projects/:id?taskView=paged`, with optional
 `search`, `status`, `priority`, `agent`, repeated `milestone`,
 `unassigned=true`, `sort`, and `offset` parameters. A single `milestone` value
-retains its existing query shape; repeated values use OR matching.
+retains its existing query shape; repeated values use OR matching. The query
+accepts up to 50 milestone values, and the picker enforces that same limit.
 Malformed filters return `400`; selecting both an agent and unassigned tasks is
 invalid. The response adds `taskPage` with applied filters, offset, page limit,
 and project-wide choices. Existing callers without `taskView=paged` retain the
