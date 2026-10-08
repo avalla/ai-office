@@ -17,11 +17,7 @@ import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
 import { SqliteOperationalReadRepository } from "@ai-office/storage-sqlite/repositories/sqlite-operational-read.repository.ts";
-import type {
-  AgentKnowledgeStore,
-  KnowledgeScope,
-  KnowledgeSearchQuery,
-} from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import type { AgentKnowledgeStore } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import type { AgentKnowledgeConfiguration } from "@ai-office/storage-surrealdb/agent-knowledge-configuration.ts";
 
 const temporaryDirectories: string[] = [];
@@ -582,16 +578,16 @@ describe("daemon query API", () => {
   });
 
   test("runtime status probes knowledge connectivity live per request", async () => {
-    const probes: { scope: KnowledgeScope; query: KnowledgeSearchQuery }[] = [];
-    const store = {
-      findKnowledge: async (scope: KnowledgeScope, query: KnowledgeSearchQuery) => {
-        probes.push({ scope, query });
-        return [];
-      },
-    } as unknown as AgentKnowledgeStore;
+    const probes: { config: unknown; deadlineMs: number }[] = [];
     const harness = await startDaemon({
       agentKnowledgeConfiguration: knowledgeConfiguration,
-      connectAgentKnowledge: async () => ({ store, close: async () => {} }),
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
+      probeAgentKnowledge: async (config, deadlineMs) => {
+        probes.push({ config, deadlineMs });
+      },
     });
     try {
       const first = await harness.get("/api/status");
@@ -599,13 +595,10 @@ describe("daemon query API", () => {
       expect(first.body.status).toMatchObject({
         knowledge: { provider: "surrealdb", startup: "connected", live: "connected" },
       });
-      // The probe is a bounded read through the connected store, distinct
-      // from the startup-observed state.
+      // The probe receives the validated connection config and the bounded
+      // deadline, distinct from the startup-observed state.
       expect(probes).toEqual([
-        {
-          scope: { tenantId: "tenant-status", repositoryId: "runtime-status-probe" },
-          query: { text: "probe", limit: 1 },
-        },
+        { config: knowledgeConfiguration.connection, deadlineMs: 1_500 },
       ]);
       // The probe runs at request time: a second request probes again.
       await harness.get("/api/status");
@@ -616,17 +609,19 @@ describe("daemon query API", () => {
   });
 
   test("runtime status reports the live probe as unavailable when the store stops answering", async () => {
-    let probeCalls = 0;
-    const store = {
-      findKnowledge: () => {
-        probeCalls += 1;
-        return new Promise<never>(() => {});
-      },
-    } as unknown as AgentKnowledgeStore;
     const harness = await startDaemon({
       agentKnowledgeConfiguration: knowledgeConfiguration,
-      connectAgentKnowledge: async () => ({ store, close: async () => {} }),
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
       agentKnowledgeProbeTimeoutMs: 250,
+      // Emulates the connector contract: implementations settle within the
+      // given deadline (the real connector closes its throwaway connection).
+      probeAgentKnowledge: async (_config, deadlineMs) => {
+        await Bun.sleep(deadlineMs);
+        throw new Error("Agent knowledge probe timed out");
+      },
     });
     try {
       const started = Date.now();
@@ -638,24 +633,21 @@ describe("daemon query API", () => {
       // The probe deadline bounds the delay: startup state still reported
       // "connected" while the live probe tells the truth.
       expect(Date.now() - started).toBeLessThan(2_000);
-      // Single-flight: repeated requests share the one pending probe instead
-      // of leaking a new hung query per request.
-      await harness.get("/api/status");
-      expect(probeCalls).toBe(1);
     } finally {
       await harness.stop();
     }
   });
 
   test("runtime status reports the live probe as unavailable when the store rejects", async () => {
-    const store = {
-      findKnowledge: async () => {
-        throw new Error("store exploded");
-      },
-    } as unknown as AgentKnowledgeStore;
     const harness = await startDaemon({
       agentKnowledgeConfiguration: knowledgeConfiguration,
-      connectAgentKnowledge: async () => ({ store, close: async () => {} }),
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
+      probeAgentKnowledge: async () => {
+        throw new Error("store exploded");
+      },
     });
     try {
       const { status, body } = await harness.get("/api/status");
@@ -663,6 +655,69 @@ describe("daemon query API", () => {
       expect(body.status).toMatchObject({
         knowledge: { provider: "surrealdb", startup: "connected", live: "unavailable" },
       });
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  test("runtime status live probe observes recovery on the next request", async () => {
+    let healthy = false;
+    const harness = await startDaemon({
+      agentKnowledgeConfiguration: knowledgeConfiguration,
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
+      probeAgentKnowledge: async () => {
+        if (!healthy) throw new Error("store unreachable");
+      },
+    });
+    try {
+      const first = await harness.get("/api/status");
+      expect(first.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "unavailable" },
+      });
+      healthy = true;
+      const second = await harness.get("/api/status");
+      expect(second.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "connected" },
+      });
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  test("concurrent runtime status requests each get a bounded live probe", async () => {
+    let probeCalls = 0;
+    const harness = await startDaemon({
+      agentKnowledgeConfiguration: knowledgeConfiguration,
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
+      agentKnowledgeProbeTimeoutMs: 250,
+      probeAgentKnowledge: async (_config, deadlineMs) => {
+        probeCalls += 1;
+        await Bun.sleep(deadlineMs);
+        throw new Error("Agent knowledge probe timed out");
+      },
+    });
+    try {
+      const started = Date.now();
+      const results = await Promise.all([
+        harness.get("/api/status"),
+        harness.get("/api/status"),
+        harness.get("/api/status"),
+      ]);
+      for (const result of results) {
+        expect(result.status).toBe(200);
+        expect(result.body.status).toMatchObject({
+          knowledge: { startup: "connected", live: "unavailable" },
+        });
+      }
+      // Every request runs its own throwaway probe; all stay bounded.
+      expect(probeCalls).toBe(3);
+      expect(Date.now() - started).toBeLessThan(2_500);
     } finally {
       await harness.stop();
     }
