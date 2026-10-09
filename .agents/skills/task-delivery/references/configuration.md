@@ -24,6 +24,7 @@ they are stricter.
 | Key                       | Meaning                                                                                       | Default when absent                                                                         |
 | ------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `integration_branch`      | Branch that task branches start from and merge into                                           | The remote's default branch                                                                 |
+| `knowledgePolicy`         | Knowledge retrieval policy for handoff and resume enrichment                                  | `auto`                                                                                      |
 | `verification.full`       | Command that must pass before handoff, at QA, and after merge                                 | The check command the repository documents; otherwise ask                                   |
 | `verification.targeted`   | Command template for a narrow test run while iterating                                        | The repository's test runner on the changed area                                            |
 | `git.worktree_required`   | `true` when each task must use an isolated workspace                                          | `false`                                                                                     |
@@ -34,11 +35,16 @@ they are stricter.
 | `task_lifecycle.review`   | Command that marks a task as in review, run when its pull request is open                     | None: the project's documented way, otherwise report                                        |
 | `task_lifecycle.complete` | Command that marks a task as done, used only after stage 11                                   | None: the project's documented way, otherwise report                                        |
 
+`knowledgePolicy` is a resolved input to knowledge retrieval: where nothing
+resolves it yet, the `auto` default above is descriptive only — applying the
+default and persisting the setup are owned by the configuration task.
+
 ## Types
 
 `integration_branch`, `verification.*`, `external_review.command`,
 `task_lifecycle.start`, `task_lifecycle.review`, and `task_lifecycle.complete`
-are non-empty strings.
+are non-empty strings. `knowledgePolicy` is one of the words `auto`,
+`required`, or `disabled`, written unquoted.
 `git.*` and `task_lifecycle.enabled` are booleans written unquoted (`true` or
 `false`). `verification`, `git`, `external_review`, and `task_lifecycle` are
 mappings; no other key is allowed at any level. To drop the configuration,
@@ -74,6 +80,23 @@ own diff and nothing else.
 
 In the `task_lifecycle` commands, `{task}` stands for the identifier of the
 task in the system that tracks it. Replace it before running the command.
+
+## Knowledge retrieval policy
+
+`knowledgePolicy` decides how a handoff or a resume uses read-only,
+task-linked knowledge from the project's knowledge store:
+
+- `disabled`: no retrieval and no knowledge section in the handoff.
+  References already recorded in a checkpoint stay listed as-is.
+- `auto` (the default): attempt `knowledge:task` for the task. When the
+  reported state is not connected, continue without knowledge and record a
+  one-line evidence note naming the state.
+- `required`: knowledge retrieval is mandatory; when the store is not
+  connected, the handoff or resume gate blocks with the typed error recorded
+  as evidence. Only the authorizer may lower the policy to proceed.
+
+Knowledge stays advisory under every value; no value makes retrieved
+knowledge a gate input, and no value writes anything back.
 
 ## Rules
 

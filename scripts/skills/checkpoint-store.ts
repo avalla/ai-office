@@ -92,6 +92,18 @@ const isoUtcPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const timestampMinimum = "2000-01-01T00:00:00.000Z";
 const maximumPublishAttempts = 3;
 
+/**
+ * Recommended `knowledgeReferences` entry format (M19-T3): an admitted
+ * knowledge locator `ak:<memory|decision>:<id>` or a proposed write-back
+ * `plan:<hash>`. Parsing stays lenient for pre-M19-T3 packets; this pattern
+ * governs the write side and the resume warning only.
+ */
+export const knowledgeReferencePattern =
+  /^(ak:(memory|decision):|plan:)[A-Za-z0-9._-]+$/u;
+
+/** Maximum number of `knowledgeReferences` entries one checkpoint accepts. */
+export const maxKnowledgeReferences = 10;
+
 export interface CheckpointEvidenceRef {
   readonly kind: "command" | "link" | "file";
   readonly value: string;
@@ -204,6 +216,12 @@ export interface ResumeAssessment {
   readonly liveHead: string;
   readonly dirty: boolean;
   readonly dirtyPaths: readonly string[];
+  /**
+   * `knowledgeReferences` entries of a usable checkpoint that do not match
+   * the recommended format. A legacy-data warning only: the assessment
+   * stays usable and the entries stay listed verbatim.
+   */
+  readonly invalidKnowledgeReferences: readonly string[];
 }
 
 function sha256Hex(bytes: Buffer): string {
@@ -803,6 +821,33 @@ function loadLatestCheckpoint(
 }
 
 /**
+ * Write-side contract for `knowledgeReferences` (M19-T3): every entry must
+ * match {@link knowledgeReferencePattern}, duplicates are refused, and at
+ * most {@link maxKnowledgeReferences} entries fit. The typed error names
+ * the offending entry so the publisher can fix the call; reading stays
+ * lenient so pre-M19-T3 packets still parse.
+ */
+function validateKnowledgeReferences(entries: readonly string[]): string[] {
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (!knowledgeReferencePattern.test(entry))
+      throw new CheckpointStoreError(
+        `knowledgeReferences entry has an invalid format: ${entry} (expected ak:<memory|decision>:<id> or plan:<hash>)`,
+      );
+    if (seen.has(entry))
+      throw new CheckpointStoreError(
+        `knowledgeReferences contains a duplicate entry: ${entry}`,
+      );
+    seen.add(entry);
+  }
+  if (entries.length > maxKnowledgeReferences)
+    throw new CheckpointStoreError(
+      `knowledgeReferences accepts at most ${maxKnowledgeReferences} entries, got ${entries.length}`,
+    );
+  return [...entries];
+}
+
+/**
  * Publishes the next checkpoint for a task. The sequence is one more than
  * the latest valid checkpoint known to a fresh read; losing the exclusive
  * reservation re-reads and retries, so a concurrent publisher can stall a
@@ -825,6 +870,9 @@ export function publishCheckpoint(
     );
   if (input.nextAction.trim() === "")
     throw new CheckpointStoreError("nextAction must not be empty");
+  const knowledgeReferences = validateKnowledgeReferences(
+    input.knowledgeReferences ?? [],
+  );
 
   const directory = checkpointsDirectory(taskDirectory);
   mkdirSync(directory, { recursive: true, mode: 0o755 });
@@ -868,7 +916,7 @@ export function publishCheckpoint(
       unresolvedDependencies: input.unresolvedDependencies ?? [],
       knownLimitations: input.knownLimitations ?? [],
       nextAction: input.nextAction,
-      knowledgeReferences: input.knowledgeReferences ?? [],
+      knowledgeReferences,
       supersedes: previous === null ? null : previous.id,
       publishedAt: timestamp,
     };
@@ -1028,6 +1076,7 @@ export function assessResume(
     liveHead,
     dirty: dirtyPaths.length > 0,
     dirtyPaths,
+    invalidKnowledgeReferences: [] as readonly string[],
   };
   let loaded: { bytes: Buffer } | null;
   try {
@@ -1071,5 +1120,8 @@ export function assessResume(
     liveHead,
     dirty: dirtyPaths.length > 0,
     dirtyPaths,
+    invalidKnowledgeReferences: checkpoint.knowledgeReferences.filter(
+      (entry) => !knowledgeReferencePattern.test(entry),
+    ),
   };
 }

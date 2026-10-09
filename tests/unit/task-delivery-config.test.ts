@@ -253,7 +253,26 @@ describe("task-delivery configuration contract", () => {
     expect(
       validateTaskDeliveryConfigSource("integration_brnch: main\n"),
     ).toEqual([
-      "unknown key integration_brnch (allowed: integration_branch, verification, git, external_review, task_lifecycle)",
+      "unknown key integration_brnch (allowed: integration_branch, knowledgePolicy, verification, git, external_review, task_lifecycle)",
+    ]);
+  });
+
+  test.each([
+    ["auto", "auto"],
+    ["required", "required"],
+    ["disabled", "disabled"],
+  ])("accepts knowledgePolicy value %s", (_label, value) => {
+    expect(
+      validateTaskDeliveryConfigSource(`knowledgePolicy: ${value}\n`),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["an unknown word", "knowledgePolicy: sometimes\n", /knowledgePolicy must be one of: auto, required, disabled/],
+    ["a boolean", "knowledgePolicy: true\n", /line 1: knowledgePolicy must be a string/],
+  ])("rejects %s", (_label, source, expected) => {
+    expect(validateTaskDeliveryConfigSource(source)).toEqual([
+      expect.stringMatching(expected),
     ]);
   });
 

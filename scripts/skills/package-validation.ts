@@ -357,6 +357,27 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
         pattern:
           /the exclude is an operational prerequisite the executor verifies or configures before the first checkpoint/iu,
       },
+      {
+        id: "policy:knowledge-never-authoritative",
+        file: "references/handoff.md",
+        pattern: /knowledge is advisory and never authoritative/iu,
+      },
+      {
+        id: "policy:knowledge-writeback-operator-mediated",
+        file: "references/handoff.md",
+        pattern: /write-back is operator-mediated/iu,
+      },
+      {
+        id: "policy:knowledge-references-locator",
+        file: "references/checkpoints.md",
+        pattern:
+          /`ak:<kind>:<id>` for admitted knowledge \(kind `memory` or `decision`\)/u,
+      },
+      {
+        id: "policy:knowledge-required-blocks-gate",
+        file: "references/configuration.md",
+        pattern: /the handoff or resume gate blocks/iu,
+      },
     ],
   },
 };

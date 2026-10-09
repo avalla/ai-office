@@ -103,6 +103,27 @@ gate; the gate lives in the document and in the index.
   checkpoint, any checkpoint a handoff cites, and anything that does not
   validate (not a checkpoint) are never pruned.
 
+## Knowledge references
+
+`knowledgeReferences` carries optional locators linking the checkpoint to
+the project's knowledge store. Two entry formats are accepted: `ak:<kind>:<id>`
+for admitted knowledge (kind `memory` or `decision`), a locator the receiving
+context can verify and trace with `knowledge:trace`, and `plan:<hash>` for a
+proposed write-back that is not admitted yet and stays pending until an
+operator approves it.
+
+Write side, `publishCheckpoint` enforces the contract and refuses the publish
+with a typed error naming the offending entry:
+
+- duplicate entries are rejected;
+- at most 10 entries are accepted;
+- each entry must match `^(ak:(memory|decision):|plan:)[A-Za-z0-9._-]+$`.
+
+Read side stays lenient: checkpoints written before these rules existed may
+carry arbitrary strings, and the reader never rejects them. On resume,
+entries that do not match the recommended format are surfaced as a warning
+(`invalidKnowledgeReferences`), never as a failed assessment.
+
 ## Resume validation
 
 Resuming from a checkpoint is an assessment, never a trust decision:

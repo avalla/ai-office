@@ -5,10 +5,12 @@ import {
 } from "@ai-office/domain/capability/canonical-json.ts";
 import {
   assertKnowledgeIdentifier,
+  assertKnowledgeLimit,
   assertKnowledgeSearchQuery,
   isKnowledgeIdentifier,
   knowledgeEvidenceKinds,
   knowledgeEvidenceLimit,
+  knowledgeRetrievalLimits,
   type DecisionInput,
   type KnowledgeEvidenceKind,
   type KnowledgeEvidenceReference,
@@ -863,6 +865,36 @@ export class ManageKnowledgeAdmission {
     return state.store.findKnowledge(
       { tenantId: state.tenantId, repositoryId },
       query,
+    );
+  }
+
+  /**
+   * Read-only task-linked retrieval for handoff/resume enrichment. Unlike
+   * search, the command caller needs the store state even when it is not
+   * connected, so the command layer reports that state and only reaches this
+   * method in the connected state; scope resolution is the same as search.
+   */
+  async taskKnowledge(input: {
+    projectId: string;
+    taskId: string;
+    limit?: number;
+  }): Promise<SearchKnowledgeHit[]> {
+    const state = this.connected();
+    assertKnowledgeIdentifier(input.projectId);
+    assertKnowledgeIdentifier(input.taskId);
+    if (input.limit !== undefined)
+      assertKnowledgeLimit(input.limit, knowledgeRetrievalLimits.maxResults);
+    if ((await this.projects.findById(input.projectId)) === null)
+      throw new KnowledgeAdmissionError("KNOWLEDGE_PROJECT_NOT_FOUND");
+    const repositoryId = await this.identities.findRepositoryId(
+      input.projectId,
+    );
+    if (repositoryId === null)
+      throw new KnowledgeAdmissionError("KNOWLEDGE_PROVENANCE_UNAVAILABLE");
+    return state.store.findTaskKnowledge(
+      { tenantId: state.tenantId, repositoryId },
+      input.taskId,
+      input.limit,
     );
   }
 
