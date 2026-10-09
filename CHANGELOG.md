@@ -2,14 +2,17 @@
 
 ## Unreleased
 
-- `task-delivery` 0.4.2: `SKILL.md` is about a third smaller, so each
-  invocation loads fewer tokens. "What to deliver" is restructured into short
-  lists (target, pipeline, dependencies and summary), and the rules that only
-  apply to a run over several tasks - clarify first, re-planning, run-wide
-  stacking and stop propagation - move unchanged in meaning to the new
+- `task-delivery` 0.5.1: `SKILL.md` is about a third smaller, so each
+  invocation loads fewer tokens, with the 0.5.0 Checkpoints section, store and
+  invariants unchanged. "What to deliver" is restructured into short lists
+  (target, pipeline, dependencies and summary), and the rules that only apply
+  to a run over several tasks - clarify first, re-planning, run-wide stacking
+  and stop propagation - move unchanged in meaning to the new
   `references/multi-task.md`, read only when the selection has more than one
-  task. The package validator now checks each workflow invariant in the file
-  that owns it. The handoff section is shortened to its triggers and rules.
+  task. Only a request that itself names exactly one task skips the summary;
+  every other selection needs the approved summary before preflight. The
+  package validator now checks each workflow invariant in the file that owns
+  it. The handoff section is shortened to its triggers and rules.
 - Add `ai-office requirement:assign-milestone` (`--project`, `--requirement`,
   `--milestone`) to repair a `proposed` requirement recorded without a
   milestone, whose tasks therefore appeared under no milestone. It assigns once

@@ -88,6 +88,9 @@ A proposed mechanism is not automatically an architectural decision. When reposi
 - Connector and controlled-execution changes require adversarial path/precondition tests and relevant fault injection.
 - Daemon or CLI behavior changes require end-to-end coverage through the Unix-socket protocol.
 - Before handoff, run `bun run check` and the appropriate diff check.
+- Run `bun run check` as a background task with its full output redirected to a
+  timestamped log, then tail the log and preserve the exit code, e.g.:
+  `log=/tmp/ai-office-check-$(date +%Y%m%d-%H%M%S).log; bun run check > "$log" 2>&1; result=$?; tail -n 60 "$log"; exit $result`.
 
 ## Git and commit rules
 

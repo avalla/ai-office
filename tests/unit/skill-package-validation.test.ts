@@ -652,7 +652,55 @@ describe("task-delivery workflow invariants", () => {
       /It is never an input to independent review, second review, verification,\s+or external review/u,
     ],
     ["policy:handoff-untrusted-input", /treats it as untrusted\s+input/u],
+    [
+      "policy:checkpoint-location",
+      "live at `.task-delivery/<task>/checkpoints/`",
+    ],
+    [
+      "policy:checkpoint-written-at-every-gate",
+      "written by the implementation context at every gate",
+    ],
+    ["policy:checkpoint-no-runtime", "work without a Runtime"],
+    [
+      "policy:checkpoint-not-a-review-input",
+      /it never reaches independent\s+review, second review, verification, or external review/u,
+    ],
+    ["policy:checkpoint-immutable", /A published checkpoint\s+is immutable/u],
+    [
+      "policy:checkpoint-untrusted-resume",
+      "re-validates the recorded head commit and working tree",
+    ],
+    [
+      "policy:checkpoint-never-validates-gate",
+      "No checkpoint can validate a passed gate",
+    ],
+    [
+      "policy:checkpoint-branch-name-encoding",
+      /branch name encoded when it is not a safe path\s+segment/u,
+    ],
+    [
+      "policy:checkpoint-exclude-prerequisite",
+      /the exclude is an operational\s+prerequisite the executor verifies or configures before the first\s+checkpoint/u,
+    ],
   ];
+
+  test("the contract pins the checkpoint and the multi-task rules together", () => {
+    expect(contract.requiredFiles).toEqual(
+      expect.arrayContaining([
+        "references/checkpoints.md",
+        "references/multi-task.md",
+      ]),
+    );
+    const ids = contract.invariants.map((invariant) => invariant.id);
+    expect(
+      ids.filter((id) => id.startsWith("policy:checkpoint-")),
+    ).toHaveLength(9);
+    expect(
+      contract.invariants.filter(
+        (invariant) => invariant.file === "references/multi-task.md",
+      ),
+    ).toHaveLength(16);
+  });
 
   test("every contract invariant has a removal case", () => {
     expect(removals.map(([id]) => id).sort()).toEqual(
@@ -934,7 +982,8 @@ describe("task-delivery workflow invariants", () => {
         "Show one summary and ask for the go-ahead, with these items:",
         "- the tasks in the proposed order, each with what it depends on; - every unresolved dependency, with its proposal; - any proposed Git branch dependency, kept apart from the task dependencies; - the pipeline that will be used, and anything excluded; - for a run over several tasks, the two questions of [multi-task](references/multi-task.md): clarify first, and stack.",
         "Start preflight only after the authorizer approves that summary.",
-        "For a single named task there is no summary round: make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides. ### Several tasks A run over several tasks gives each task its own branch, pull request, and evidence; each ends at READY FOR MERGE.",
+        "Only a request that itself names exactly one task skips the summary: make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
+        "Every other selection, including one task chosen from the choices above, needs the approved summary. ### Several tasks A run over several tasks gives each task its own branch, pull request, and evidence; each ends at READY FOR MERGE.",
         "Clarify-first, run-wide stacking, re-planning, and stop propagation are in [multi-task](references/multi-task.md); read it whenever the selection has more than one task.",
         "Branch bases are in [branch policy](references/branch-policy.md).",
       ]);
@@ -1276,7 +1325,7 @@ describe("task-delivery workflow invariants", () => {
         "SKILL.md: - A selected prerequisite is planned, not resolved: it stays unresolved until it is DONE.",
         "SKILL.md: - Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
         "SKILL.md: - the tasks in the proposed order, each with what it depends on; - every unresolved dependency, with its proposal; - any proposed Git branch dependency, kept apart from the task dependencies; - the pipeline that will be used, and anything excluded; - for a run over several tasks, the two questions of [multi-task](references/multi-task.md): clarify first, and stack.",
-        "SKILL.md: For a single named task there is no summary round: make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
+        "SKILL.md: Only a request that itself names exactly one task skips the summary: make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
         "branch-policy.md: - A satisfied Git dependency does not satisfy a task dependency: being stacked on A's branch does not mean A's task is accepted.",
         "lifecycle.md: A dependency that is not DONE is unresolved: stop until the authorizer decides.",
         "lifecycle.md: Decide the Git base separately, following the [branch policy](branch-policy.md); a stacked base never resolves a task dependency.",

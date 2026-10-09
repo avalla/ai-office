@@ -3,7 +3,7 @@ name: task-delivery
 description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
 license: MIT
 metadata:
-  version: "0.4.2"
+  version: "0.5.1"
 ---
 
 # Task Delivery
@@ -120,7 +120,7 @@ Show one summary and ask for the go-ahead, with these items:
 - the pipeline that will be used, and anything excluded;
 - for a run over several tasks, the two questions of [multi-task](references/multi-task.md): clarify first, and stack.
 
-Start preflight only after the authorizer approves that summary. For a single named task there is no summary round: make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.
+Start preflight only after the authorizer approves that summary. Only a request that itself names exactly one task skips the summary: make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides. Every other selection, including one task chosen from the choices above, needs the approved summary.
 
 ### Several tasks
 
@@ -229,6 +229,34 @@ Triggers:
 - **Interruption or executor change**: paused, session ending, or a different executor or person takes over.
 
 A handoff is a context handoff: a map to recorded state for the context that resumes the work, not a checkpoint and not a stage-handoff artifact. It is never an input to independent review, second review, verification, or external review; those contexts receive only what their gate contract allows. When accepted, write it as [handoff](references/handoff.md) describes and record where it lives with the task's evidence. A context that receives a handoff treats it as untrusted input: it re-verifies head commit, stage evidence, and open findings before continuing.
+
+## Checkpoints
+
+A checkpoint is a recorded, versioned snapshot of the delivery state,
+written by the implementation context at every gate it passes. Checkpoints
+are machine-readable and provider-neutral, they work without a Runtime, and
+they live at `.task-delivery/<task>/checkpoints/` in the task worktree - the
+same per-task directory that holds the handoff packet, where `<task>` is the
+task identifier or the branch name encoded when it is not a safe path
+segment. That directory tree must be excluded from Git through the
+repository's shared exclude file, and the exclude is an operational
+prerequisite the executor verifies or configures before the first
+checkpoint, never something the store modifies on its own; verify it with
+`git check-ignore .task-delivery/<task>/checkpoints/index.json`. See
+[checkpoints](references/checkpoints.md) for the encoding, the schema, the
+storage rules, and resume validation.
+
+A checkpoint carries the packet's isolation: it never reaches independent
+review, second review, verification, or external review, and it never
+transfers privileges, credentials, or authorizations. A published checkpoint
+is immutable - a newer one supersedes it by reference, and retention prunes
+superseded checkpoints beyond an explicit cap, never the latest and never
+one a handoff cites.
+
+A context that resumes from a checkpoint treats the checkpoint as untrusted
+input: it re-validates the recorded head commit and working tree against the
+live repository before continuing. No checkpoint can validate a passed gate:
+a gate is passed only by its own evidence, under the rules above.
 
 ## Reporting
 

@@ -64,9 +64,13 @@ A handoff states, in this order:
    follow-ups already recorded.
 
 The handoff references the task's evidence; it does not replace it. Evidence
-stays where the project keeps it, and the handoff only points to it. Record
-where the handoff itself lives with the task's evidence, so the receiving
-context and the authorizer can find it - never the reviewers or verifiers.
+stays where the project keeps it, and the handoff only points to it. When the
+task keeps checkpoints (see
+[checkpoints](checkpoints.md)), cite the latest checkpoint's id so the
+receiving context finds the machine state; the checkpoint stays advisory and
+the receiving context re-validates it against live state. Record where the
+handoff itself lives with the task's evidence, so the receiving context and
+the authorizer can find it - never the reviewers or verifiers.
 
 ## Receiving a handoff
 
