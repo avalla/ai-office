@@ -463,8 +463,8 @@ interface CheckpointIndex {
  * bytes. The leading underscore can never start a plain identifier
  * ({@link idPattern} requires an alphanumeric first character), so an
  * encoded name cannot collide with one, and hex holds no path separators,
- * so the result stays a single safe segment. The mapping is reversible via
- * {@link decodeCheckpointDirectoryName}.
+ * so the result stays a single safe segment. For well-formed UTF-8 names
+ * the mapping is reversible via {@link decodeCheckpointDirectoryName}.
  */
 export function encodeCheckpointDirectoryName(name: string): string {
   if (name === "")
@@ -473,7 +473,7 @@ export function encodeCheckpointDirectoryName(name: string): string {
   const encoded = `_${Buffer.from(name, "utf8").toString("hex")}`;
   if (encoded.length > 255)
     throw new CheckpointStoreError(
-      `checkpoint directory name is too long to encode safely: ${name.length} characters`,
+      `checkpoint directory name is too long to encode safely: ${name.length} code units`,
     );
   return encoded;
 }
@@ -481,6 +481,9 @@ export function encodeCheckpointDirectoryName(name: string): string {
 /**
  * The inverse of {@link encodeCheckpointDirectoryName}: plain identifiers
  * come back unchanged, `_`-prefixed hex names decode to the original name.
+ * Only the encoder's image is accepted: a name whose hex is malformed, has
+ * an odd digit count, or does not re-encode to itself is rejected, so
+ * decoding never returns mojibake for something encoding never produced.
  */
 export function decodeCheckpointDirectoryName(encoded: string): string {
   if (!encoded.startsWith("_")) {
@@ -490,11 +493,16 @@ export function decodeCheckpointDirectoryName(encoded: string): string {
       );
     return encoded;
   }
-  if (!/^_[0-9a-f]+$/u.test(encoded))
+  if (!/^_[0-9a-f]+$/u.test(encoded) || encoded.length % 2 === 0)
     throw new CheckpointFormatError(
       `not an encoded checkpoint directory name: ${encoded}`,
     );
-  return Buffer.from(encoded.slice(1), "hex").toString("utf8");
+  const decoded = Buffer.from(encoded.slice(1), "hex").toString("utf8");
+  if (encodeCheckpointDirectoryName(decoded) !== encoded)
+    throw new CheckpointFormatError(
+      `not an encoded checkpoint directory name: ${encoded}`,
+    );
+  return decoded;
 }
 
 /** The `.task-delivery/<task>` directory for `name` under `root`. */

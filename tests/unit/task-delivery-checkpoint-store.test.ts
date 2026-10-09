@@ -584,6 +584,15 @@ describe("checkpoint directory name encoding", () => {
     expect(() => decodeCheckpointDirectoryName("_")).toThrow(
       CheckpointFormatError,
     );
+    expect(() => decodeCheckpointDirectoryName("_abc")).toThrow(
+      CheckpointFormatError,
+    );
+    expect(() => decodeCheckpointDirectoryName("_ff")).toThrow(
+      CheckpointFormatError,
+    );
+    expect(() => decodeCheckpointDirectoryName("_deadbeef")).toThrow(
+      CheckpointFormatError,
+    );
     expect(() => decodeCheckpointDirectoryName("bad/name")).toThrow(
       CheckpointFormatError,
     );
