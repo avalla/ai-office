@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   cpSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -174,6 +175,22 @@ describe("skill package validation", () => {
       );
     },
   );
+
+  test("reports an invariant file that is not a regular file instead of throwing", () => {
+    const { skillRoot } = repositoryCopy();
+    const owner = join(skillRoot, "references", "multi-task.md");
+    rmSync(owner);
+    mkdirSync(owner);
+
+    const errors = validateSkillPackage(skillRoot);
+
+    expect(errors).toContain(
+      "Required file is missing: references/multi-task.md",
+    );
+    expect(errors).toContain(
+      "references/multi-task.md is missing required content: policy:clarify-before-development",
+    );
+  });
 
   test("rejects links that are broken or leave the skill directory", () => {
     const { skillRoot } = repositoryCopy();

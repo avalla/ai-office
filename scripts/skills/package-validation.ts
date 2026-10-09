@@ -555,7 +555,7 @@ export function validateSkillPackage(skillRoot: string): string[] {
       const text =
         file === "SKILL.md"
           ? normalized
-          : existsSync(join(skillRoot, file))
+          : files.includes(file)
             ? readFileSync(join(skillRoot, file), "utf8").replace(/\s+/gu, " ")
             : "";
       if (!invariant.pattern.test(text))
