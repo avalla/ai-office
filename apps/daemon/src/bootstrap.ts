@@ -77,6 +77,7 @@ type AgentKnowledgeProber = (
 ) => Promise<void>;
 const knowledgeConnectTimeoutMs = 5_000;
 const knowledgeProbeTimeoutMs = 1_500;
+const knowledgeProbeTtlMs = 10_000;
 
 async function connectKnowledgeWithDeadline(
   connector: AgentKnowledgeConnector,
@@ -132,6 +133,10 @@ export interface BootstrapOptions {
   agentKnowledgeConnectTimeoutMs?: number;
   /** Internal seam for a bounded live status probe test. */
   agentKnowledgeProbeTimeoutMs?: number;
+  /** Internal seam for a cached live status probe test. */
+  agentKnowledgeProbeTtlMs?: number;
+  /** Internal seam for deterministic live-probe cache expiry tests. */
+  agentKnowledgeProbeNow?: () => number;
   /** Internal seam for deterministic live-probe tests. */
   probeAgentKnowledge?: AgentKnowledgeProber;
   /**
@@ -418,11 +423,37 @@ export async function bootstrap(
     // `knowledgeStatus`: the connector runs it on a throwaway connection that
     // is closed when the probe settles or hits its deadline. A store that
     // accepts connections but stops answering therefore never accumulates
-    // pending RPCs — each probe frees its own socket — and the next request
-    // probes on a fresh connection, so recovery is observed immediately. The
-    // probe only connects and runs a trivial read; it never writes and holds
-    // no transaction, so a dead store only delays this one status request by
-    // the probe deadline plus a small connection-close budget.
+    // pending RPCs — each probe frees its own socket — and a later request
+    // probes on a fresh connection, so recovery is observed within the probe
+    // TTL. The probe only connects and runs a trivial read; it never writes
+    // and holds no transaction. Both outcomes stay cached for a short TTL and
+    // concurrent requests share one in-flight probe, so aggressive dashboard
+    // polling generates at most one probe per TTL; a slow probe does not eat
+    // the TTL because expiry is computed when the probe settles. A dead store
+    // therefore delays only the request that starts the probe, by the probe
+    // deadline plus a small connection-close budget.
+    let knowledgeProbeCache:
+      { result: "connected" | "unavailable"; expiresAt: number } | undefined;
+    let knowledgeProbeInFlight:
+      Promise<"connected" | "unavailable"> | undefined;
+    const runKnowledgeProbe = async (
+      config: Extract<AgentKnowledgeConfiguration, { kind: "surrealdb" }>["connection"],
+    ): Promise<"connected" | "unavailable"> => {
+      try {
+        const probe =
+          options.probeAgentKnowledge ??
+          (
+            await import("@ai-office/storage-surrealdb/probe-agent-knowledge-store.ts")
+          ).probeSurrealAgentKnowledgeStore;
+        await probe(
+          config,
+          options.agentKnowledgeProbeTimeoutMs ?? knowledgeProbeTimeoutMs,
+        );
+        return "connected";
+      } catch {
+        return "unavailable";
+      }
+    };
     const knowledgeLiveStatus = async (): Promise<
       "connected" | "unavailable" | "not_checked"
     > => {
@@ -431,22 +462,32 @@ export async function bootstrap(
         knowledgeConnectionConfig === undefined
       )
         return "not_checked";
-      try {
-        const probe =
-          options.probeAgentKnowledge ??
-          (
-            await import(
-              "@ai-office/storage-surrealdb/probe-agent-knowledge-store.ts"
-            )
-          ).probeSurrealAgentKnowledgeStore;
-        await probe(
-          knowledgeConnectionConfig,
-          options.agentKnowledgeProbeTimeoutMs ?? knowledgeProbeTimeoutMs,
-        );
-        return "connected";
-      } catch {
-        return "unavailable";
-      }
+      const now = options.agentKnowledgeProbeNow ?? Date.now;
+      if (
+        knowledgeProbeCache !== undefined &&
+        now() < knowledgeProbeCache.expiresAt
+      )
+        return knowledgeProbeCache.result;
+      knowledgeProbeInFlight ??= runKnowledgeProbe(
+        knowledgeConnectionConfig,
+      ).then(
+        (result) => {
+          knowledgeProbeCache = {
+            result,
+            expiresAt:
+              now() + (options.agentKnowledgeProbeTtlMs ?? knowledgeProbeTtlMs),
+          };
+          knowledgeProbeInFlight = undefined;
+          return result;
+        },
+        () => {
+          // `runKnowledgeProbe` catches probe failures; this only defends the
+          // status endpoint against an unexpected rejection without caching.
+          knowledgeProbeInFlight = undefined;
+          return "unavailable";
+        },
+      );
+      return knowledgeProbeInFlight;
     };
     const runtimeStatus = async (): Promise<RuntimeStatus> => {
       const startedAt = statusHost.current?.startedAtInstant ?? new Date();

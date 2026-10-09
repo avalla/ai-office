@@ -53,8 +53,13 @@ connection that is closed when the probe settles or hits its 1.5s deadline
 request by at most 1.75s):
 it only connects and runs a trivial read, never writes, and holds no
 transaction. Because every probe frees its own socket, a store that accepts
-connections but stops answering never accumulates pending RPCs, and the next
-request probes on a fresh connection and observes recovery immediately. AK-03
+connections but stops answering never accumulates pending RPCs. The probe
+outcome — `connected` or `unavailable` — is cached for a 10s TTL (overridable
+at bootstrap) and concurrent status requests share a single in-flight probe,
+so polling generates at most one probe per TTL; expiry is computed when the
+probe settles, so a slow probe does not shorten the cache. Once the cached
+outcome expires, the next request probes on a fresh connection and observes a
+recovery or degradation transition within roughly the TTL. AK-03
 introduced no knowledge mutation command; AK-05 later added reviewed
 admission.
 

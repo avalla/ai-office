@@ -577,14 +577,17 @@ describe("daemon query API", () => {
     }
   });
 
-  test("runtime status probes knowledge connectivity live per request", async () => {
+  test("runtime status caches the live knowledge probe within its TTL", async () => {
     const probes: { config: unknown; deadlineMs: number }[] = [];
+    let nowMs = 1_000_000;
     const harness = await startDaemon({
       agentKnowledgeConfiguration: knowledgeConfiguration,
       connectAgentKnowledge: async () => ({
         store: {} as AgentKnowledgeStore,
         close: async () => {},
       }),
+      agentKnowledgeProbeNow: () => nowMs,
+      agentKnowledgeProbeTtlMs: 60_000,
       probeAgentKnowledge: async (config, deadlineMs) => {
         probes.push({ config, deadlineMs });
       },
@@ -600,8 +603,19 @@ describe("daemon query API", () => {
       expect(probes).toEqual([
         { config: knowledgeConfiguration.connection, deadlineMs: 1_500 },
       ]);
-      // The probe runs at request time: a second request probes again.
-      await harness.get("/api/status");
+      // Within the TTL the cached outcome is reused: no new probe.
+      nowMs += 30_000;
+      const second = await harness.get("/api/status");
+      expect(second.body.status).toMatchObject({
+        knowledge: { provider: "surrealdb", startup: "connected", live: "connected" },
+      });
+      expect(probes).toHaveLength(1);
+      // Past the TTL the next request probes again.
+      nowMs += 40_000;
+      const third = await harness.get("/api/status");
+      expect(third.body.status).toMatchObject({
+        knowledge: { provider: "surrealdb", startup: "connected", live: "connected" },
+      });
       expect(probes).toHaveLength(2);
     } finally {
       await harness.stop();
@@ -660,15 +674,20 @@ describe("daemon query API", () => {
     }
   });
 
-  test("runtime status live probe observes recovery on the next request", async () => {
+  test("runtime status live probe observes recovery within the probe TTL", async () => {
     let healthy = false;
+    let probeCalls = 0;
+    let nowMs = 1_000_000;
     const harness = await startDaemon({
       agentKnowledgeConfiguration: knowledgeConfiguration,
       connectAgentKnowledge: async () => ({
         store: {} as AgentKnowledgeStore,
         close: async () => {},
       }),
+      agentKnowledgeProbeNow: () => nowMs,
+      agentKnowledgeProbeTtlMs: 1_000,
       probeAgentKnowledge: async () => {
+        probeCalls += 1;
         if (!healthy) throw new Error("store unreachable");
       },
     });
@@ -677,17 +696,74 @@ describe("daemon query API", () => {
       expect(first.body.status).toMatchObject({
         knowledge: { startup: "connected", live: "unavailable" },
       });
+      expect(probeCalls).toBe(1);
       healthy = true;
+      // The failed outcome is cached too: within the TTL a request reports it
+      // without re-probing, so recovery is not observed instantly.
+      const cached = await harness.get("/api/status");
+      expect(cached.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "unavailable" },
+      });
+      expect(probeCalls).toBe(1);
+      // Past the TTL the next request probes on a fresh connection and
+      // observes recovery.
+      nowMs += 2_000;
       const second = await harness.get("/api/status");
       expect(second.body.status).toMatchObject({
         knowledge: { startup: "connected", live: "connected" },
       });
+      expect(probeCalls).toBe(2);
     } finally {
       await harness.stop();
     }
   });
 
-  test("concurrent runtime status requests each get a bounded live probe", async () => {
+  test("runtime status live probe observes degradation within the probe TTL", async () => {
+    let healthy = true;
+    let probeCalls = 0;
+    let nowMs = 1_000_000;
+    const harness = await startDaemon({
+      agentKnowledgeConfiguration: knowledgeConfiguration,
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
+      agentKnowledgeProbeNow: () => nowMs,
+      agentKnowledgeProbeTtlMs: 1_000,
+      probeAgentKnowledge: async () => {
+        probeCalls += 1;
+        if (!healthy) throw new Error("store unreachable");
+      },
+    });
+    try {
+      const first = await harness.get("/api/status");
+      expect(first.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "connected" },
+      });
+      expect(probeCalls).toBe(1);
+      healthy = false;
+      // The connected outcome is cached too: within the TTL a request still
+      // reports it without re-probing, so degradation is not observed
+      // instantly.
+      const cached = await harness.get("/api/status");
+      expect(cached.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "connected" },
+      });
+      expect(probeCalls).toBe(1);
+      // Past the TTL the next request probes on a fresh connection and
+      // observes the store no longer answering.
+      nowMs += 2_000;
+      const second = await harness.get("/api/status");
+      expect(second.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "unavailable" },
+      });
+      expect(probeCalls).toBe(2);
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  test("concurrent runtime status requests share a single bounded live probe", async () => {
     let probeCalls = 0;
     const harness = await startDaemon({
       agentKnowledgeConfiguration: knowledgeConfiguration,
@@ -715,8 +791,9 @@ describe("daemon query API", () => {
           knowledge: { startup: "connected", live: "unavailable" },
         });
       }
-      // Every request runs its own throwaway probe; all stay bounded.
-      expect(probeCalls).toBe(3);
+      // Single-flight: the concurrent requests share one probe; all stay
+      // bounded by its deadline.
+      expect(probeCalls).toBe(1);
       expect(Date.now() - started).toBeLessThan(2_500);
     } finally {
       await harness.stop();
