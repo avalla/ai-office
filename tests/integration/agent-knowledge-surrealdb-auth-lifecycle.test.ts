@@ -365,4 +365,3 @@ it("probe observes recovery on a fresh connection", async () => {
     fake.stop();
   }
 });
-
