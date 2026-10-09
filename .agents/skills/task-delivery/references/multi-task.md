@@ -4,14 +4,14 @@ Applies when the selection has more than one task. Each task keeps its own branc
 
 ## 1. Questions in the summary
 
-Ask both in the same summary as the go-ahead, with a recommendation:
+Ask both in the same summary as the go-ahead:
 
-- Clarify every task before development starts? (default: yes)
-- Where the project allows stacked work, stack each task on the one before it? (default: proposed)
+- Clarify every task before development starts?
+- Where the project allows stacked work, stack each task on the one before it? (proposed by default; an unanswered offer declines it)
 
 ## 2. Clarify first
 
-Take the selected tasks one at a time, in the approved order, before any development branch is created or any code is written.
+Clarifying first keeps development from stopping for questions. When the authorizer chooses it, take the selected tasks one at a time, in the approved order, before any development branch is created or any code is written.
 
 - Read the task with its requirements and acceptance criteria.
 - Ask together every question whose answer would change what is built.
@@ -34,7 +34,7 @@ Once every selected task is clarified and its answers are recorded, run the depe
 
 ## 4. Run-wide stacking
 
-Proposed by default where the project allows stacked work: each task's branch starts from the branch of the task before it while that task is unmerged, and from the updated integration branch once it is merged. The summary lists every task's base with and without run-wide stacking, and says that each stacked task carries the unmerged commits of the tasks beneath it.
+Proposed by default where the project allows stacked work: each task's branch starts from the branch of the task before it while that task is unmerged, and from the updated integration branch once it is merged, so later tasks build on earlier ones without waiting for a merge. The summary lists every task's base with and without run-wide stacking, and says that each stacked task carries the unmerged commits of the tasks beneath it.
 
 - An answer that accepts the stacking offer approves these Git branch dependencies for the run.
 - A go-ahead that does not answer the stacking offer declines it; the plan then uses the bases without run-wide stacking.

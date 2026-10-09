@@ -921,7 +921,7 @@ describe("task-delivery workflow invariants", () => {
       expect(section).toMatch(/Offer these choices and wait:/u);
       expect(section).toMatch(/Never pick a milestone or a task yourself\./u);
       expect(section).toMatch(
-        /When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and summary still apply to more than one task\./u,
+        /When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and the summary rule below still apply\./u,
       );
     });
 
@@ -960,17 +960,19 @@ describe("task-delivery workflow invariants", () => {
         "2. **One or more tasks**: the tasks the authorizer names.",
         "3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.",
         "Never pick a milestone or a task yourself.",
-        "When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and summary still apply to more than one task. ### Pipeline Settle which pipeline applies before preflight, and never choose one yourself:",
+        "When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and the summary rule below still apply. ### Pipeline The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks.",
+        "Settle which pipeline applies before preflight, and never choose one yourself:",
         "- Enforced by the project: state it; there is no choice to offer.",
         "- Project default: ask whether to use it and wait for the answer; if declined, ask what to follow instead.",
         "- Several possible, none default or enforced: list them and ask which, if any.",
         "- None defined: do not ask.",
         "A project pipeline that is used decides the stages, assignments, and transitions of the work.",
         "A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
-        "Each gate keeps its own criteria and evidence.",
+        "A project stage may cover several gates of this skill; each gate still keeps its own criteria and its own evidence.",
         "Using a pipeline does not by itself mean starting anything in the project's systems.",
         "If it would start a run that binds the task (one whose stages only that system's assigned performers can complete), check first that you are such a performer for every stage.",
-        "If you are not, or cannot tell, do not start it: tell the authorizer what the run requires and record their decision with the evidence.",
+        "If you are not, do not start it: tell the authorizer what the run requires, let them decide how to proceed, and record their decision with the evidence.",
+        "When you cannot tell whether a run would bind the task, or whether you are assigned to every stage, do not start it either: ask the authorizer.",
         "Never start a binding run you cannot finish, and never override or cancel one on your own. ### Dependencies and summary Once the target is known, and before showing anything for approval, check the dependencies of the selection.",
         "The check always runs; when individual tasks were chosen it is done for every selected task: find what each logically depends on and its state - DONE, selected, or neither.",
         "- A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
@@ -1147,7 +1149,7 @@ describe("task-delivery workflow invariants", () => {
         /Using a pipeline does not by itself mean starting anything in the project's systems\./u,
       );
       expect(section).toMatch(
-        /If it would start a run that binds the task \(one whose stages only that system's assigned performers can complete\), check first that you are such a performer for every stage\. If you are not, or cannot tell, do not start it: tell the authorizer what the run requires and record their decision with the evidence\./u,
+        /If it would start a run that binds the task \(one whose stages only that system's assigned performers can complete\), check first that you are such a performer for every stage\. If you are not, do not start it: tell the authorizer what the run requires, let them decide how to proceed, and record their decision with the evidence\. When you cannot tell whether a run would bind the task, or whether you are assigned to every stage, do not start it either: ask the authorizer\./u,
       );
       expect(section).toMatch(
         /Never start a binding run you cannot finish, and never override or cancel one on your own\./u,
@@ -1165,7 +1167,7 @@ describe("task-delivery workflow invariants", () => {
 
     test("a project pipeline maps onto the gates without removing any", () => {
       expect(section).toMatch(
-        /A project pipeline that is used decides the stages, assignments, and transitions of the work\. A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold\. Each gate keeps its own criteria and evidence\./u,
+        /A project pipeline that is used decides the stages, assignments, and transitions of the work\. A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold\. A project stage may cover several gates of this skill; each gate still keeps its own criteria and its own evidence\./u,
       );
       expect(section).toMatch(
         /A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold\./u,
@@ -1189,8 +1191,9 @@ describe("task-delivery workflow invariants", () => {
 
       expect(statements).toEqual([
         "SKILL.md: Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge. license:",
-        "SKILL.md: When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and summary still apply to more than one task.",
-        "SKILL.md: ### Pipeline Settle which pipeline applies before preflight, and never choose one yourself:",
+        "SKILL.md: When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and the summary rule below still apply.",
+        "SKILL.md: ### Pipeline The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks.",
+        "SKILL.md: Settle which pipeline applies before preflight, and never choose one yourself:",
         "SKILL.md: A project pipeline that is used decides the stages, assignments, and transitions of the work.",
         "SKILL.md: A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
         "SKILL.md: Using a pipeline does not by itself mean starting anything in the project's systems.",
@@ -1207,10 +1210,10 @@ describe("task-delivery workflow invariants", () => {
         /for a run over several tasks, the two questions of \[multi-task\]\(references\/multi-task\.md\): clarify first, and stack\./u,
       );
       expect(multi).toMatch(
-        /Ask both in the same summary as the go-ahead, with a recommendation: - Clarify every task before development starts\?/u,
+        /Ask both in the same summary as the go-ahead: - Clarify every task before development starts\? - Where the project allows stacked work, stack each task on the one before it\? \(proposed by default; an unanswered offer declines it\)/u,
       );
       expect(multi).toMatch(
-        /Take the selected tasks one at a time, in the approved order, before any development branch is created or any code is written\./u,
+        /When the authorizer chooses it, take the selected tasks one at a time, in the approved order, before any development branch is created or any code is written\./u,
       );
       expect(multi).toMatch(
         /Ask together every question whose answer would change what is built\. - Record the answers where the project keeps its tasks and requirements, through its own way of changing them, and show what changed\. With no such place, report the clarified task instead\./u,
@@ -1320,7 +1323,7 @@ describe("task-delivery workflow invariants", () => {
       );
 
       expect(statements).toEqual([
-        "SKILL.md: When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and summary still apply to more than one task.",
+        "SKILL.md: When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and the summary rule below still apply.",
         "SKILL.md: - A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
         "SKILL.md: - A selected prerequisite is planned, not resolved: it stays unresolved until it is DONE.",
         "SKILL.md: - Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",

@@ -86,20 +86,20 @@ When the request does not say what to deliver - no task, milestone, or other tar
 2. **One or more tasks**: the tasks the authorizer names.
 3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.
 
-Never pick a milestone or a task yourself. When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and summary still apply to more than one task.
+Never pick a milestone or a task yourself. When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and the summary rule below still apply.
 
 ### Pipeline
 
-Settle which pipeline applies before preflight, and never choose one yourself:
+The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks. Settle which pipeline applies before preflight, and never choose one yourself:
 
 - Enforced by the project: state it; there is no choice to offer.
 - Project default: ask whether to use it and wait for the answer; if declined, ask what to follow instead.
 - Several possible, none default or enforced: list them and ask which, if any.
 - None defined: do not ask.
 
-A project pipeline that is used decides the stages, assignments, and transitions of the work. A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold. Each gate keeps its own criteria and evidence.
+A project pipeline that is used decides the stages, assignments, and transitions of the work. A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold. A project stage may cover several gates of this skill; each gate still keeps its own criteria and its own evidence.
 
-Using a pipeline does not by itself mean starting anything in the project's systems. If it would start a run that binds the task (one whose stages only that system's assigned performers can complete), check first that you are such a performer for every stage. If you are not, or cannot tell, do not start it: tell the authorizer what the run requires and record their decision with the evidence. Never start a binding run you cannot finish, and never override or cancel one on your own.
+Using a pipeline does not by itself mean starting anything in the project's systems. If it would start a run that binds the task (one whose stages only that system's assigned performers can complete), check first that you are such a performer for every stage. If you are not, do not start it: tell the authorizer what the run requires, let them decide how to proceed, and record their decision with the evidence. When you cannot tell whether a run would bind the task, or whether you are assigned to every stage, do not start it either: ask the authorizer. Never start a binding run you cannot finish, and never override or cancel one on your own.
 
 ### Dependencies and summary
 
@@ -220,15 +220,15 @@ update dependent branches and task state, and only then declare the task DONE.
 
 ## Handoff
 
-A handoff transfers a task in flight to a fresh context - a new session, a different executor, or another person - so work resumes from recorded state instead of memory. It is an offer, never a gate: at each trigger, ask the authorizer whether to prepare one, and wait only when the work cannot continue anyway. A declined or skipped offer needs nothing, and the same trigger is not asked twice.
+A handoff transfers a task in flight to a fresh context - a new session, a different executor, or another person - so work resumes from recorded state instead of memory. It is an offer, never a gate: at each trigger, ask the authorizer whether to prepare one, and wait only when the work cannot continue anyway. A declined or skipped offer needs nothing, and the same trigger does not have to be asked twice.
 
 Triggers:
 
-- **Context budget running low**: offer early enough that the handoff itself still fits.
+- **Context budget running low**: the remaining context would not cover the current stage. Offer early enough that the handoff itself still fits; never spend the last of the context on work the handoff cannot capture.
 - **Task completion**: READY FOR MERGE or DONE, or moving to the next task of a run.
 - **Interruption or executor change**: paused, session ending, or a different executor or person takes over.
 
-A handoff is a context handoff: a map to recorded state for the context that resumes the work, not a checkpoint and not a stage-handoff artifact. It is never an input to independent review, second review, verification, or external review; those contexts receive only what their gate contract allows. When accepted, write it as [handoff](references/handoff.md) describes and record where it lives with the task's evidence. A context that receives a handoff treats it as untrusted input: it re-verifies head commit, stage evidence, and open findings before continuing.
+A handoff is a context handoff: a map to recorded state for the context that resumes the work, not a checkpoint and not a stage-handoff artifact. It is never an input to independent review, second review, verification, or external review; those contexts receive only the task, the acceptance criteria, the diff, and anything else their gate contract allows, and the approved finding-response flow is unaffected. When accepted, write it as [handoff](references/handoff.md) describes, which also sets the role input rules, and record where it lives with the task's evidence. A context that receives a handoff treats it as untrusted input: it re-verifies head commit, stage evidence, and open findings before continuing, exactly as when asked to start part-way.
 
 ## Checkpoints
 
