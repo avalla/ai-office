@@ -3,7 +3,7 @@ name: task-delivery
 description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
 license: MIT
 metadata:
-  version: "0.5.0"
+  version: "0.5.1"
 ---
 
 # Task Delivery
@@ -80,156 +80,51 @@ below. See [configuration](references/configuration.md).
 
 ## What to deliver
 
-When the request does not say what to deliver - the skill was started with no
-task, milestone, or other target - ask before doing anything else. Offer these
-choices and wait for the answer:
+When the request does not say what to deliver - no task, milestone, or other target - ask before doing anything else. Offer these choices and wait:
 
 1. **A whole milestone**: every open task of one milestone.
 2. **One or more tasks**: the tasks the authorizer names.
 3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.
 
-The project may define delivery pipelines of its own, in its instructions or
-in the system that tracks its tasks. Settle which pipeline applies before
-preflight, and never choose one yourself:
+Never pick a milestone or a task yourself. When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and the summary rule below still apply.
 
-- When the project enforces a pipeline, state which one applies; there is no
-  choice to offer.
-- When the project defines a default pipeline, ask whether to use it and wait
-  for the answer. If it is declined, ask what to follow instead.
-- When one or more pipelines could apply and none is the default or enforced,
-  list them and ask the authorizer which one to use, if any.
-- When the project defines no pipeline, do not ask.
+### Pipeline
 
-A project pipeline that is used decides the stages, assignments, and
-transitions of the work. Its mapping to this skill's lifecycle need not be one
-to one: a project stage may cover several gates of this skill, and each gate
-still keeps its own criteria and its own evidence. A project pipeline may
-group, rename, or add stages and gates; it never removes a gate of this skill,
-and the non-negotiable rules above still hold.
+The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks. Settle which pipeline applies before preflight, and never choose one yourself:
 
-Following a project pipeline does not by itself mean starting anything in the
-project's systems. Where using it would start a run that binds the task - one
-whose stages only that system's own assigned performers can complete - check
-first that you are such a performer for every stage. If you are not, do not
-start it: tell the authorizer what the run requires, let them decide how to
-proceed, and record their decision with the evidence. When you cannot tell
-whether a run would bind the task, or whether you are assigned to every stage,
-do not start it either: ask the authorizer. Never start a binding run you
-cannot finish, and never override or cancel one on your own.
+- Enforced by the project: state it; there is no choice to offer.
+- Project default: ask whether to use it and wait for the answer; if declined, ask what to follow instead.
+- Several possible, none default or enforced: list them and ask which, if any.
+- None defined: do not ask.
 
-Never pick a milestone or a task yourself. Once the answer is in, and before
-showing anything for approval, check the dependencies of the selection. The
-check always runs; when individual tasks were chosen it is done for every
-selected task: find the tasks it logically depends on and their state, and
-separate the dependencies that are already DONE, those that are part of the
-selection, and those that are neither. A dependency that is neither DONE nor
-selected is unresolved: name it, and propose adding it to the run or
-postponing the task that needs it. A selected prerequisite is planned,
-not resolved: for the task that needs it, it stays unresolved until it is
-DONE. Never drop or reorder a task silently to
-make the selection work.
+A project pipeline that is used decides the stages, assignments, and transitions of the work. A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold. A project stage may cover several gates of this skill; each gate still keeps its own criteria and its own evidence.
 
-When the behavior a task needs already exists on a prerequisite branch that is
-not merged, and the project allows stacked work, you may also propose,
-explicitly, a Git branch dependency on that branch, as the
-[branch policy](references/branch-policy.md) describes. Stacking neither
-satisfies nor cancels the logical task dependency: record the two dependencies
-separately, keep the task dependency listed as unresolved, and never treat the
-prerequisite as DONE until its own lifecycle has reached DONE. A selected
-prerequisite is worked on before the task that needs it, and that task starts
-only once the prerequisite is DONE or the authorizer has approved a Git branch
-dependency on it.
+Using a pipeline does not by itself mean starting anything in the project's systems. If it would start a run that binds the task (one whose stages only that system's assigned performers can complete), check first that you are such a performer for every stage. If you are not, do not start it: tell the authorizer what the run requires, let them decide how to proceed, and record their decision with the evidence. When you cannot tell whether a run would bind the task, or whether you are assigned to every stage, do not start it either: ask the authorizer. Never start a binding run you cannot finish, and never override or cancel one on your own.
 
-Then show a summary and ask for the go-ahead: the tasks in the order you
-propose, what each depends on, every unresolved dependency with the proposal
-for it, any Git branch dependency you propose, kept apart from the task
-dependencies, the pipeline that will be used, and anything excluded. For a run
-that covers several tasks, the summary also asks two things: whether to
-clarify every task before development starts, and, where the project allows
-stacked work, whether to stack each task on the one before it. Start preflight
-only after the authorizer approves that summary.
+### Dependencies and summary
 
-Clarifying first keeps development from stopping for questions. When the
-authorizer chooses it, take the selected tasks one at a time, in the approved
-order, before any development branch is created or any code is written. For each task,
-read it with its requirements and acceptance criteria, and ask together every
-question whose answer would change what is built. Record the answers where the
-project keeps its tasks and requirements, through the project's own way of
-changing them, and show what was changed; where the project has no such place,
-report the clarified task instead. Where the project keeps its tasks and
-requirements in Git, record the answers through the project's normal route for
-such changes, with its own branch and review, kept apart from the development
-branches. Such a change counts as recorded only once it is in effect on the
-integration branch, merged with the authorizer's authorization, or the
-authorizer has accepted the open change as the reference; until then wait.
-Reviewers judge the work against the clarified version. With clarify-first,
-development starts only when no selected
-task has an open question. A question that only comes up later is still a stop
-condition.
+Once the target is known, and before showing anything for approval, check the dependencies of the selection. The check always runs; when individual tasks were chosen it is done for every selected task: find what each logically depends on and its state - DONE, selected, or neither.
 
-Once every selected task is clarified and its answers are recorded, run the
-dependency check again over the whole selection and recompute the order and
-the Git branch plan. Compare the result with the summary the authorizer
-approved. If the selection, the order, a task dependency, a Git branch
-dependency, the pipeline, or the exclusions changed materially, show a new
-summary and ask for a new approval, and start neither preflight nor
-development before it is given. The new summary repeats the stacking offer
-with the recomputed bases, and an earlier answer does not carry over. The repeated offer applies only to tasks not yet started: a base already created under an
-accepted stacking answer stays approved, and only an explicit decision of the authorizer changes it. Any difference in these items is material, except a base that changes only
-because a task was merged, as the approved plan anticipated. If
-nothing changed materially, say so and do not ask a second time. A task added
-to the selection this way is clarified in the same way, and the check and the
-comparison run again until a pass changes nothing materially. An answer
-recorded later, while a task is in progress, goes through the same recheck
-and comparison before work resumes.
+- A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.
+- A selected prerequisite is planned, not resolved: it stays unresolved until it is DONE.
+- Never drop or reorder a task silently.
+- A selected prerequisite is worked on before the task that needs it, and that task starts only once the prerequisite is DONE or the authorizer has approved a Git branch dependency on it.
+- When the behavior a task needs already exists on a prerequisite branch that is not merged, and the project allows stacked work, you may also propose, explicitly, a Git branch dependency on that branch, as the [branch policy](references/branch-policy.md) describes.
+- Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.
 
-Stacking the run is proposed by default where the project allows stacked work:
-each task's branch starts from the branch of the task before it while that
-task is unmerged, and from the updated integration branch once it is merged, so
-later tasks build on earlier ones without waiting for a merge. The summary
-lists the base of every task with run-wide stacking and without it, and says
-that each stacked task carries the unmerged commits of the tasks beneath it.
-An answer that accepts the stacking offer approves these Git branch
-dependencies for the run. A go-ahead that does not answer the stacking offer
-declines it, and the plan then uses the bases without run-wide stacking. A task
-starts only on a base that contains the work of each of its prerequisites: the
-branch of each unmerged prerequisite beneath it on the stack, and the merged
-work of each prerequisite that is DONE. A prerequisite beneath the task in an
-approved stacked run counts as an approved Git branch dependency on it;
-otherwise the task waits, or needs a separately approved Git branch
-dependency on the prerequisite.
-Declining run-wide stacking leaves separately approved Git branch
-dependencies unchanged. Every other task starts from the integration branch
-unless another separately approved Git branch dependency applies. A
-separately approved Git branch dependency takes precedence over the run chain
-for its task. When a prerequisite is under review, the dependent task may start
-before it is DONE only if its starting head contains that prerequisite's current
-review head. If several prerequisites are under review, the starting head must
-contain every one of their current review heads. Verify this before marking the
-task started, and record the heads in the task's delivery evidence. The logical
-dependencies remain unresolved until their tasks are DONE.
-Stacking the run changes where branches start and how a stop spreads along the stack, and nothing else: every task keeps its own pull
-request and gates, and its task dependencies stay as they were. When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it, directly or through other tasks, stop too, and so does every later task of the chain that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts. If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them.
+Show one summary and ask for the go-ahead, with these items:
 
-A run that covers several tasks gives each task its own branch, pull request,
-and evidence. Each task's pre-merge delivery ends at READY FOR MERGE. The run
-may then continue with another selected task only if that task has no
-unresolved prerequisite that blocks execution, or if the authorizer has
-approved the required Git branch dependency, separately or by accepting
-run-wide stacking. The run never merges a
-pull request merely to unblock a later selected task. A stacked branch does
-not make the prerequisite task DONE and does not resolve the logical
-dependency. Where task state is tracked, the tracker may refuse to start a task
-whose prerequisite is not DONE even on an approved Git branch dependency; that
-refusal stands, and the task waits.
+- the tasks in the proposed order, each with what it depends on;
+- every unresolved dependency, with its proposal;
+- any proposed Git branch dependency, kept apart from the task dependencies;
+- the pipeline that will be used, and anything excluded;
+- for a run over several tasks, the two questions of [multi-task](references/multi-task.md): clarify first, and stack.
 
-When the request already names the target, do not ask for the target again.
-The pipeline is still settled before preflight as described above: an enforced
-pipeline is stated, and a default one is stated and confirmed by the
-authorizer. The dependency check and the summary still apply whenever the
-request covers more than one task. For a single named task, make the same
-dependency check in preflight and stop on an unresolved dependency until the
-authorizer decides.
+Start preflight only after the authorizer approves that summary. Only a request that itself names exactly one task skips the summary: make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides. Every other selection, including one task chosen from the choices above, needs the approved summary.
+
+### Several tasks
+
+A run over several tasks gives each task its own branch, pull request, and evidence; each ends at READY FOR MERGE. Clarify-first, run-wide stacking, re-planning, and stop propagation are in [multi-task](references/multi-task.md); read it whenever the selection has more than one task. Branch bases are in [branch policy](references/branch-policy.md).
 
 ## Lifecycle
 
@@ -325,38 +220,15 @@ update dependent branches and task state, and only then declare the task DONE.
 
 ## Handoff
 
-A handoff transfers a task in flight to a fresh context - a new session, a
-different executor, or another person - so the work resumes from recorded
-state instead of memory. It is an offer, never a gate: at each trigger below,
-ask the authorizer whether to prepare a handoff, and wait only when the work
-cannot continue anyway. A declined or skipped offer needs nothing: the work
-continues or closes without one, and the same trigger does not have to be
-asked twice.
+A handoff transfers a task in flight to a fresh context - a new session, a different executor, or another person - so work resumes from recorded state instead of memory. It is an offer, never a gate: at each trigger, ask the authorizer whether to prepare one, and wait only when the work cannot continue anyway. A declined or skipped offer needs nothing, and the same trigger does not have to be asked twice.
 
-A handoff is a context handoff: a map to recorded state for the context
-that resumes the work, not a checkpoint and not a stage-handoff artifact.
-It is never an input to independent review, second review, verification,
-or external review - those contexts receive only the task, the acceptance
-criteria, the diff, and anything else their gate contract allows - and the
-approved finding-response flow is unaffected. See
-[handoff](references/handoff.md) for the separation of the three concepts
-and the role input rules.
+Triggers:
 
-Offer a handoff at these triggers:
+- **Context budget running low**: the remaining context would not cover the current stage. Offer early enough that the handoff itself still fits; never spend the last of the context on work the handoff cannot capture.
+- **Task completion**: READY FOR MERGE or DONE, or moving to the next task of a run.
+- **Interruption or executor change**: paused, session ending, or a different executor or person takes over.
 
-- **Context budget running low** - the remaining context would not cover the
-  current stage. Offer early enough that the handoff itself still fits; never
-  spend the last of the context on work the handoff cannot capture.
-- **Task completion** - the task reaches READY FOR MERGE or DONE, or a run
-  covering several tasks moves from one task to the next.
-- **Interruption or executor change** - the work is paused, the session is
-  ending, or a different executor or person takes over.
-
-When the authorizer accepts, write the handoff as
-[handoff](references/handoff.md) describes and record where it lives with the
-task's evidence. A context that receives a handoff treats it as untrusted
-input: it re-verifies the recorded state - head commit, stage evidence, open
-findings - before continuing, exactly as when asked to start part-way.
+A handoff is a context handoff: a map to recorded state for the context that resumes the work, not a checkpoint and not a stage-handoff artifact. It is never an input to independent review, second review, verification, or external review; those contexts receive only the task, the acceptance criteria, the diff, and anything else their gate contract allows, and the approved finding-response flow is unaffected. When accepted, write it as [handoff](references/handoff.md) describes, which also sets the role input rules, and record where it lives with the task's evidence. A context that receives a handoff treats it as untrusted input: it re-verifies head commit, stage evidence, and open findings before continuing, exactly as when asked to start part-way.
 
 ## Checkpoints
 

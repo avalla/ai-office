@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
   cpSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -170,12 +171,26 @@ describe("skill package validation", () => {
       rmSync(join(skillRoot, ...requiredFile.split("/")));
 
       expect(validateSkillPackage(skillRoot)).toEqual(
-        expect.arrayContaining([
-          `Required file is missing: ${requiredFile}`,
-        ]),
+        expect.arrayContaining([`Required file is missing: ${requiredFile}`]),
       );
     },
   );
+
+  test("reports an invariant file that is not a regular file instead of throwing", () => {
+    const { skillRoot } = repositoryCopy();
+    const owner = join(skillRoot, "references", "multi-task.md");
+    rmSync(owner);
+    mkdirSync(owner);
+
+    const errors = validateSkillPackage(skillRoot);
+
+    expect(errors).toContain(
+      "Required file is missing: references/multi-task.md",
+    );
+    expect(errors).toContain(
+      "references/multi-task.md is missing required content: policy:clarify-before-development",
+    );
+  });
 
   test("rejects links that are broken or leave the skill directory", () => {
     const { skillRoot } = repositoryCopy();
@@ -667,10 +682,7 @@ describe("task-delivery workflow invariants", () => {
       "policy:checkpoint-not-a-review-input",
       /it never reaches independent\s+review, second review, verification, or external review/u,
     ],
-    [
-      "policy:checkpoint-immutable",
-      /A published checkpoint\s+is immutable/u,
-    ],
+    ["policy:checkpoint-immutable", /A published checkpoint\s+is immutable/u],
     [
       "policy:checkpoint-untrusted-resume",
       "re-validates the recorded head commit and working tree",
@@ -689,6 +701,24 @@ describe("task-delivery workflow invariants", () => {
     ],
   ];
 
+  test("the contract pins the checkpoint and the multi-task rules together", () => {
+    expect(contract.requiredFiles).toEqual(
+      expect.arrayContaining([
+        "references/checkpoints.md",
+        "references/multi-task.md",
+      ]),
+    );
+    const ids = contract.invariants.map((invariant) => invariant.id);
+    expect(
+      ids.filter((id) => id.startsWith("policy:checkpoint-")),
+    ).toHaveLength(9);
+    expect(
+      contract.invariants.filter(
+        (invariant) => invariant.file === "references/multi-task.md",
+      ),
+    ).toHaveLength(16);
+  });
+
   test("every contract invariant has a removal case", () => {
     expect(removals.map(([id]) => id).sort()).toEqual(
       contract.invariants.map((invariant) => invariant.id).sort(),
@@ -697,12 +727,13 @@ describe("task-delivery workflow invariants", () => {
 
   test.each(removals)("requires %s", (id, removed) => {
     const { skillRoot } = repositoryCopy();
-    rewrite(join(skillRoot, "SKILL.md"), (source) =>
-      source.replace(removed, ""),
-    );
+    const file =
+      contract.invariants.find((invariant) => invariant.id === id)?.file ??
+      "SKILL.md";
+    rewrite(join(skillRoot, file), (source) => source.replace(removed, ""));
 
     expect(validateSkillPackage(skillRoot)).toContain(
-      `SKILL.md is missing required content: ${id}`,
+      `${file} is missing required content: ${id}`,
     );
   });
 
@@ -871,6 +902,8 @@ describe("task-delivery workflow invariants", () => {
         "utf8",
       ).replace(/\s+/gu, " ");
 
+    const multi = reference("multi-task.md");
+
     const documents: [string, string][] = [
       ["SKILL.md", core],
       ...[
@@ -881,6 +914,7 @@ describe("task-delivery workflow invariants", () => {
         "qa-checklist.md",
         "review-checklist.md",
         "stop-conditions.md",
+        "multi-task.md",
       ].map((name): [string, string] => [name, reference(name)]),
       [
         "pr-template.md",
@@ -901,17 +935,17 @@ describe("task-delivery workflow invariants", () => {
       expect(section).toMatch(/1\. \*\*A whole milestone\*\*/u);
       expect(section).toMatch(/2\. \*\*One or more tasks\*\*/u);
       expect(section).toMatch(/3\. \*\*Some tasks of one milestone\*\*/u);
-      expect(section).toMatch(/wait for the answer/u);
+      expect(section).toMatch(/Offer these choices and wait:/u);
       expect(section).toMatch(/Never pick a milestone or a task yourself\./u);
       expect(section).toMatch(
-        /When the request already names the target, do not ask for the target again\./u,
+        /When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and the summary rule below still apply\./u,
       );
     });
 
     test("dependencies are checked, then summarized, then approved", () => {
       const check = section.indexOf("check the dependencies of the selection");
       const summary = section.indexOf(
-        "Then show a summary and ask for the go-ahead",
+        "Show one summary and ask for the go-ahead",
       );
       const approval = section.indexOf(
         "Start preflight only after the authorizer approves that summary",
@@ -920,8 +954,9 @@ describe("task-delivery workflow invariants", () => {
       expect(summary).toBeGreaterThan(check);
       expect(approval).toBeGreaterThan(summary);
       expect(section).toMatch(
-        /A run that covers several tasks gives each task its own branch, pull request, and evidence\./u,
+        /A run over several tasks gives each task its own branch, pull request, and evidence; each ends at READY FOR MERGE\./u,
       );
+      expect(section).toMatch(/\[multi-task\]\(references\/multi-task\.md\)/u);
     });
 
     // A logical task dependency and a Git branch dependency are independent.
@@ -936,82 +971,40 @@ describe("task-delivery workflow invariants", () => {
         .filter((sentence) => sentence !== "");
 
       expect(sentences).toEqual([
-        "When the request does not say what to deliver - the skill was started with no task, milestone, or other target - ask before doing anything else.",
-        "Offer these choices and wait for the answer:",
+        "When the request does not say what to deliver - no task, milestone, or other target - ask before doing anything else.",
+        "Offer these choices and wait:",
         "1. **A whole milestone**: every open task of one milestone.",
         "2. **One or more tasks**: the tasks the authorizer names.",
         "3. **Some tasks of one milestone**: a milestone, then a selection of its tasks.",
-        "The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks.",
+        "Never pick a milestone or a task yourself.",
+        "When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and the summary rule below still apply. ### Pipeline The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks.",
         "Settle which pipeline applies before preflight, and never choose one yourself:",
-        "- When the project enforces a pipeline, state which one applies; there is no choice to offer.",
-        "- When the project defines a default pipeline, ask whether to use it and wait for the answer.",
-        "If it is declined, ask what to follow instead.",
-        "- When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use, if any.",
-        "- When the project defines no pipeline, do not ask.",
+        "- Enforced by the project: state it; there is no choice to offer.",
+        "- Project default: ask whether to use it and wait for the answer; if declined, ask what to follow instead.",
+        "- Several possible, none default or enforced: list them and ask which, if any.",
+        "- None defined: do not ask.",
         "A project pipeline that is used decides the stages, assignments, and transitions of the work.",
-        "Its mapping to this skill's lifecycle need not be one to one: a project stage may cover several gates of this skill, and each gate still keeps its own criteria and its own evidence.",
         "A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
-        "Following a project pipeline does not by itself mean starting anything in the project's systems.",
-        "Where using it would start a run that binds the task - one whose stages only that system's own assigned performers can complete - check first that you are such a performer for every stage.",
+        "A project stage may cover several gates of this skill; each gate still keeps its own criteria and its own evidence.",
+        "Using a pipeline does not by itself mean starting anything in the project's systems.",
+        "If it would start a run that binds the task (one whose stages only that system's assigned performers can complete), check first that you are such a performer for every stage.",
         "If you are not, do not start it: tell the authorizer what the run requires, let them decide how to proceed, and record their decision with the evidence.",
         "When you cannot tell whether a run would bind the task, or whether you are assigned to every stage, do not start it either: ask the authorizer.",
-        "Never start a binding run you cannot finish, and never override or cancel one on your own.",
-        "Never pick a milestone or a task yourself.",
-        "Once the answer is in, and before showing anything for approval, check the dependencies of the selection.",
-        "The check always runs; when individual tasks were chosen it is done for every selected task: find the tasks it logically depends on and their state, and separate the dependencies that are already DONE, those that are part of the selection, and those that are neither.",
-        "A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
-        "A selected prerequisite is planned, not resolved: for the task that needs it, it stays unresolved until it is DONE.",
-        "Never drop or reorder a task silently to make the selection work.",
-        "When the behavior a task needs already exists on a prerequisite branch that is not merged, and the project allows stacked work, you may also propose, explicitly, a Git branch dependency on that branch, as the [branch policy](references/branch-policy.md) describes.",
-        "Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
-        "A selected prerequisite is worked on before the task that needs it, and that task starts only once the prerequisite is DONE or the authorizer has approved a Git branch dependency on it.",
-        "Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
-        "For a run that covers several tasks, the summary also asks two things: whether to clarify every task before development starts, and, where the project allows stacked work, whether to stack each task on the one before it.",
+        "Never start a binding run you cannot finish, and never override or cancel one on your own. ### Dependencies and summary Once the target is known, and before showing anything for approval, check the dependencies of the selection.",
+        "The check always runs; when individual tasks were chosen it is done for every selected task: find what each logically depends on and its state - DONE, selected, or neither.",
+        "- A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
+        "- A selected prerequisite is planned, not resolved: it stays unresolved until it is DONE.",
+        "- Never drop or reorder a task silently.",
+        "- A selected prerequisite is worked on before the task that needs it, and that task starts only once the prerequisite is DONE or the authorizer has approved a Git branch dependency on it.",
+        "- When the behavior a task needs already exists on a prerequisite branch that is not merged, and the project allows stacked work, you may also propose, explicitly, a Git branch dependency on that branch, as the [branch policy](references/branch-policy.md) describes.",
+        "- Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
+        "Show one summary and ask for the go-ahead, with these items:",
+        "- the tasks in the proposed order, each with what it depends on; - every unresolved dependency, with its proposal; - any proposed Git branch dependency, kept apart from the task dependencies; - the pipeline that will be used, and anything excluded; - for a run over several tasks, the two questions of [multi-task](references/multi-task.md): clarify first, and stack.",
         "Start preflight only after the authorizer approves that summary.",
-        "Clarifying first keeps development from stopping for questions.",
-        "When the authorizer chooses it, take the selected tasks one at a time, in the approved order, before any development branch is created or any code is written.",
-        "For each task, read it with its requirements and acceptance criteria, and ask together every question whose answer would change what is built.",
-        "Record the answers where the project keeps its tasks and requirements, through the project's own way of changing them, and show what was changed; where the project has no such place, report the clarified task instead.",
-        "Where the project keeps its tasks and requirements in Git, record the answers through the project's normal route for such changes, with its own branch and review, kept apart from the development branches.",
-        "Such a change counts as recorded only once it is in effect on the integration branch, merged with the authorizer's authorization, or the authorizer has accepted the open change as the reference; until then wait.",
-        "Reviewers judge the work against the clarified version.",
-        "With clarify-first, development starts only when no selected task has an open question.",
-        "A question that only comes up later is still a stop condition.",
-        "Once every selected task is clarified and its answers are recorded, run the dependency check again over the whole selection and recompute the order and the Git branch plan.",
-        "Compare the result with the summary the authorizer approved.",
-        "If the selection, the order, a task dependency, a Git branch dependency, the pipeline, or the exclusions changed materially, show a new summary and ask for a new approval, and start neither preflight nor development before it is given.",
-        "The new summary repeats the stacking offer with the recomputed bases, and an earlier answer does not carry over.",
-        "The repeated offer applies only to tasks not yet started: a base already created under an accepted stacking answer stays approved, and only an explicit decision of the authorizer changes it.",
-        "Any difference in these items is material, except a base that changes only because a task was merged, as the approved plan anticipated.",
-        "If nothing changed materially, say so and do not ask a second time.",
-        "A task added to the selection this way is clarified in the same way, and the check and the comparison run again until a pass changes nothing materially.",
-        "An answer recorded later, while a task is in progress, goes through the same recheck and comparison before work resumes.",
-        "Stacking the run is proposed by default where the project allows stacked work: each task's branch starts from the branch of the task before it while that task is unmerged, and from the updated integration branch once it is merged, so later tasks build on earlier ones without waiting for a merge.",
-        "The summary lists the base of every task with run-wide stacking and without it, and says that each stacked task carries the unmerged commits of the tasks beneath it.",
-        "An answer that accepts the stacking offer approves these Git branch dependencies for the run.",
-        "A go-ahead that does not answer the stacking offer declines it, and the plan then uses the bases without run-wide stacking.",
-        "A task starts only on a base that contains the work of each of its prerequisites: the branch of each unmerged prerequisite beneath it on the stack, and the merged work of each prerequisite that is DONE.",
-        "A prerequisite beneath the task in an approved stacked run counts as an approved Git branch dependency on it; otherwise the task waits, or needs a separately approved Git branch dependency on the prerequisite.",
-        "Declining run-wide stacking leaves separately approved Git branch dependencies unchanged.",
-        "Every other task starts from the integration branch unless another separately approved Git branch dependency applies.",
-        "A separately approved Git branch dependency takes precedence over the run chain for its task.",
-        "When a prerequisite is under review, the dependent task may start before it is DONE only if its starting head contains that prerequisite's current review head.",
-        "If several prerequisites are under review, the starting head must contain every one of their current review heads.",
-        "Verify this before marking the task started, and record the heads in the task's delivery evidence.",
-        "The logical dependencies remain unresolved until their tasks are DONE.",
-        "Stacking the run changes where branches start and how a stop spreads along the stack, and nothing else: every task keeps its own pull request and gates, and its task dependencies stay as they were.",
-        "When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it, directly or through other tasks, stop too, and so does every later task of the chain that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts.",
-        "If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them.",
-        "A run that covers several tasks gives each task its own branch, pull request, and evidence.",
-        "Each task's pre-merge delivery ends at READY FOR MERGE.",
-        "The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has approved the required Git branch dependency, separately or by accepting run-wide stacking.",
-        "The run never merges a pull request merely to unblock a later selected task.",
-        "A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency.",
-        "Where task state is tracked, the tracker may refuse to start a task whose prerequisite is not DONE even on an approved Git branch dependency; that refusal stands, and the task waits.",
-        "When the request already names the target, do not ask for the target again.",
-        "The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
-        "The dependency check and the summary still apply whenever the request covers more than one task.",
-        "For a single named task, make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
+        "Only a request that itself names exactly one task skips the summary: make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
+        "Every other selection, including one task chosen from the choices above, needs the approved summary. ### Several tasks A run over several tasks gives each task its own branch, pull request, and evidence; each ends at READY FOR MERGE.",
+        "Clarify-first, run-wide stacking, re-planning, and stop propagation are in [multi-task](references/multi-task.md); read it whenever the selection has more than one task.",
+        "Branch bases are in [branch policy](references/branch-policy.md).",
       ]);
     });
 
@@ -1074,6 +1067,7 @@ describe("task-delivery workflow invariants", () => {
           "configuration.md",
           "review-checklist.md",
           "qa-checklist.md",
+          "multi-task.md",
         ].map((name) => raw(["references", name])),
         raw(["assets", "pr-template.md"]),
       ];
@@ -1149,15 +1143,15 @@ describe("task-delivery workflow invariants", () => {
       );
       // One rule per situation: enforced, default, several, none.
       expect(section).toMatch(
-        /- When the project enforces a pipeline, state which one applies; there is no choice to offer\. - When the project defines a default pipeline, ask whether to use it and wait for the answer\. If it is declined, ask what to follow instead\. - When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use, if any\. - When the project defines no pipeline, do not ask\./u,
+        /- Enforced by the project: state it; there is no choice to offer\. - Project default: ask whether to use it and wait for the answer; if declined, ask what to follow instead\. - Several possible, none default or enforced: list them and ask which, if any\. - None defined: do not ask\./u,
       );
       // A named target skips the target question, not the pipeline.
       expect(section).toMatch(
-        /When the request already names the target, do not ask for the target again\. The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer\./u,
+        /do not ask for the target again; the pipeline is still settled/u,
       );
       // The choice is part of what the authorizer approves.
       expect(section).toMatch(
-        /the pipeline that will be used, and anything excluded\./u,
+        /- the pipeline that will be used, and anything excluded;/u,
       );
       // The neutral core names no product for it.
       expect(section).not.toMatch(/office|runtime|daemon/iu);
@@ -1169,14 +1163,10 @@ describe("task-delivery workflow invariants", () => {
     // out afterwards.
     test("a binding pipeline run is never started by an executor who cannot finish it", () => {
       expect(section).toMatch(
-        /Following a project pipeline does not by itself mean starting anything in the project's systems\./u,
+        /Using a pipeline does not by itself mean starting anything in the project's systems\./u,
       );
       expect(section).toMatch(
-        /Where using it would start a run that binds the task - one whose stages only that system's own assigned performers can complete - check first that you are such a performer for every stage\. If you are not, do not start it: tell the authorizer what the run requires, let them decide how to proceed, and record their decision with the evidence\./u,
-      );
-      // In doubt the answer is the same: do not start it, ask.
-      expect(section).toMatch(
-        /When you cannot tell whether a run would bind the task, or whether you are assigned to every stage, do not start it either: ask the authorizer\./u,
+        /If it would start a run that binds the task \(one whose stages only that system's assigned performers can complete\), check first that you are such a performer for every stage\. If you are not, do not start it: tell the authorizer what the run requires, let them decide how to proceed, and record their decision with the evidence\. When you cannot tell whether a run would bind the task, or whether you are assigned to every stage, do not start it either: ask the authorizer\./u,
       );
       expect(section).toMatch(
         /Never start a binding run you cannot finish, and never override or cancel one on your own\./u,
@@ -1194,7 +1184,7 @@ describe("task-delivery workflow invariants", () => {
 
     test("a project pipeline maps onto the gates without removing any", () => {
       expect(section).toMatch(
-        /Its mapping to this skill's lifecycle need not be one to one: a project stage may cover several gates of this skill, and each gate still keeps its own criteria and its own evidence\./u,
+        /A project pipeline that is used decides the stages, assignments, and transitions of the work\. A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold\. A project stage may cover several gates of this skill; each gate still keeps its own criteria and its own evidence\./u,
       );
       expect(section).toMatch(
         /A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold\./u,
@@ -1218,81 +1208,77 @@ describe("task-delivery workflow invariants", () => {
 
       expect(statements).toEqual([
         "SKILL.md: Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge. license:",
-        "SKILL.md: The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks.",
+        "SKILL.md: When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and the summary rule below still apply.",
+        "SKILL.md: ### Pipeline The project may define delivery pipelines of its own, in its instructions or in the system that tracks its tasks.",
         "SKILL.md: Settle which pipeline applies before preflight, and never choose one yourself:",
-        "SKILL.md: - When the project enforces a pipeline, state which one applies; there is no choice to offer.",
-        "SKILL.md: - When the project defines a default pipeline, ask whether to use it and wait for the answer.",
-        "SKILL.md: - When one or more pipelines could apply and none is the default or enforced, list them and ask the authorizer which one to use, if any.",
-        "SKILL.md: - When the project defines no pipeline, do not ask.",
         "SKILL.md: A project pipeline that is used decides the stages, assignments, and transitions of the work.",
         "SKILL.md: A project pipeline may group, rename, or add stages and gates; it never removes a gate of this skill, and the non-negotiable rules above still hold.",
-        "SKILL.md: Following a project pipeline does not by itself mean starting anything in the project's systems.",
-        "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
-        "SKILL.md: If the selection, the order, a task dependency, a Git branch dependency, the pipeline, or the exclusions changed materially, show a new summary and ask for a new approval, and start neither preflight nor development before it is given.",
-        "SKILL.md: The pipeline is still settled before preflight as described above: an enforced pipeline is stated, and a default one is stated and confirmed by the authorizer.",
+        "SKILL.md: Using a pipeline does not by itself mean starting anything in the project's systems.",
+        "SKILL.md: - the tasks in the proposed order, each with what it depends on; - every unresolved dependency, with its proposal; - any proposed Git branch dependency, kept apart from the task dependencies; - the pipeline that will be used, and anything excluded; - for a run over several tasks, the two questions of [multi-task](references/multi-task.md): clarify first, and stack.",
         "configuration.md: A project may bind them to its own role names and to any executor; the pipeline stays the same when the executor changes.",
         "stop-conditions.md: - **Binding run you cannot complete.** Using the project's pipeline would start a run whose stages only the project's own assigned performers can complete, and you are not assigned to every stage needed to complete it - or such a run is already active for the task and you cannot complete it - or you cannot tell whether either is the case.",
+        "multi-task.md: - If the selection, the order, a task dependency, a Git branch dependency, the pipeline, or the exclusions changed materially, show a new summary and ask for a new approval, and start neither preflight nor development before it is given.",
       ]);
     });
 
     test("a run may clarify every task before development starts", () => {
-      const offer = section.indexOf(
-        "whether to clarify every task before development starts",
-      );
-      expect(offer).toBeGreaterThan(
-        section.indexOf("Then show a summary and ask for the go-ahead"),
-      );
-      expect(offer).toBeLessThan(
-        section.indexOf(
-          "Start preflight only after the authorizer approves that summary",
-        ),
-      );
+      // The question is asked in the summary, before the go-ahead.
       expect(section).toMatch(
+        /for a run over several tasks, the two questions of \[multi-task\]\(references\/multi-task\.md\): clarify first, and stack\./u,
+      );
+      expect(multi).toMatch(
+        /Ask both in the same summary as the go-ahead: - Clarify every task before development starts\? - Where the project allows stacked work, stack each task on the one before it\? \(proposed by default; an unanswered offer declines it\)/u,
+      );
+      expect(multi).toMatch(
         /When the authorizer chooses it, take the selected tasks one at a time, in the approved order, before any development branch is created or any code is written\./u,
       );
-      expect(section).toMatch(
-        /ask together every question whose answer would change what is built\. Record the answers where the project keeps its tasks and requirements, through the project's own way of changing them, and show what was changed; where the project has no such place, report the clarified task instead\./u,
+      expect(multi).toMatch(
+        /Ask together every question whose answer would change what is built\. - Record the answers where the project keeps its tasks and requirements, through its own way of changing them, and show what changed\. With no such place, report the clarified task instead\./u,
       );
-      expect(section).toMatch(
+      expect(multi).toMatch(
         /With clarify-first, development starts only when no selected task has an open question\. A question that only comes up later is still a stop condition\./u,
       );
     });
 
     test("the plan is recomputed after clarification and a materially changed plan is approved again", () => {
-      const recompute = section.indexOf(
+      const recompute = multi.indexOf(
         "Once every selected task is clarified and its answers are recorded, run the dependency check again over the whole selection",
       );
       // After the clarification rule, before the stacking rule.
       expect(recompute).toBeGreaterThan(
-        section.indexOf(
+        multi.indexOf(
           "A question that only comes up later is still a stop condition.",
         ),
       );
-      expect(recompute).toBeLessThan(
-        section.indexOf("Stacking the run is proposed by default"),
+      expect(recompute).toBeLessThan(multi.indexOf("## 4. Run-wide stacking"));
+      expect(multi).toMatch(
+        /recompute the order and the Git branch plan\. Compare the result with the approved summary\. - If the selection, the order, a task dependency, a Git branch dependency, the pipeline, or the exclusions changed materially, show a new summary and ask for a new approval, and start neither preflight nor development before it is given\. - Any difference in these items is material, except a base that changes only because a task was merged, as the approved plan anticipated\. - If nothing changed materially, say so and do not ask a second time\./u,
       );
-      expect(section).toMatch(
-        /recompute the order and the Git branch plan\. Compare the result with the summary the authorizer approved\. If the selection, the order, a task dependency, a Git branch dependency, the pipeline, or the exclusions changed materially, show a new summary and ask for a new approval, and start neither preflight nor development before it is given\. The new summary repeats the stacking offer with the recomputed bases, and an earlier answer does not carry over\. The repeated offer applies only to tasks not yet started: a base already created under an accepted stacking answer stays approved, and only an explicit decision of the authorizer changes it\. Any difference in these items is material, except a base that changes only because a task was merged, as the approved plan anticipated\. If nothing changed materially, say so and do not ask a second time\./u,
+      expect(multi).toMatch(
+        /The repeated offer applies only to tasks not yet started: a base already created under an accepted stacking answer stays approved, and only an explicit decision of the authorizer changes it\./u,
       );
       // Task and Git branch dependencies stay two separate things.
-      expect(section).toMatch(/a task dependency, a Git branch dependency/u);
+      expect(multi).toMatch(/a task dependency, a Git branch dependency/u);
     });
 
     test("stacking a run is offered, approved in the summary, and changes only where branches start", () => {
-      expect(section).toMatch(
-        /where the project allows stacked work, whether to stack each task on the one before it\. Start preflight only after the authorizer approves that summary\./u,
+      expect(multi).toMatch(
+        /Proposed by default where the project allows stacked work: each task's branch starts from the branch of the task before it/u,
       );
-      expect(section).toMatch(
-        /Stacking the run is proposed by default where the project allows stacked work: each task's branch starts from the branch of the task before it/u,
+      expect(multi).toMatch(
+        /- An answer that accepts the stacking offer approves these Git branch dependencies for the run\. - A go-ahead that does not answer the stacking offer declines it; the plan then uses the bases without run-wide stacking\. - Declining run-wide stacking leaves separately approved Git branch dependencies unchanged\. Every other task starts from the integration branch unless another separately approved Git branch dependency applies\./u,
       );
-      expect(section).toMatch(
-        /An answer that accepts the stacking offer approves these Git branch dependencies for the run\. A go-ahead that does not answer the stacking offer declines it, and the plan then uses the bases without run-wide stacking\. A task starts only on a base that contains the work of each of its prerequisites: the branch of each unmerged prerequisite beneath it on the stack, and the merged work of each prerequisite that is DONE\. A prerequisite beneath the task in an approved stacked run counts as an approved Git branch dependency on it; otherwise the task waits, or needs a separately approved Git branch dependency on the prerequisite\. Declining run-wide stacking leaves separately approved Git branch dependencies unchanged\. Every other task starts from the integration branch unless another separately approved Git branch dependency applies\./u,
+      expect(multi).toMatch(
+        /- A task starts only on a base that contains the work of each of its prerequisites: the branch of each unmerged prerequisite beneath it on the stack, and the merged work of each prerequisite that is DONE\. A prerequisite beneath the task in an approved stacked run counts as an approved Git branch dependency on it; otherwise the task waits, or needs a separately approved Git branch dependency on the prerequisite\./u,
       );
       // A declined run-wide stack never forces every task onto the
       // integration branch: it would drop a separately approved dependency.
-      expect(section).not.toMatch(/declining it keeps every task/u);
-      expect(section).toMatch(
+      expect(multi).not.toMatch(/declining it keeps every task/u);
+      expect(multi).toMatch(
         /Stacking the run changes where branches start and how a stop spreads along the stack, and nothing else: every task keeps its own pull request and gates, and its task dependencies stay as they were\./u,
+      );
+      expect(multi).toMatch(
+        /When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it, directly or through other tasks, stop too, and so does every later task of the chain that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts\. If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them\./u,
       );
       const branchPolicy = reference("branch-policy.md");
       expect(branchPolicy).toMatch(
@@ -1317,14 +1303,17 @@ describe("task-delivery workflow invariants", () => {
 
     test("a run over dependent tasks stops at READY FOR MERGE and never merges to unblock", () => {
       expect(section).toMatch(
-        /Each task's pre-merge delivery ends at READY FOR MERGE\. The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has approved the required Git branch dependency, separately or by accepting run-wide stacking\. The run never merges a pull request merely to unblock a later selected task\. A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency\./u,
+        /A run over several tasks gives each task its own branch, pull request, and evidence; each ends at READY FOR MERGE\./u,
       );
-      expect(section).not.toMatch(
+      expect(multi).toMatch(
+        /The run may continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has approved the required Git branch dependency, separately or by accepting run-wide stacking\. The run never merges a pull request merely to unblock a later selected task\. A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency\./u,
+      );
+      expect(multi).not.toMatch(
         /(?:delivers?|deliver)\s+(?:them|each task|the tasks)\s+one\s+at\s+a\s+time|whole lifecycle/iu,
       );
       // The tracker stays authoritative: an approved stack does not let a
       // task start when the tracker refuses it.
-      expect(section).toMatch(
+      expect(multi).toMatch(
         /Where task state is tracked, the tracker may refuse to start a task whose prerequisite is not DONE even on an approved Git branch dependency; that refusal stands, and the task waits\./u,
       );
       expect(core).toMatch(/READY FOR MERGE != DONE/u);
@@ -1351,19 +1340,20 @@ describe("task-delivery workflow invariants", () => {
       );
 
       expect(statements).toEqual([
-        "SKILL.md: A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
-        "SKILL.md: A selected prerequisite is planned, not resolved: for the task that needs it, it stays unresolved until it is DONE.",
-        "SKILL.md: Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
-        "SKILL.md: Then show a summary and ask for the go-ahead: the tasks in the order you propose, what each depends on, every unresolved dependency with the proposal for it, any Git branch dependency you propose, kept apart from the task dependencies, the pipeline that will be used, and anything excluded.",
-        "SKILL.md: The logical dependencies remain unresolved until their tasks are DONE.",
-        "SKILL.md: The run may then continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has approved the required Git branch dependency, separately or by accepting run-wide stacking.",
-        "SKILL.md: A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency.",
-        "SKILL.md: For a single named task, make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
+        "SKILL.md: When the request already names the target, do not ask for the target again; the pipeline is still settled, and the dependency check and the summary rule below still apply.",
+        "SKILL.md: - A dependency that is neither DONE nor selected is unresolved: name it, and propose adding it to the run or postponing the task that needs it.",
+        "SKILL.md: - A selected prerequisite is planned, not resolved: it stays unresolved until it is DONE.",
+        "SKILL.md: - Stacking neither satisfies nor cancels the logical task dependency: record the two dependencies separately, keep the task dependency listed as unresolved, and never treat the prerequisite as DONE until its own lifecycle has reached DONE.",
+        "SKILL.md: - the tasks in the proposed order, each with what it depends on; - every unresolved dependency, with its proposal; - any proposed Git branch dependency, kept apart from the task dependencies; - the pipeline that will be used, and anything excluded; - for a run over several tasks, the two questions of [multi-task](references/multi-task.md): clarify first, and stack.",
+        "SKILL.md: Only a request that itself names exactly one task skips the summary: make the same dependency check in preflight and stop on an unresolved dependency until the authorizer decides.",
         "branch-policy.md: - A satisfied Git dependency does not satisfy a task dependency: being stacked on A's branch does not mean A's task is accepted.",
         "lifecycle.md: A dependency that is not DONE is unresolved: stop until the authorizer decides.",
         "lifecycle.md: Decide the Git base separately, following the [branch policy](branch-policy.md); a stacked base never resolves a task dependency.",
         "stop-conditions.md: - **Unresolved task dependency.** The task logically depends on a task that is not DONE, and the authorizer has not decided how to proceed.",
         "stop-conditions.md: Behavior that is available on a stacked base lets work continue only under an approved Git branch dependency; it never satisfies the task dependency.",
+        "multi-task.md: The run may continue with another selected task only if that task has no unresolved prerequisite that blocks execution, or if the authorizer has approved the required Git branch dependency, separately or by accepting run-wide stacking.",
+        "multi-task.md: A stacked branch does not make the prerequisite task DONE and does not resolve the logical dependency.",
+        "multi-task.md: - The logical dependencies remain unresolved until their tasks are DONE.",
       ]);
     });
 
