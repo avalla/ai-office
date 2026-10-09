@@ -232,6 +232,48 @@ export class SqliteGovernanceRepository implements GovernanceRepository {
     });
   }
 
+  async assignRequirementMilestone(
+    id: string,
+    projectId: string,
+    milestoneId: string,
+    now: Date,
+    event: { id: string; metadata: Record<string, string> },
+  ): Promise<boolean> {
+    // Assign-once: the NULL predicate keeps a milestone from being moved.
+    return this.immediate(() => {
+      const result = this.database
+        .prepare(
+          `UPDATE requirement
+           SET milestone_id=?, updated_at=?
+           WHERE id=? AND project_id=? AND status='proposed'
+             AND milestone_id IS NULL
+             AND EXISTS (
+               SELECT 1 FROM milestone
+               WHERE id=? AND project_id=? AND status<>'cancelled'
+                 AND archived_at IS NULL
+             )`,
+        )
+        .run(
+          milestoneId,
+          now.toISOString(),
+          id,
+          projectId,
+          milestoneId,
+          projectId,
+        );
+      if (result.changes !== 1) return false;
+      this.appendEvent({
+        id: event.id,
+        projectId,
+        eventType: "requirement.updated",
+        aggregateId: id,
+        metadata: event.metadata,
+        occurredAt: now,
+      });
+      return true;
+    });
+  }
+
   async saveAdr(value: AdrRecord): Promise<void> {
     this.database.transaction(() => {
       this.database
@@ -309,6 +351,18 @@ export class SqliteGovernanceRepository implements GovernanceRepository {
         )
         .get(id)?.project_id ?? null
     );
+  }
+
+  async findRequirement(
+    id: string,
+    projectId: string,
+  ): Promise<RequirementRecord | null> {
+    const row = this.database
+      .query<Record<string, unknown>, [string, string]>(
+        "SELECT * FROM requirement WHERE id=? AND project_id=?",
+      )
+      .get(id, projectId);
+    return row === null ? null : this.requirementFromRow(row);
   }
 
   async findSubjectProject(

@@ -944,6 +944,9 @@ export interface ProjectDetail {
  * One task in the dependency graph. Carries only what the graph needs; the
  * task detail remains the owner of everything else.
  */
+export type TaskMilestoneGap =
+  "no_requirement" | "requirement_without_milestone";
+
 export interface TaskGraphNode {
   taskId: string;
   title: string;
@@ -953,6 +956,12 @@ export interface TaskGraphNode {
   assignedAgent: AgentReference | null;
   /** Milestones derived from explicit task→requirement→milestone links. */
   milestoneIds: readonly string[];
+  /**
+   * Why `milestoneIds` is empty, so a surface does not have to guess: the task
+   * has no linked requirement at all, or it has requirements and none of them
+   * has a milestone. `null` when the task belongs to at least one milestone.
+   */
+  milestoneGap: TaskMilestoneGap | null;
   /**
    * Prerequisites whose recorded status is neither `completed` nor
    * `waiting_review` (the `blockingPrerequisites` rule), sorted by id.

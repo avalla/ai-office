@@ -24,6 +24,7 @@ const node = (
   operationalStatus: "not_started",
   assignedAgent: null,
   milestoneIds: [],
+  milestoneGap: "no_requirement",
   unmetPrerequisiteIds: [],
   ready: false,
   waiting: false,
@@ -31,6 +32,10 @@ const node = (
   completionUnblocks: [],
   terminal: isTerminalTaskStatus(recordedStatus),
 });
+const noLinks = {
+  requirementLinkedTaskIds: new Set<string>(),
+  milestoneLinkedTaskIds: new Set<string>(),
+};
 const edge = (dependsOnTaskId: string, taskId: string): TaskGraphEdge => ({
   taskId,
   dependsOnTaskId,
@@ -101,6 +106,52 @@ describe("projectLongestDependencyChain", () => {
   });
 });
 
+describe("projectTaskGraphNodes milestone gap", () => {
+  const state = (taskId: string, milestoneIds: string[] = []) =>
+    ({
+      taskId,
+      title: taskId,
+      priority: 0,
+      recordedStatus: "pending",
+      operationalStatus: "not_started",
+      assignedAgent: null,
+      attentionReasons: [],
+      terminal: false,
+      milestones: milestoneIds.map((milestoneId) => ({
+        milestoneId,
+        title: milestoneId,
+        status: "active",
+      })),
+    }) as unknown as TaskOperationalState;
+
+  test("separates a missing requirement from a requirement without a milestone", () => {
+    const gaps = Object.fromEntries(
+      projectTaskGraphNodes(
+        [
+          state("a", ["m1"]),
+          state("b"),
+          state("c"),
+          state("d", ["m1"]),
+          state("e"),
+        ],
+        [],
+        {
+          requirementLinkedTaskIds: new Set(["c", "d", "e"]),
+          milestoneLinkedTaskIds: new Set(["e"]),
+        },
+      ).map((node) => [node.taskId, node.milestoneGap]),
+    );
+    expect(gaps).toEqual({
+      a: null,
+      b: "no_requirement",
+      c: "requirement_without_milestone",
+      d: null,
+      // Its milestone link exists but could not be resolved: still not "none".
+      e: null,
+    });
+  });
+});
+
 describe("projectTaskGraphNodes prerequisite semantics", () => {
   const state = (
     taskId: string,
@@ -122,6 +173,7 @@ describe("projectTaskGraphNodes prerequisite semantics", () => {
       projectTaskGraphNodes(
         [state("pre", prerequisite), state("dep", "pending")],
         [edge("pre", "dep")],
+        noLinks,
       ).map((n) => [n.taskId, n]),
     );
 
@@ -186,6 +238,7 @@ describe("projectTaskGraphNodes prerequisite semantics", () => {
           state("dep", "pending"),
         ],
         [edge("rev", "dep"), edge("pend", "dep")],
+        noLinks,
       ).map((n) => [n.taskId, n]),
     );
     expect(nodes.get("dep")?.unmetPrerequisiteIds).toEqual(["pend"]);
@@ -198,6 +251,7 @@ describe("projectTaskGraphNodes prerequisite semantics", () => {
       projectTaskGraphNodes(
         [state("pre", "waiting_review"), state("dep", "blocked")],
         [edge("pre", "dep")],
+        noLinks,
       ).map((n) => [n.taskId, n]),
     );
     expect(nodes.get("dep")).toMatchObject({ ready: false, waiting: false });

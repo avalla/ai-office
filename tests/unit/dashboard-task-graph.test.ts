@@ -27,6 +27,7 @@ import {
   toggleMilestoneFilter,
   withGraphStatusOption,
   activeStatusOption,
+  unassignedMilestoneNeighbours,
 } from "../../apps/dashboard/src/lib/task-graph.ts";
 
 function node(
@@ -41,6 +42,7 @@ function node(
     operationalStatus: "not_started",
     assignedAgent: null,
     milestoneIds: [],
+    milestoneGap: "no_requirement",
     unmetPrerequisiteIds: [],
     ready: true,
     waiting: false,
@@ -64,14 +66,20 @@ const graph: TaskGraph = {
       terminal: true,
       ready: false,
     }),
-    node("a", { milestoneIds: ["m1"] }),
+    node("a", { milestoneIds: ["m1"], milestoneGap: null }),
     node("b", {
       ready: false,
       waiting: true,
       unmetPrerequisiteIds: ["a"],
       milestoneIds: ["m1"],
+      milestoneGap: null,
     }),
-    node("c", { ready: false, waiting: true, unmetPrerequisiteIds: ["a"] }),
+    node("c", {
+      ready: false,
+      waiting: true,
+      unmetPrerequisiteIds: ["a"],
+      milestoneGap: "requirement_without_milestone",
+    }),
     node("d", {
       ready: false,
       waiting: true,
@@ -296,7 +304,7 @@ describe("dashboard task graph", () => {
         task.taskId === "b"
           ? { ...task, milestoneIds: ["m1", "m2"] }
           : task.taskId === "c"
-            ? { ...task, milestoneIds: ["m2"] }
+            ? { ...task, milestoneIds: ["m2"], milestoneGap: null }
             : task,
       ),
     };
@@ -755,5 +763,49 @@ describe("dashboard task graph", () => {
         decideFraming({ ...jump, pendingKey: "t:a", selectedKey: "t:b" }),
       ).toBe("frame");
     });
+  });
+});
+
+describe("unassignedMilestoneNeighbours", () => {
+  test("lists open tasks without a milestone that touch the filtered milestone", () => {
+    // c depends on a; d depends on b. `done` is terminal and `lone` is isolated.
+    expect(
+      unassignedMilestoneNeighbours(graph, ["m1"]).map((task) => [
+        task.taskId,
+        task.milestoneGap,
+      ]),
+    ).toEqual([
+      ["c", "requirement_without_milestone"],
+      ["d", "no_requirement"],
+    ]);
+  });
+
+  test("stays quiet without a concrete milestone filter", () => {
+    expect(unassignedMilestoneNeighbours(graph, [])).toEqual([]);
+    expect(unassignedMilestoneNeighbours(graph, ["none"])).toEqual([]);
+    expect(unassignedMilestoneNeighbours(graph, ["m1", "none"])).toEqual([]);
+  });
+
+  test("trusts the read model's reason and does not infer one from milestone ids", () => {
+    // A node reporting no gap is never listed, whatever its milestone ids say.
+    const trusted: TaskGraph = {
+      ...graph,
+      tasks: graph.tasks.map((task) =>
+        task.taskId === "c" ? { ...task, milestoneGap: null } : task,
+      ),
+    };
+    expect(ids(unassignedMilestoneNeighbours(trusted, ["m1"]))).toEqual(["d"]);
+  });
+
+  test("ignores neighbours that already belong to a milestone", () => {
+    const assigned: TaskGraph = {
+      ...graph,
+      tasks: graph.tasks.map((task) =>
+        task.taskId === "c" || task.taskId === "d"
+          ? { ...task, milestoneIds: ["m2"], milestoneGap: null }
+          : task,
+      ),
+    };
+    expect(unassignedMilestoneNeighbours(assigned, ["m1"])).toEqual([]);
   });
 });

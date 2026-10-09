@@ -40,6 +40,16 @@ describe("SQLite governance repository contracts", () => {
             value.occurredAt.toISOString(),
           );
       },
+      async failEventAppend(eventId: string): Promise<void> {
+        database.exec(
+          `CREATE TRIGGER inject_event_failure BEFORE INSERT ON governance_event
+           WHEN NEW.id = '${eventId.replaceAll("'", "''")}'
+           BEGIN SELECT RAISE(ABORT, 'injected audit failure'); END`,
+        );
+      },
+      async restoreEventAppend(): Promise<void> {
+        database.exec("DROP TRIGGER IF EXISTS inject_event_failure");
+      },
       async close(): Promise<void> {
         database.close();
         rmSync(root, { recursive: true, force: true });

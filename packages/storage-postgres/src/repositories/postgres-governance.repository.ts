@@ -302,6 +302,52 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
     });
   }
 
+  async assignRequirementMilestone(
+    id: string,
+    projectId: string,
+    milestoneId: string,
+    now: Date,
+    event: { id: string; metadata: Record<string, string> },
+  ): Promise<boolean> {
+    return this.database.transaction(async () => {
+      await this.assertProjectTenant(projectId);
+      // Assign-once: the NULL predicate keeps a milestone from being moved.
+      // FOR SHARE keeps a concurrent cancel or archive of the target from
+      // committing between the status check and this write: it waits for us,
+      // or we re-evaluate the predicate against its committed result.
+      const rows = await this.database.query<{ id: string }>(
+        `
+          UPDATE core.requirement
+          SET milestone_id = $1, updated_at = $2
+          WHERE id = $3 AND project_id = $4 AND status = 'proposed'
+            AND milestone_id IS NULL
+            AND EXISTS (
+              SELECT 1 FROM core.project
+              WHERE id = $4 AND tenant_id = $5
+            )
+            AND EXISTS (
+              SELECT 1 FROM core.milestone
+              WHERE id = $1 AND project_id = $4 AND status <> 'cancelled'
+                AND archived_at IS NULL
+              FOR SHARE
+            )
+          RETURNING id
+        `,
+        [milestoneId, now, id, projectId, this.tenantId],
+      );
+      if (rows.length !== 1) return false;
+      await this.appendEvent({
+        id: event.id,
+        projectId,
+        eventType: "requirement.updated",
+        aggregateId: id,
+        metadata: event.metadata,
+        occurredAt: now,
+      });
+      return true;
+    });
+  }
+
   async saveAdr(value: AdrRecord): Promise<void> {
     await this.database.transaction(async () => {
       await this.assertProjectTenant(value.projectId);
@@ -384,6 +430,25 @@ export class PostgresGovernanceRepository implements GovernanceRepository {
       [id, this.tenantId],
     );
     return row?.project_id ?? null;
+  }
+
+  async findRequirement(
+    id: string,
+    projectId: string,
+  ): Promise<RequirementRecord | null> {
+    const [row] = await this.database.query<RequirementRow>(
+      `
+        SELECT item.id, item.project_id, item.milestone_id, item.requirement_key,
+               item.title, item.description, item.status, item.created_at,
+               item.updated_at
+        FROM core.requirement AS item
+        JOIN core.project AS project ON project.id = item.project_id
+        WHERE item.id = $1 AND item.project_id = $2
+          AND project.tenant_id = $3
+      `,
+      [id, projectId, this.tenantId],
+    );
+    return row === undefined ? null : requirementFromRow(row);
   }
 
   async findSubjectProject(

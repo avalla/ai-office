@@ -291,6 +291,7 @@ const commands = [
   "requirement:list",
   "requirement:validate",
   "requirement:update",
+  "requirement:assign-milestone",
   "adr:create",
   "milestone:set-status",
   "requirement:set-status",

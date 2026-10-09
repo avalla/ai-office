@@ -270,6 +270,35 @@ export function hiddenCompletedPrerequisiteCounts(
   return counts;
 }
 
+/**
+ * Open tasks outside every milestone that depend on, or are depended on by, a
+ * task of the milestones being filtered. The read model says why each one is
+ * outside (`milestoneGap`); the browser only selects and groups them.
+ */
+export function unassignedMilestoneNeighbours(
+  graph: TaskGraph,
+  milestones: readonly string[],
+): readonly TaskGraphNode[] {
+  const selected = milestones.filter((id) => id !== "none");
+  if (selected.length === 0 || milestones.includes("none")) return [];
+  const inMilestone = new Set(
+    graph.tasks
+      .filter((task) => selected.some((id) => task.milestoneIds.includes(id)))
+      .map((task) => task.taskId),
+  );
+  const linked = new Set<string>();
+  for (const edge of graph.edges) {
+    if (inMilestone.has(edge.taskId)) linked.add(edge.dependsOnTaskId);
+    if (inMilestone.has(edge.dependsOnTaskId)) linked.add(edge.taskId);
+  }
+  return graph.tasks.filter(
+    (task) =>
+      linked.has(task.taskId) &&
+      typeof task.milestoneGap === "string" &&
+      !task.terminal,
+  );
+}
+
 function matchesSearch(task: TaskGraphNode, search: string): boolean {
   return (
     task.taskId.toLowerCase().includes(search) ||

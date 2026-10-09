@@ -796,6 +796,17 @@ export class SqliteOperationalReadRepository implements OperationalReadRepositor
           taskId: row.task_id,
           milestoneId: row.milestone_id,
         })),
+      requirementLinkedTaskIds: this.database
+        .query<{ task_id: string }, [string, string]>(
+          `SELECT DISTINCT l.task_id
+           FROM task_requirement l
+           JOIN task t ON t.id = l.task_id
+           JOIN requirement r ON r.id = l.requirement_id
+           WHERE t.project_id = ? AND r.project_id = ?
+           ORDER BY l.task_id`,
+        )
+        .all(projectId, projectId)
+        .map((row) => row.task_id),
     }))();
   }
 

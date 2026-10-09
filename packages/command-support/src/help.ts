@@ -118,10 +118,11 @@ Commands:
   milestone:create --project <id> --title <title> [--description <description>]
   milestone:update --project <id> --milestone <id> (--title <title> | --description <text>)
   milestone:set-status --project <id> --milestone <id> --status <planned|active|completed|cancelled|archived>
-  requirement:create --project <id> --key <key> --title <title> --description <description> [--milestone <id>]
+  requirement:create --project <id> --key <key> --title <title> --description <description> [--milestone <id>]  # without --milestone the requirement's tasks appear under no milestone
   requirement:list --project <id> [--json]  # lists exact requirement IDs for linking
   requirement:validate --project <id> --requirement <id> --model <provider:model> [--json]  # advisory, metered LLM analysis; does not change status
   requirement:update --project <id> --requirement <id> [--title <title>] [--description <text>]  # proposed requirements only; key, milestone and status are immutable here
+  requirement:assign-milestone --project <id> --requirement <id> --milestone <id>  # proposed requirements without a milestone only; assigns once, never moves
   requirement:set-status --project <id> --requirement <id> --status <status>
   adr:create --project <id> --title <title> --context <text> --decision <text> --consequences <text>
   adr:set-status --project <id> --adr <id> --status <status>

@@ -61,6 +61,7 @@ import {
   type NeighborhoodMode,
   type GraphNodeDetail,
   type QuickFilter,
+  unassignedMilestoneNeighbours,
 } from "../lib/task-graph.ts";
 import {
   requirementStatusTone,
@@ -364,6 +365,32 @@ export function TaskGraphView({
       <TaskGraphCanvas graph={graph} projectId={projectId} />
     </ReactFlowProvider>
   );
+}
+
+const gapAdvice: Record<NonNullable<TaskGraphNode["milestoneGap"]>, string> = {
+  requirement_without_milestone:
+    "Its requirement has no milestone; if that requirement is still proposed, assign one with requirement:assign-milestone",
+  no_requirement: "It has no requirement; link one with task:link-requirement",
+};
+
+export function milestoneGapNotes(tasks: readonly TaskGraphNode[]) {
+  const groups = new Map<
+    NonNullable<TaskGraphNode["milestoneGap"]>,
+    string[]
+  >();
+  for (const task of tasks) {
+    if (typeof task.milestoneGap !== "string") continue;
+    groups.set(task.milestoneGap, [
+      ...(groups.get(task.milestoneGap) ?? []),
+      task.title,
+    ]);
+  }
+  return [...groups].map(([gap, titles]) => ({
+    gap,
+    text: `${gapAdvice[gap]}: ${titles.slice(0, 3).join("; ")}${
+      titles.length > 3 ? "; …" : ""
+    }.`,
+  }));
 }
 
 function TaskGraphCanvas({
@@ -837,6 +864,10 @@ function TaskGraphCanvas({
     filters.milestones.length > 0 ||
     filters.quick !== "" ||
     !filters.hideCompleted;
+  const unassignedNeighbours = useMemo(
+    () => unassignedMilestoneNeighbours(graph, filters.milestones),
+    [graph, filters.milestones],
+  );
   const milestoneFilterLabel =
     filters.milestones.length === 0
       ? "All milestones"
@@ -1090,6 +1121,21 @@ function TaskGraphCanvas({
         }}
       >
         <div className="flex min-w-0 flex-col gap-2">
+          {unassignedNeighbours.length > 0 && (
+            <div
+              role="status"
+              className="flex flex-col gap-1 rounded-lg border border-border bg-muted px-3 py-2 text-sm"
+            >
+              <p>
+                {unassignedNeighbours.length === 1
+                  ? "1 open task is linked by dependency to this milestone but belongs to none, so it is not shown."
+                  : `${unassignedNeighbours.length} open tasks are linked by dependency to this milestone but belong to none, so they are not shown.`}
+              </p>
+              {milestoneGapNotes(unassignedNeighbours).map((note) => (
+                <p key={note.gap}>{note.text}</p>
+              ))}
+            </div>
+          )}
           <div
             ref={canvasRef}
             className="h-[70vh] min-h-[26rem] overflow-hidden rounded-xl border border-border bg-surface"
