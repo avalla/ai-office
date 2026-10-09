@@ -1,5 +1,11 @@
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import {
+  isTaskDeliverySetupKey,
+  taskDeliverySetupSchema,
+  type TaskDeliverySetupKey,
+  type TaskDeliverySetupKeySpec,
+} from "@ai-office/application/task-delivery-setup/task-delivery-setup-schema.ts";
 import { errorMessage, isRecord } from "./shared.ts";
 import { isKnowledgePolicy, knowledgePolicies } from "./knowledge-policy.ts";
 
@@ -11,16 +17,24 @@ export const taskDeliveryConfigName = ".task-delivery.yaml";
 // every possible name.
 const misnamedConfigPattern = /^\.?task[-_]?delivery\.(?:ya?ml|json)$/iu;
 
-type FieldType = "string" | "boolean";
+type FieldType = "string" | "boolean" | "number";
 type Schema = { readonly [key: string]: FieldType | Schema };
 
 /**
  * The whole contract, mirrored by `references/configuration.md` in the skill.
- * Every key is optional; nothing outside this shape is accepted.
+ * Every key is optional; nothing outside this shape is accepted. The
+ * `checkpointFrequency`, `handoffMode`, `resumeDetail`, `knowledgePolicy`,
+ * and `contextThreshold` keys are the task-delivery setup keys: the Runtime
+ * setup schema owns their vocabulary and the skill validation compares the
+ * two so they cannot drift apart.
  */
 const schema: Schema = {
   integration_branch: "string",
   knowledgePolicy: "string",
+  checkpointFrequency: "string",
+  handoffMode: "string",
+  resumeDetail: "string",
+  contextThreshold: "number",
   verification: { full: "string", targeted: "string" },
   git: { worktree_required: "boolean", stacking_allowed: "boolean" },
   external_review: { command: "string" },
@@ -31,6 +45,13 @@ const schema: Schema = {
     complete: "string",
   },
 };
+
+/** The setup keys this schema accepts, sorted; compared against the Runtime schema. */
+export function taskDeliverySetupKeysInSchema(): TaskDeliverySetupKey[] {
+  return Object.keys(schema)
+    .filter((key): key is TaskDeliverySetupKey => isTaskDeliverySetupKey(key))
+    .sort();
+}
 
 function validateSection(
   value: Record<string, unknown>,
@@ -53,6 +74,9 @@ function validateSection(
         errors.push(
           `${keyPath} must be a boolean: true or false, lowercase and unquoted`,
         );
+    } else if (expected === "number") {
+      if (typeof entry !== "number")
+        errors.push(`${keyPath} must be a number`);
     } else if (typeof entry !== "string") {
       errors.push(`${keyPath} must be a string`);
     } else if (entry.trim() === "") {
@@ -61,7 +85,7 @@ function validateSection(
   }
 }
 
-type Scalar = string | boolean | null;
+type Scalar = string | boolean | number | null;
 /** What the layout scan read: scalars, and sections of scalars. */
 type Layout = Map<string, Scalar | Map<string, Scalar>>;
 
@@ -120,6 +144,10 @@ function readValue(raw: string): { value: Scalar } | { problem: string } {
     return {
       problem: `has an unquoted value followed by " #", which YAML reads as a comment; put the comment on its own line, or ${quoteHint}`,
     };
+  // A plain non-negative decimal number is the one numeric shape the
+  // contract accepts (`contextThreshold`); a YAML parser reads it as a
+  // number, so the layout scan records a number, not text.
+  if (/^[0-9]+(?:\.[0-9]+)?$/u.test(plain)) return { value: Number(plain) };
   // Unquoted text is accepted only where every YAML reader sees a string: it
   // starts with a letter, so it cannot be a number, a date, or YAML syntax.
   if (
@@ -210,11 +238,22 @@ function readLayout(source: string, errors: string[]): Layout {
         continue;
       }
     }
+    if (expectedType(name) === "number") {
+      if ("problem" in read || typeof read.value !== "number") {
+        errors.push(
+          `${at}: ${name} must be a number: digits with an optional decimal fraction, unquoted`,
+        );
+        continue;
+      }
+    }
     if ("problem" in read) {
       errors.push(`${at}: ${name} ${read.problem}`);
       continue;
     }
-    if (expectedType(name) === "string" && typeof read.value === "boolean") {
+    if (
+      expectedType(name) === "string" &&
+      (typeof read.value === "boolean" || typeof read.value === "number")
+    ) {
       errors.push(
         `${at}: ${name} must be a string; to use the word as text, ${quoteHint}`,
       );
@@ -325,6 +364,25 @@ export function validateTaskDeliveryConfigSource(rawSource: string): string[] {
     errors.push(
       `knowledgePolicy must be one of: ${knowledgePolicies.join(", ")}`,
     );
+  // The setup keys share their vocabulary with the Runtime setup schema, so
+  // a value the Runtime would refuse is an error here too.
+  for (const key of taskDeliverySetupKeysInSchema()) {
+    if (key === "knowledgePolicy") continue;
+    const spec: TaskDeliverySetupKeySpec = taskDeliverySetupSchema[key];
+    const value = scanned[key];
+    if (spec.values !== undefined) {
+      if (
+        typeof value === "string" &&
+        !(spec.values as readonly string[]).includes(value)
+      )
+        errors.push(`${key} must be one of: ${spec.values.join(", ")}`);
+    } else if (spec.number !== undefined && typeof value === "number") {
+      if (value < spec.number.min || value > spec.number.max)
+        errors.push(
+          `${key} must be a number from ${spec.number.min} to ${spec.number.max}`,
+        );
+    }
+  }
   if (errors.length > 0) return errors;
   if (Object.keys(scanned).length === 0)
     return [
