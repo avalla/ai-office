@@ -866,6 +866,7 @@ test("upgrading legacy runs preserves unknown provenance and protects new dispat
     "0047_milestone_archived_status.sql",
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
   ]);
   expect(
     (await f.runs.findRun("legacy"))?.snapshot().execution,
