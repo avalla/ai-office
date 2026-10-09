@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   mkdirSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -13,7 +14,9 @@ import { join } from "node:path";
 import {
   assessResume,
   CheckpointFormatError,
+  decodeCheckpointDirectoryName,
   defaultCheckpointRetentionCap,
+  encodeCheckpointDirectoryName,
   listCheckpoints,
   parseCheckpoint,
   pruneCheckpoints,
@@ -514,16 +517,102 @@ describe("taskCheckpointDirectory", () => {
     );
   });
 
-  test("rejects a relative root and an unsafe name", () => {
+  test("rejects a relative root and an empty name", () => {
     expect(() => taskCheckpointDirectory("relative/root", "task")).toThrow(
       /must be an absolute path/,
     );
-    expect(() => taskCheckpointDirectory(temporaryRoot(), "a/b")).toThrow(
-      /single safe path segment/,
+    expect(() => taskCheckpointDirectory(temporaryRoot(), "")).toThrow(
+      /must not be empty/,
     );
-    expect(() => taskCheckpointDirectory(temporaryRoot(), "..")).toThrow(
-      /single safe path segment/,
+  });
+});
+
+describe("checkpoint directory name encoding", () => {
+  test("keeps valid identifiers unchanged", () => {
+    for (const name of ["M19-T2", "task-1", "main", "GP 14.5_x"])
+      expect(encodeCheckpointDirectoryName(name)).toBe(name);
+  });
+
+  test("encodes a slash-delimited branch name deterministically", () => {
+    expect(encodeCheckpointDirectoryName("feat/m19-t2-checkpoints")).toBe(
+      "_666561742f6d31392d74322d636865636b706f696e7473",
     );
+    // The encoding is a pure function of the name.
+    expect(encodeCheckpointDirectoryName("feat/m19-t2-checkpoints")).toBe(
+      encodeCheckpointDirectoryName("feat/m19-t2-checkpoints"),
+    );
+  });
+
+  test("the encoded branch directory sits under .task-delivery as one segment", () => {
+    const root = temporaryRoot();
+    const directory = taskCheckpointDirectory(root, "feat/m19-t2-checkpoints");
+    expect(directory).toBe(
+      join(
+        root,
+        ".task-delivery",
+        "_666561742f6d31392d74322d636865636b706f696e7473",
+      ),
+    );
+    expect(directory.startsWith(join(root, ".task-delivery"))).toBe(true);
+  });
+
+  test("round-trips special characters and cannot traverse", () => {
+    const names = ["feature/äöü·@", "../escape", "..", "a/b/c", "x\\y"];
+    for (const name of names) {
+      const encoded = encodeCheckpointDirectoryName(name);
+      expect(decodeCheckpointDirectoryName(encoded)).toBe(name);
+      expect(encoded).toMatch(/^[0-9a-zA-Z ._-]+$/u);
+      expect(encoded.split("/")).toHaveLength(1);
+    }
+  });
+
+  test("encoded names cannot collide with plain identifiers", () => {
+    const encoded = encodeCheckpointDirectoryName("feat/x");
+    expect(encoded.startsWith("_")).toBe(true);
+    // A leading underscore is outside the plain-identifier grammar, so no
+    // task identifier can name this directory by accident.
+    expect(encoded === "feat/x").toBe(false);
+    expect(
+      encodeCheckpointDirectoryName("other/branch"),
+    ).not.toBe(encoded);
+  });
+
+  test("decoding rejects malformed names", () => {
+    expect(() => decodeCheckpointDirectoryName("_zz")).toThrow(
+      CheckpointFormatError,
+    );
+    expect(() => decodeCheckpointDirectoryName("_")).toThrow(
+      CheckpointFormatError,
+    );
+    expect(() => decodeCheckpointDirectoryName("bad/name")).toThrow(
+      CheckpointFormatError,
+    );
+  });
+
+  test("refuses names too long to encode within a filename limit", () => {
+    expect(() => encodeCheckpointDirectoryName("x".repeat(200))).toThrow(
+      /too long to encode/,
+    );
+  });
+
+  test("publishing into a branch-named directory works end to end", () => {
+    const root = temporaryRoot();
+    const { checkpoint } = publishCheckpoint(
+      taskCheckpointDirectory(root, "feat/m19-t2-checkpoints"),
+      baseInput({ task: null }),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    expect(checkpoint.stage.seq).toBe(1);
+    expect(
+      existsSync(
+        join(
+          taskCheckpointDirectory(root, "feat/m19-t2-checkpoints"),
+          "checkpoints",
+          "000001.json",
+        ),
+      ),
+    ).toBe(true);
   });
 });
 

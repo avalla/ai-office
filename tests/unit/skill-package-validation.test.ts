@@ -679,6 +679,14 @@ describe("task-delivery workflow invariants", () => {
       "policy:checkpoint-never-validates-gate",
       "No checkpoint can validate a passed gate",
     ],
+    [
+      "policy:checkpoint-branch-name-encoding",
+      /branch name encoded when it is not a safe path\s+segment/u,
+    ],
+    [
+      "policy:checkpoint-exclude-prerequisite",
+      /the exclude is an operational\s+prerequisite the executor verifies or configures before the first\s+checkpoint/u,
+    ],
   ];
 
   test("every contract invariant has a removal case", () => {

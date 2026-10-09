@@ -364,10 +364,15 @@ A checkpoint is a recorded, versioned snapshot of the delivery state,
 written by the implementation context at every gate it passes. Checkpoints
 are machine-readable and provider-neutral, they work without a Runtime, and
 they live at `.task-delivery/<task>/checkpoints/` in the task worktree - the
-same per-task directory that holds the handoff packet, ignored through the
-repository's shared exclude file. See
-[checkpoints](references/checkpoints.md) for the schema, the storage rules,
-and resume validation.
+same per-task directory that holds the handoff packet, where `<task>` is the
+task identifier or the branch name encoded when it is not a safe path
+segment. That directory tree must be excluded from Git through the
+repository's shared exclude file, and the exclude is an operational
+prerequisite the executor verifies or configures before the first
+checkpoint, never something the store modifies on its own; verify it with
+`git check-ignore .task-delivery/<task>/checkpoints/index.json`. See
+[checkpoints](references/checkpoints.md) for the encoding, the schema, the
+storage rules, and resume validation.
 
 A checkpoint carries the packet's isolation: it never reaches independent
 review, second review, verification, or external review, and it never

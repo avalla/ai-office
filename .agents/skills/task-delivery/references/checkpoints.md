@@ -8,9 +8,15 @@ the latest checkpoint's id, and the checkpoint carries the machine state.
 
 ## Layout
 
-All paths are inside the task worktree, under the repository's shared Git
-exclude (`$(git rev-parse --git-common-dir)/info/exclude`), per task so
-successive tasks sharing a worktree never share state:
+All paths are inside the task worktree, per task so successive tasks sharing
+a worktree never share state. The whole `.task-delivery/` tree must be
+excluded from Git through the repository's shared exclude file
+(`$(git rev-parse --git-common-dir)/info/exclude`). That exclude is an
+operational prerequisite, not something the store writes: the executor
+verifies or configures it before the first checkpoint, and verifies it with
+`git check-ignore .task-delivery/<task>/checkpoints/index.json`. Automating
+the exclude write is deliberately out of scope here and is recorded as a
+follow-up.
 
 ```text
 .task-delivery/<task>/handoff.md              context-handoff packet
@@ -20,10 +26,17 @@ successive tasks sharing a worktree never share state:
 ```
 
 `<task>` is the task identifier, or the branch name when there is no task
-identifier - the same rule as the handoff packet. `<seq>` is a six-digit,
-1-based sequence. The file name is the sequence alone, so the
-exclusive-create reservation is per sequence whatever the gate; the gate
-lives in the document and in the index.
+identifier - the same rule as the handoff packet. A name that is not a safe
+single path segment (any branch name containing `/`, for example) is
+encoded deterministically as `_` followed by the lowercase hex of its UTF-8
+bytes: `feat/m19-t2-checkpoints` becomes
+`_666561742f6d31392d74322d636865636b706f696e7473`. The leading underscore
+keeps encoded names from ever colliding with plain task identifiers, and
+hex holds no path separators, so the encoded directory is always a single
+safe segment; `decodeCheckpointDirectoryName` reverses the mapping.
+`<seq>` is a six-digit, 1-based sequence. The file name is the sequence
+alone, so the exclusive-create reservation is per sequence whatever the
+gate; the gate lives in the document and in the index.
 
 ## Schema, version 1
 

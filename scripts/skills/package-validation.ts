@@ -329,6 +329,16 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
         id: "policy:checkpoint-never-validates-gate",
         pattern: /No checkpoint can validate a passed gate/iu,
       },
+      {
+        id: "policy:checkpoint-branch-name-encoding",
+        pattern:
+          /branch name encoded when it is not a safe path segment/iu,
+      },
+      {
+        id: "policy:checkpoint-exclude-prerequisite",
+        pattern:
+          /the exclude is an operational prerequisite the executor verifies or configures before the first checkpoint/iu,
+      },
     ],
   },
 };

@@ -13,7 +13,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { errorMessage, isRecord } from "./shared.ts";
 
 /**
@@ -454,17 +454,58 @@ interface CheckpointIndex {
   readonly updatedAt: string;
 }
 
+/**
+ * Maps a task identifier or fallback name to its checkpoint directory name.
+ * Names that already are safe single path segments (task identifiers) are
+ * used unchanged. Any other name - typically a branch name such as
+ * `feat/m19-t2-checkpoints` when there is no task identifier - is encoded
+ * deterministically as `_` followed by the lowercase hex of its UTF-8
+ * bytes. The leading underscore can never start a plain identifier
+ * ({@link idPattern} requires an alphanumeric first character), so an
+ * encoded name cannot collide with one, and hex holds no path separators,
+ * so the result stays a single safe segment. The mapping is reversible via
+ * {@link decodeCheckpointDirectoryName}.
+ */
+export function encodeCheckpointDirectoryName(name: string): string {
+  if (name === "")
+    throw new CheckpointStoreError("checkpoint directory name must not be empty");
+  if (idPattern.test(name)) return name;
+  const encoded = `_${Buffer.from(name, "utf8").toString("hex")}`;
+  if (encoded.length > 255)
+    throw new CheckpointStoreError(
+      `checkpoint directory name is too long to encode safely: ${name.length} characters`,
+    );
+  return encoded;
+}
+
+/**
+ * The inverse of {@link encodeCheckpointDirectoryName}: plain identifiers
+ * come back unchanged, `_`-prefixed hex names decode to the original name.
+ */
+export function decodeCheckpointDirectoryName(encoded: string): string {
+  if (!encoded.startsWith("_")) {
+    if (!idPattern.test(encoded))
+      throw new CheckpointFormatError(
+        `not a checkpoint directory name: ${encoded}`,
+      );
+    return encoded;
+  }
+  if (!/^_[0-9a-f]+$/u.test(encoded))
+    throw new CheckpointFormatError(
+      `not an encoded checkpoint directory name: ${encoded}`,
+    );
+  return Buffer.from(encoded.slice(1), "hex").toString("utf8");
+}
+
 /** The `.task-delivery/<task>` directory for `name` under `root`. */
 export function taskCheckpointDirectory(root: string, name: string): string {
   if (!isAbsolute(root))
     throw new CheckpointStoreError(
       `repository root must be an absolute path, got: ${root}`,
     );
-  if (!idPattern.test(name) || name.includes(sep) || name.includes("/"))
-    throw new CheckpointStoreError(
-      `task directory name is not a single safe path segment: ${name}`,
-    );
-  return resolve(join(root, ".task-delivery", name));
+  return resolve(
+    join(root, ".task-delivery", encodeCheckpointDirectoryName(name)),
+  );
 }
 
 function checkpointsDirectory(taskDirectory: string): string {
