@@ -58,6 +58,8 @@ const executorSpecificTerms: readonly { label: string; pattern: RegExp }[] = [
 interface ContentInvariant {
   readonly id: string;
   readonly pattern: RegExp;
+  /** Skill-relative file that must state it; defaults to `SKILL.md`. */
+  readonly file?: string;
 }
 
 interface SkillContract {
@@ -68,8 +70,8 @@ interface SkillContract {
    */
   readonly stages: readonly string[];
   /**
-   * Matched against the vendor-neutral core of `SKILL.md` with whitespace
-   * collapsed to single spaces.
+   * Matched against the vendor-neutral core of `SKILL.md` (or the invariant's
+   * own `file`) with whitespace collapsed to single spaces.
    */
   readonly invariants: readonly ContentInvariant[];
   /** Executors that need their own row in the executor block's table. */
@@ -88,6 +90,7 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       "references/evidence.md",
       "references/configuration.md",
       "references/handoff.md",
+      "references/multi-task.md",
       "assets/pr-template.md",
     ],
     stages: [
@@ -161,76 +164,91 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       },
       {
         id: "policy:clarify-before-development",
+        file: "references/multi-task.md",
         pattern:
           /development starts only when no selected task has an open question\./u,
       },
       {
         id: "policy:run-stacking-needs-summary-approval",
+        file: "references/multi-task.md",
         pattern:
           /An answer that accepts the stacking offer approves these Git branch dependencies for the run\./u,
       },
       {
         id: "policy:recompute-whole-selection",
+        file: "references/multi-task.md",
         pattern:
           /run the dependency check again over the whole selection and recompute the order and the Git branch plan/u,
       },
       {
         id: "policy:unanswered-stacking-offer-declines",
+        file: "references/multi-task.md",
         pattern:
           /A go-ahead that does not answer the stacking offer declines it/u,
       },
       {
         id: "policy:stacking-changes-only-where-branches-start",
+        file: "references/multi-task.md",
         pattern:
           /Stacking the run changes where branches start and how a stop spreads along the stack, and nothing else/u,
       },
       {
         id: "policy:stacking-only-while-predecessor-unmerged",
+        file: "references/multi-task.md",
         pattern:
           /while that task is unmerged, and from the updated integration branch once it is merged/u,
       },
       {
         id: "policy:any-difference-is-material",
+        file: "references/multi-task.md",
         pattern:
           /Any difference in these items is material, except a base that changes only because a task was merged, as the approved plan anticipated\./u,
       },
       {
         id: "policy:git-tracked-clarification-must-be-in-effect",
+        file: "references/multi-task.md",
         pattern:
           /counts as recorded only once it is in effect on the integration branch/u,
       },
       {
         id: "policy:run-stack-start-needs-prerequisite-beneath",
+        file: "references/multi-task.md",
         pattern:
           /A task starts only on a base that contains the work of each of its prerequisites/u,
       },
       {
         id: "policy:review-heads-before-start",
+        file: "references/multi-task.md",
         pattern:
           /If several prerequisites are under review, the starting head must contain every one of their current review heads\. Verify this before marking the task started/u,
       },
       {
         id: "policy:repeated-offer-spares-created-bases",
+        file: "references/multi-task.md",
         pattern:
           /The repeated offer applies only to tasks not yet started: a base already created under an accepted stacking answer stays approved, and only an explicit decision of the authorizer changes it\./u,
       },
       {
         id: "policy:stopped-task-stops-stacked-tasks",
+        file: "references/multi-task.md",
         pattern:
           /When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it, directly or through other tasks, stop too/u,
       },
       {
         id: "policy:stop-resume-needs-go-ahead",
+        file: "references/multi-task.md",
         pattern:
           /If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them/u,
       },
       {
         id: "policy:declining-run-stacking-keeps-selective-dependencies",
+        file: "references/multi-task.md",
         pattern:
           /Declining run-wide stacking leaves separately approved Git branch dependencies unchanged\. Every other task starts from the integration branch unless another separately approved Git branch dependency applies\./u,
       },
       {
         id: "policy:recompute-plan-after-clarification",
+        file: "references/multi-task.md",
         pattern:
           /If the selection, the order, a task dependency, a Git branch dependency, the pipeline, or the exclusions changed materially, show a new summary and ask for a new approval, and start neither preflight nor development before it is given\./u,
       },
@@ -251,6 +269,7 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       },
       {
         id: "policy:run-never-merges-to-unblock",
+        file: "references/multi-task.md",
         pattern:
           /The run never merges a pull request merely to unblock a later selected task\./u,
       },
@@ -492,9 +511,17 @@ export function validateSkillPackage(skillRoot: string): string[] {
         errors.push(`Required file is missing: ${requiredFile}`);
     validateStages(core, contract.stages, errors);
     const normalized = core.replace(/\s+/gu, " ");
-    for (const invariant of contract.invariants)
-      if (!invariant.pattern.test(normalized))
-        errors.push(`SKILL.md is missing required content: ${invariant.id}`);
+    for (const invariant of contract.invariants) {
+      const file = invariant.file ?? "SKILL.md";
+      const text =
+        file === "SKILL.md"
+          ? normalized
+          : existsSync(join(skillRoot, file))
+            ? readFileSync(join(skillRoot, file), "utf8").replace(/\s+/gu, " ")
+            : "";
+      if (!invariant.pattern.test(text))
+        errors.push(`${file} is missing required content: ${invariant.id}`);
+    }
     for (const executor of contract.executors)
       if (
         block === null ||
