@@ -258,6 +258,17 @@ input: it re-validates the recorded head commit and working tree against the
 live repository before continuing. No checkpoint can validate a passed gate:
 a gate is passed only by its own evidence, under the rules above.
 
+## Knowledge
+
+Handoff and resume may be enriched with task-linked knowledge from the
+project's knowledge store: retrieved read-only with `knowledge:task`, cited
+as `ak:` references in checkpoints, and proposed for write-back as `plan:`
+entries a human admits. Knowledge is advisory and never authorizes a gate.
+Entry formats and write-side rules live in
+[checkpoints](references/checkpoints.md), the handoff section rules in
+[handoff](references/handoff.md), and the retrieval policy in
+[configuration](references/configuration.md).
+
 ## Reporting
 
 At each gate, report in a few lines: stage, result, evidence, open findings,

@@ -175,7 +175,7 @@ describe("publishCheckpoint", () => {
         decisions: [{ what: "layout per-task", authorizedBy: "authorizer" }],
         unresolvedDependencies: ["M19-T1"],
         knownLimitations: ["no Runtime storage"],
-        knowledgeReferences: ["knowledge://record/1"],
+        knowledgeReferences: ["ak:memory:record-1"],
         nextAction: "answer R1",
       }),
       fakeGit(cleanSha),
@@ -190,7 +190,7 @@ describe("publishCheckpoint", () => {
     ]);
     expect(checkpoint.unresolvedDependencies).toEqual(["M19-T1"]);
     expect(checkpoint.knownLimitations).toEqual(["no Runtime storage"]);
-    expect(checkpoint.knowledgeReferences).toEqual(["knowledge://record/1"]);
+    expect(checkpoint.knowledgeReferences).toEqual(["ak:memory:record-1"]);
   });
 
   test("rejects an unsafe gate, an empty next action, and a non-sha head", () => {
@@ -953,5 +953,133 @@ describe("retention", () => {
 describe("format errors surface as store errors", () => {
   test("parseCheckpoint throws the typed format error", () => {
     expect(() => parseCheckpoint("{}")).toThrow(CheckpointFormatError);
+  });
+});
+
+describe("knowledgeReferences", () => {
+  test("publishes the accepted locator formats", () => {
+    const root = temporaryRoot();
+    const { checkpoint } = publishCheckpoint(
+      taskDir(root),
+      baseInput({
+        knowledgeReferences: [
+          "ak:memory:record-1",
+          "ak:decision:record-2",
+          "plan:9f86d081884c7d659a2feaa0c55ad015",
+        ],
+      }),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    expect(checkpoint.knowledgeReferences).toEqual([
+      "ak:memory:record-1",
+      "ak:decision:record-2",
+      "plan:9f86d081884c7d659a2feaa0c55ad015",
+    ]);
+  });
+
+  test("rejects a malformed entry with a typed error naming the entry", () => {
+    const root = temporaryRoot();
+    expect(() =>
+      publishCheckpoint(
+        taskDir(root),
+        baseInput({ knowledgeReferences: ["knowledge://record/1"] }),
+        fakeGit(cleanSha),
+        deterministicOptions(),
+      ),
+    ).toThrow(/knowledgeReferences entry has an invalid format: knowledge:\/\/record\/1/);
+  });
+
+  test("rejects duplicate entries and names the duplicate", () => {
+    const root = temporaryRoot();
+    expect(() =>
+      publishCheckpoint(
+        taskDir(root),
+        baseInput({
+          knowledgeReferences: ["ak:memory:record-1", "ak:memory:record-1"],
+        }),
+        fakeGit(cleanSha),
+        deterministicOptions(),
+      ),
+    ).toThrow(/knowledgeReferences contains a duplicate entry: ak:memory:record-1/);
+  });
+
+  test("enforces the entry cap", () => {
+    const root = temporaryRoot();
+    const entries = Array.from(
+      { length: 11 },
+      (_unused, index) => `ak:memory:record-${index}`,
+    );
+    expect(() =>
+      publishCheckpoint(
+        taskDir(root),
+        baseInput({ knowledgeReferences: entries }),
+        fakeGit(cleanSha),
+        deterministicOptions(),
+      ),
+    ).toThrow(/knowledgeReferences accepts at most 10 entries, got 11/);
+  });
+
+  test("parseCheckpoint stays lenient for legacy packets with arbitrary entries", () => {
+    const root = temporaryRoot();
+    const { checkpoint } = publishCheckpoint(
+      taskDir(root),
+      baseInput(),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    const legacy = {
+      ...checkpoint,
+      knowledgeReferences: ["knowledge://record/1", "not a locator"],
+    };
+    expect(parseCheckpoint(JSON.stringify(legacy)).knowledgeReferences).toEqual([
+      "knowledge://record/1",
+      "not a locator",
+    ]);
+  });
+
+  test("assessResume surfaces malformed legacy entries as a warning, not a failure", () => {
+    const root = temporaryRoot();
+    const { checkpoint } = publishCheckpoint(
+      taskDir(root),
+      baseInput(),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    const file = join(checkpointsDir(root), "000001.json");
+    const document = JSON.parse(readFileSync(file, "utf8")) as {
+      knowledgeReferences: string[];
+    };
+    document.knowledgeReferences = ["ak:memory:record-1", "anything goes"];
+    const bytes = `${JSON.stringify(document, null, 2)}\n`;
+    writeFileSync(file, bytes);
+    const indexPath = join(checkpointsDir(root), "index.json");
+    const index = JSON.parse(readFileSync(indexPath, "utf8")) as {
+      latest: { sha256: string };
+    };
+    index.latest.sha256 = sha256(Buffer.from(bytes, "utf8"));
+    writeFileSync(indexPath, JSON.stringify(index));
+
+    const assessment = assessResume(taskDir(root), fakeGit(cleanSha));
+    expect(assessment.usable).toBe(true);
+    expect(assessment.checkpoint?.id).toBe(checkpoint.id);
+    expect(assessment.invalidKnowledgeReferences).toEqual(["anything goes"]);
+  });
+
+  test("assessResume reports no invalid references for a clean or missing checkpoint", () => {
+    const root = temporaryRoot();
+    const missing = assessResume(taskDir(root), fakeGit(cleanSha));
+    expect(missing.usable).toBe(false);
+    expect(missing.invalidKnowledgeReferences).toEqual([]);
+
+    publishCheckpoint(
+      taskDir(root),
+      baseInput({ knowledgeReferences: ["plan:9f86d081884c7d659a2feaa0c55ad015"] }),
+      fakeGit(cleanSha),
+      deterministicOptions(),
+    );
+    const clean = assessResume(taskDir(root), fakeGit(cleanSha));
+    expect(clean.usable).toBe(true);
+    expect(clean.invalidKnowledgeReferences).toEqual([]);
   });
 });

@@ -699,6 +699,22 @@ describe("task-delivery workflow invariants", () => {
       "policy:checkpoint-exclude-prerequisite",
       /the exclude is an operational\s+prerequisite the executor verifies or configures before the first\s+checkpoint/u,
     ],
+    [
+      "policy:knowledge-never-authoritative",
+      /Knowledge is advisory\s+and never authoritative/u,
+    ],
+    [
+      "policy:knowledge-writeback-operator-mediated",
+      "Write-back is operator-mediated",
+    ],
+    [
+      "policy:knowledge-references-locator",
+      /`ak:<kind>:<id>`\s+for admitted knowledge \(kind `memory` or `decision`\)/u,
+    ],
+    [
+      "policy:knowledge-required-blocks-gate",
+      "the handoff or resume gate blocks",
+    ],
   ];
 
   test("the contract pins the checkpoint and the multi-task rules together", () => {

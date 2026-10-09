@@ -1,6 +1,7 @@
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { errorMessage, isRecord } from "./shared.ts";
+import { isKnowledgePolicy, knowledgePolicies } from "./knowledge-policy.ts";
 
 /** Optional project configuration read by the `task-delivery` skill. */
 export const taskDeliveryConfigName = ".task-delivery.yaml";
@@ -19,6 +20,7 @@ type Schema = { readonly [key: string]: FieldType | Schema };
  */
 const schema: Schema = {
   integration_branch: "string",
+  knowledgePolicy: "string",
   verification: { full: "string", targeted: "string" },
   git: { worktree_required: "boolean", stacking_allowed: "boolean" },
   external_review: { command: "string" },
@@ -317,6 +319,11 @@ export function validateTaskDeliveryConfigSource(rawSource: string): string[] {
   )
     errors.push(
       "task_lifecycle.enabled is false but a task_lifecycle command is configured; remove the commands or enable it",
+    );
+  const policy = scanned.knowledgePolicy;
+  if (typeof policy === "string" && !isKnowledgePolicy(policy))
+    errors.push(
+      `knowledgePolicy must be one of: ${knowledgePolicies.join(", ")}`,
     );
   if (errors.length > 0) return errors;
   if (Object.keys(scanned).length === 0)
