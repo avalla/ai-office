@@ -363,11 +363,7 @@ export function parseCheckpoint(raw: string): Checkpoint {
       `checkpoint schemaVersion is ${String(root.schemaVersion)}; this reader supports exactly ${checkpointSchemaVersion}`,
     );
   const run = requireRecord(root.run, "checkpoint.run");
-  rejectUnknownFields(
-    run,
-    ["task", "milestone", "branch", "base"],
-    "checkpoint.run",
-  );
+  rejectUnknownFields(run, ["task", "milestone", "branch", "base"], "checkpoint.run");
   const head = requireRecord(root.head, "checkpoint.head");
   rejectUnknownFields(
     head,
@@ -384,7 +380,7 @@ export function parseCheckpoint(raw: string): Checkpoint {
         `checkpoint.head.dirtyPaths entry is not a relative in-repository path: ${dirtyPath}`,
       );
   const dirty = head.dirty;
-  if (typeof dirty !== "boolean" || dirty !== dirtyPaths.length > 0)
+  if (typeof dirty !== "boolean" || dirty !== (dirtyPaths.length > 0))
     throw new CheckpointFormatError(
       "checkpoint.head.dirty must be a boolean consistent with dirtyPaths",
     );
@@ -400,23 +396,15 @@ export function parseCheckpoint(raw: string): Checkpoint {
     id: requireString(root.id, "checkpoint.id", { pattern: idPattern }),
     run: {
       task: requireOptionalString(run.task, "checkpoint.run.task"),
-      milestone: requireOptionalString(
-        run.milestone,
-        "checkpoint.run.milestone",
-      ),
+      milestone: requireOptionalString(run.milestone, "checkpoint.run.milestone"),
       branch: requireString(run.branch, "checkpoint.run.branch"),
       base: requireString(run.base, "checkpoint.run.base"),
     },
     head: {
-      sha: requireString(head.sha, "checkpoint.head.sha", {
-        pattern: shaPattern,
-      }),
+      sha: requireString(head.sha, "checkpoint.head.sha", { pattern: shaPattern }),
       dirty,
       dirtyPaths,
-      capturedAt: requireTimestamp(
-        head.capturedAt,
-        "checkpoint.head.capturedAt",
-      ),
+      capturedAt: requireTimestamp(head.capturedAt, "checkpoint.head.capturedAt"),
     },
     stage: {
       gate: requireString(stage.gate, "checkpoint.stage.gate", {
@@ -426,11 +414,11 @@ export function parseCheckpoint(raw: string): Checkpoint {
     },
     profile: requireString(root.profile, "checkpoint.profile"),
     evidence: parseEvidence(root.evidence, "checkpoint.evidence"),
-    openFindings: parseTypedArray(
-      root.openFindings,
-      "checkpoint.openFindings",
-      ["id", "severity", "status"],
-    ) as CheckpointFinding[],
+    openFindings: parseTypedArray(root.openFindings, "checkpoint.openFindings", [
+      "id",
+      "severity",
+      "status",
+    ]) as CheckpointFinding[],
     decisions: parseTypedArray(root.decisions, "checkpoint.decisions", [
       "what",
       "authorizedBy",
@@ -480,9 +468,7 @@ interface CheckpointIndex {
  */
 export function encodeCheckpointDirectoryName(name: string): string {
   if (name === "")
-    throw new CheckpointStoreError(
-      "checkpoint directory name must not be empty",
-    );
+    throw new CheckpointStoreError("checkpoint directory name must not be empty");
   if (idPattern.test(name)) return name;
   const encoded = `_${Buffer.from(name, "utf8").toString("hex")}`;
   if (encoded.length > 255)
@@ -564,9 +550,7 @@ function parseIndex(raw: string): CheckpointIndex {
     rejectUnknownFields(entry, ["seq", "file", "id", "sha256"], "index.latest");
     const seq = entry.seq;
     if (typeof seq !== "number" || !Number.isInteger(seq) || seq < 1)
-      throw new CheckpointFormatError(
-        "index.latest.seq must be an integer >= 1",
-      );
+      throw new CheckpointFormatError("index.latest.seq must be an integer >= 1");
     const file = requireString(entry.file, "index.latest.file", {
       pattern: checkpointFilePattern,
     });
@@ -677,7 +661,10 @@ function listPublishedFiles(taskDirectory: string): string[] {
   return files.sort();
 }
 
-function readPublishedCheckpoint(directory: string, file: string): Checkpoint {
+function readPublishedCheckpoint(
+  directory: string,
+  file: string,
+): Checkpoint {
   const checkpoint = parseCheckpoint(
     readFileSync(join(directory, file), "utf8"),
   );
@@ -707,10 +694,7 @@ function scanLatest(
       const seq = seqFromFileName(file);
       if (seq === null || seq !== checkpoint.stage.seq) continue;
       if (best === null || seq > best.entry.seq)
-        best = {
-          entry: { seq, file, id: checkpoint.id, sha256: sha256Hex(bytes) },
-          bytes,
-        };
+        best = { entry: { seq, file, id: checkpoint.id, sha256: sha256Hex(bytes) }, bytes };
     } catch {
       // Unreadable, unparseable, or inconsistent: not the latest valid one.
     }
@@ -859,8 +843,7 @@ export function publishCheckpoint(
   for (let attempt = 0; attempt < maximumPublishAttempts; attempt += 1) {
     if (attempt > 0) pauseBetweenPublishAttempts();
     const current = loadLatestCheckpoint(taskDirectory);
-    const previous =
-      current === null ? null : parseCheckpoint(current.bytes.toString("utf8"));
+    const previous = current === null ? null : parseCheckpoint(current.bytes.toString("utf8"));
     const seq = previous === null ? 1 : previous.stage.seq + 1;
     const checkpoint: Checkpoint = {
       schemaVersion: checkpointSchemaVersion,
@@ -907,12 +890,7 @@ export function publishCheckpoint(
       // crash between the two renames is recovered by the scan.
       const index: CheckpointIndex = {
         schemaVersion: 1,
-        latest: {
-          seq,
-          file: checkpointFileName(seq),
-          id: checkpoint.id,
-          sha256: sha256Hex(bytes),
-        },
+        latest: { seq, file: checkpointFileName(seq), id: checkpoint.id, sha256: sha256Hex(bytes) },
         updatedAt: timestamp,
       };
       writeAtomic(
@@ -988,7 +966,10 @@ function handoffCitedCheckpointIds(taskDirectory: string): Set<string> {
  * deletion under an explicit retention rule is the documented lifecycle of
  * what goes.
  */
-export function pruneCheckpoints(taskDirectory: string, cap: number): string[] {
+export function pruneCheckpoints(
+  taskDirectory: string,
+  cap: number,
+): string[] {
   if (!Number.isInteger(cap) || cap < 1)
     throw new CheckpointStoreError(
       `retention cap must be an integer >= 1, got: ${cap}`,

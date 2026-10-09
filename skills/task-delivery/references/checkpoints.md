@@ -44,23 +44,11 @@ gate; the gate lives in the document and in the index.
 {
   "schemaVersion": 1,
   "id": "uuid-or-equivalent",
-  "run": {
-    "task": "id-or-null",
-    "milestone": "id-or-null",
-    "branch": "b",
-    "base": "main"
-  },
-  "head": {
-    "sha": "full-sha",
-    "dirty": false,
-    "dirtyPaths": [],
-    "capturedAt": "iso"
-  },
+  "run": { "task": "id-or-null", "milestone": "id-or-null", "branch": "b", "base": "main" },
+  "head": { "sha": "full-sha", "dirty": false, "dirtyPaths": [], "capturedAt": "iso" },
   "stage": { "gate": "design", "seq": 1 },
   "profile": "full",
-  "evidence": [
-    { "claim": "...", "ref": { "kind": "command", "value": "..." } }
-  ],
+  "evidence": [{ "claim": "...", "ref": { "kind": "command", "value": "..." } }],
   "openFindings": [{ "id": "R1", "severity": "major", "status": "open" }],
   "decisions": [{ "what": "...", "authorizedBy": "authorizer" }],
   "unresolvedDependencies": ["..."],
