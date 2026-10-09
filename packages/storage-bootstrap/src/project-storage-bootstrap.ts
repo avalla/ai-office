@@ -69,6 +69,7 @@ export const projectStorageCapabilityNames = [
   "memoryReferences",
   "projectMemoryProvenance",
   "operationalReads",
+  "taskDeliverySetup",
   "transactions",
   "jobOutbox",
 ] as const satisfies readonly (keyof ProjectStorage)[];

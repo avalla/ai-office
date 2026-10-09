@@ -19,6 +19,7 @@ import type { RepositoryIdentityRepository } from "./repository-identity-reposit
 import type { TaskRepository } from "./task-repository.port.ts";
 import type { TaskDependencyRepository } from "./task-dependency-repository.port.ts";
 import type { TaskRequirementRepository } from "./task-requirement-repository.port.ts";
+import type { TaskDeliverySetupRepository } from "./task-delivery-setup-repository.port.ts";
 import type { TransactionRunner } from "./transaction-runner.port.ts";
 
 /**
@@ -48,6 +49,7 @@ export interface ProjectStorage {
   memoryReferences: MemoryReferenceRepository;
   projectMemoryProvenance: ProjectMemoryProvenanceRepository;
   operationalReads: OperationalReadRepository;
+  taskDeliverySetup: TaskDeliverySetupRepository;
   transactions: TransactionRunner;
   jobOutbox: JobOutboxRepository;
 }

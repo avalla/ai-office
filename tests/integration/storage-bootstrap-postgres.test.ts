@@ -109,7 +109,7 @@ describe.skipIf(connectionString === undefined)(
           StorageProviderIncompleteError,
         );
         expect(() => requireCompleteProjectStorage(handle)).toThrow(
-          "profiles, costs, capabilities, controlled, repositoryIdentities, projectStates, memoryReferences, projectMemoryProvenance, operationalReads, jobOutbox",
+          "profiles, costs, capabilities, controlled, repositoryIdentities, projectStates, memoryReferences, projectMemoryProvenance, operationalReads, jobOutbox, taskDeliverySetup",
         );
       } finally {
         await handle.close();

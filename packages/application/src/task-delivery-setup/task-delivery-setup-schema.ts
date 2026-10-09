@@ -78,7 +78,7 @@ export function validateTaskDeliverySetupValue(
   key: TaskDeliverySetupKey,
   value: unknown,
 ): string | number | null {
-  const spec = taskDeliverySetupSchema[key];
+  const spec: TaskDeliverySetupKeySpec = taskDeliverySetupSchema[key];
   if (spec.values !== undefined)
     return typeof value === "string" &&
       (spec.values as readonly string[]).includes(value)

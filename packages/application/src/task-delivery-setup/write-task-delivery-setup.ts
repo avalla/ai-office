@@ -6,6 +6,7 @@ import {
   isTaskDeliverySetupKey,
   taskDeliverySetupSchema,
   validateTaskDeliverySetupValue,
+  type TaskDeliverySetupKeySpec,
 } from "./task-delivery-setup-schema.ts";
 import { TaskDeliverySetupError } from "./task-delivery-setup-errors.ts";
 
@@ -70,7 +71,7 @@ export class WriteTaskDeliverySetup {
         input.value,
       );
       if (valid === null) {
-        const spec = taskDeliverySetupSchema[input.key];
+        const spec: TaskDeliverySetupKeySpec = taskDeliverySetupSchema[input.key];
         const expected =
           spec.values !== undefined
             ? `one of: ${spec.values.join(", ")}`
