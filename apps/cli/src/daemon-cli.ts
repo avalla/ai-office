@@ -199,6 +199,8 @@ const projectScopedCommands = new Set([
   "knowledge:plan",
   "knowledge:admit",
   "knowledge:trace",
+  "delivery:setup:show",
+  "delivery:setup:set",
   "resource:create",
   "resource:list",
   "resource:disable",

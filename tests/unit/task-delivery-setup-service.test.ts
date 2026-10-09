@@ -93,14 +93,18 @@ function harness(options: {
   const ports = {
     projects: {
       findById: async (id: string) =>
-        options.projectExists === false || id !== "project"
-          ? null
-          : { id },
+        options.projectExists === false || id !== "project" ? null : { id },
     },
     setup,
     transactions: {
       run: async <T>(work: () => Promise<T>): Promise<T> => await work(),
     },
+  } as unknown as {
+    projects: ConstructorParameters<typeof ReadTaskDeliverySetup>[0]["projects"];
+    setup: InMemorySetupRepository;
+    transactions: ConstructorParameters<
+      typeof ReadTaskDeliverySetup
+    >[0]["transactions"];
   };
   return {
     setup,

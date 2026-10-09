@@ -532,6 +532,173 @@ profiles:
     }
   });
 
+  test("persists and resolves task-delivery setup over the socket with project autodiscovery", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-delivery-setup-cli-"));
+    temporaryDirectories.push(projectRoot);
+    writeFileSync(join(projectRoot, "README.md"), "# Setup\n");
+    const socket = createTestUnixSocket();
+    temporaryDirectories.push(socket.root);
+    const daemon = await bootstrap({
+      projectRoot,
+      socketPath: socket.socketPath,
+    });
+    const controller = new AbortController();
+    const running = daemon.start(controller.signal);
+    const invoke = async (args: string[]) => {
+      const output = captureIo();
+      const code = await runRuntimeCli(args, {
+        projectRoot,
+        workingDirectory: projectRoot,
+        socketPath: socket.socketPath,
+        io: output.io,
+      });
+      return { code, ...output };
+    };
+
+    try {
+      await waitForDaemon(socket.socketPath);
+      const installed = await invoke(["install", ".", "--json"]);
+      expect([0, 2]).toContain(installed.code);
+
+      // Without --project the bound checkout supplies the project id.
+      const set = await invoke([
+        "delivery:setup:set",
+        "--key",
+        "checkpointFrequency",
+        "--value",
+        '"stage-boundaries"',
+      ]);
+      expect(set.code).toBe(0);
+      expect(JSON.parse(set.stdout[0]!)).toMatchObject({
+        schemaVersion: 1,
+        key: "checkpointFrequency",
+        value: "stage-boundaries",
+        scope: "project",
+      });
+      expect(set.stderr).toEqual([]);
+
+      const numberSet = await invoke([
+        "delivery:setup:set",
+        "--key",
+        "contextThreshold",
+        "--value",
+        "0.5",
+      ]);
+      expect(numberSet.code).toBe(0);
+
+      const taskSet = await invoke([
+        "delivery:setup:set",
+        "--task",
+        "task-1",
+        "--key",
+        "resumeDetail",
+        "--value",
+        '"full"',
+      ]);
+      expect(taskSet.code).toBe(0);
+
+      const show = await invoke(["delivery:setup:show"]);
+      expect(show.code).toBe(0);
+      expect(JSON.parse(show.stdout[0]!)).toEqual({
+        schemaVersion: 1,
+        source: "runtime",
+        project: {
+          checkpointFrequency: "stage-boundaries",
+          contextThreshold: 0.5,
+        },
+        overrides: [],
+      });
+
+      const taskShow = await invoke([
+        "delivery:setup:show",
+        "--task",
+        "task-1",
+      ]);
+      expect(taskShow.code).toBe(0);
+      expect(JSON.parse(taskShow.stdout[0]!)).toMatchObject({
+        overrides: [
+          {
+            scope: "task",
+            scopeRef: "task-1",
+            key: "resumeDetail",
+            value: "full",
+          },
+        ],
+      });
+
+      const deleted = await invoke([
+        "delivery:setup:set",
+        "--key",
+        "contextThreshold",
+        "--value",
+        "null",
+      ]);
+      expect(deleted.code).toBe(0);
+      expect(JSON.parse(deleted.stdout[0]!)).toMatchObject({
+        key: "contextThreshold",
+        value: null,
+      });
+      const afterDelete = await invoke(["delivery:setup:show"]);
+      expect(JSON.parse(afterDelete.stdout[0]!)).toMatchObject({
+        project: { checkpointFrequency: "stage-boundaries" },
+      });
+
+      const invalid = await invoke([
+        "delivery:setup:set",
+        "--key",
+        "checkpointFrequency",
+        "--value",
+        '"whenever"',
+      ]);
+      expect(invalid.code).toBe(1);
+      expect(invalid.stderr.join("\n")).toContain(
+        "Invalid value for setup key checkpointFrequency",
+      );
+    } finally {
+      controller.abort();
+      await running;
+    }
+  });
+
+  test("delivery:setup commands never fall back to a local writer when the Runtime is unavailable", async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-setup-offline-"));
+    temporaryDirectories.push(projectRoot);
+    const runtimeHome = join(projectRoot, "runtime");
+    mkdirSync(runtimeHome);
+    const runtimePaths = resolveRuntimePaths({
+      mode: "user",
+      runtimeHome,
+    });
+    let executeAttempts = 0;
+    const unavailableRuntime: RuntimeClient = {
+      health: async () => {
+        throw new RuntimeUnavailableError(runtimePaths.socketPath);
+      },
+      execute: async () => {
+        executeAttempts += 1;
+        throw new RuntimeUnavailableError(runtimePaths.socketPath);
+      },
+    };
+    const output = captureIo();
+
+    expect(
+      await runRuntimeCli(
+        ["delivery:setup:set", "--project", "p", "--key", "handoffMode", "--value", '"gate"'],
+        {
+          projectRoot,
+          runtimePaths,
+          runtimeClient: unavailableRuntime,
+          io: output.io,
+        },
+      ),
+    ).toBe(1);
+    expect(executeAttempts).toBe(1);
+    expect(existsSync(runtimePaths.projectDatabasePath)).toBe(false);
+    expect(output.stderr).toEqual([
+      expect.stringContaining("AI Office Runtime is not available"),
+    ]);
+  });
+
   test("definition preview and apply reject pack collisions and U+0000 over the socket without writing", async () => {
     const projectRoot = mkdtempSync(
       join(tmpdir(), "ai-office-definition-collision-cli-"),

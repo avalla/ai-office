@@ -89,7 +89,9 @@ import {
   type RuntimeAgentKnowledge,
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import { KnowledgeAdmissionError } from "@ai-office/application/agent-knowledge/manage-knowledge-admission.ts";
+import { TaskDeliverySetupError } from "@ai-office/application/task-delivery-setup/task-delivery-setup-errors.ts";
 import { handleKnowledgeCommand } from "./commands/knowledge.ts";
+import { handleDeliverySetupCommand } from "./commands/delivery-setup.ts";
 import { handleModelCommand } from "./commands/model.ts";
 import {
   ModelRoutingError,
@@ -312,6 +314,8 @@ const commands = [
   "knowledge:plan",
   "knowledge:admit",
   "knowledge:trace",
+  "delivery:setup:show",
+  "delivery:setup:set",
   "resource:create",
   "resource:list",
   "resource:disable",
@@ -419,6 +423,7 @@ const handlers = [
   handleRequirementCommand,
   handleMemoryCommand,
   handleKnowledgeCommand,
+  handleDeliverySetupCommand,
   handleModelCommand,
   handleCapabilityCommand,
 ] as const;
@@ -445,6 +450,7 @@ function formatKnownError(error: unknown): string | null {
     error instanceof StaleProjectDefinitionError ||
     error instanceof ProjectDefinitionProjectNotFoundError ||
     error instanceof KnowledgeAdmissionError ||
+    error instanceof TaskDeliverySetupError ||
     error instanceof KnowledgeStoreError ||
     error instanceof DomainValidationError ||
     error instanceof ProjectNotFoundError ||
