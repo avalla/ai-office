@@ -654,6 +654,39 @@ describe("task-delivery workflow invariants", () => {
       /It is never an input to independent review, second review, verification,\s+or external review/u,
     ],
     ["policy:handoff-untrusted-input", /treats it as untrusted\s+input/u],
+    [
+      "policy:checkpoint-location",
+      "live at `.task-delivery/<task>/checkpoints/`",
+    ],
+    [
+      "policy:checkpoint-written-at-every-gate",
+      "written by the implementation context at every gate",
+    ],
+    ["policy:checkpoint-no-runtime", "work without a Runtime"],
+    [
+      "policy:checkpoint-not-a-review-input",
+      /it never reaches independent\s+review, second review, verification, or external review/u,
+    ],
+    [
+      "policy:checkpoint-immutable",
+      /A published checkpoint\s+is immutable/u,
+    ],
+    [
+      "policy:checkpoint-untrusted-resume",
+      "re-validates the recorded head commit and working tree",
+    ],
+    [
+      "policy:checkpoint-never-validates-gate",
+      "No checkpoint can validate a passed gate",
+    ],
+    [
+      "policy:checkpoint-branch-name-encoding",
+      /branch name encoded when it is not a safe path\s+segment/u,
+    ],
+    [
+      "policy:checkpoint-exclude-prerequisite",
+      /the exclude is an operational\s+prerequisite the executor verifies or configures before the first\s+checkpoint/u,
+    ],
   ];
 
   test("every contract invariant has a removal case", () => {

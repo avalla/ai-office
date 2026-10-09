@@ -88,6 +88,7 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       "references/evidence.md",
       "references/configuration.md",
       "references/handoff.md",
+      "references/checkpoints.md",
       "assets/pr-template.md",
     ],
     stages: [
@@ -298,6 +299,45 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
       {
         id: "policy:handoff-untrusted-input",
         pattern: /treats it as untrusted input/iu,
+      },
+      {
+        id: "policy:checkpoint-location",
+        pattern: /live at `\.task-delivery\/<task>\/checkpoints\/`/iu,
+      },
+      {
+        id: "policy:checkpoint-written-at-every-gate",
+        pattern: /written by the implementation context at every gate/iu,
+      },
+      {
+        id: "policy:checkpoint-no-runtime",
+        pattern: /work without a Runtime/iu,
+      },
+      {
+        id: "policy:checkpoint-not-a-review-input",
+        pattern:
+          /it never reaches independent review, second review, verification, or external review/iu,
+      },
+      {
+        id: "policy:checkpoint-immutable",
+        pattern: /A published checkpoint is immutable/iu,
+      },
+      {
+        id: "policy:checkpoint-untrusted-resume",
+        pattern: /re-validates the recorded head commit and working tree/iu,
+      },
+      {
+        id: "policy:checkpoint-never-validates-gate",
+        pattern: /No checkpoint can validate a passed gate/iu,
+      },
+      {
+        id: "policy:checkpoint-branch-name-encoding",
+        pattern:
+          /branch name encoded when it is not a safe path segment/iu,
+      },
+      {
+        id: "policy:checkpoint-exclude-prerequisite",
+        pattern:
+          /the exclude is an operational prerequisite the executor verifies or configures before the first checkpoint/iu,
       },
     ],
   },
