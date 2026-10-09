@@ -195,6 +195,7 @@ const projectScopedCommands = new Set([
   "memory:pattern:adopt",
   "memory:references",
   "knowledge:search",
+  "knowledge:task",
   "knowledge:plan",
   "knowledge:admit",
   "knowledge:trace",

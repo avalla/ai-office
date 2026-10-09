@@ -308,6 +308,7 @@ const commands = [
   "memory:references",
   "memory:deprecate",
   "knowledge:search",
+  "knowledge:task",
   "knowledge:plan",
   "knowledge:admit",
   "knowledge:trace",

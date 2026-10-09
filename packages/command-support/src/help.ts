@@ -138,6 +138,7 @@ Commands:
   memory:references --project <id> [--json]
   memory:deprecate --type <role|pattern|lesson> --id <id> [--version <n>]  # version required for roles and patterns
   knowledge:search --project <id> --query <literal-text> [--limit <1..5>] [--agent <id>]  # matches record text, not titles; --agent excludes imported legacy records
+  knowledge:task --project <id> --task <task-id> [--limit <1..5>]  # read-only task-linked memories and decisions for handoff/resume enrichment; the state field distinguishes an unusable store from no hits
   knowledge:plan --project <id> <source> (--kind memory --text <text> | --kind decision --title <title> --text <text>)
     <source> is exactly one of:
       --run <completed-run-id>                                        # worker AgentRun; same as --source agent-run --run <id>
