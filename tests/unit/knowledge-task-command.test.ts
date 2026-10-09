@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   KnowledgeStoreError,
   type AgentKnowledgeStore,
+  type KnowledgeHit,
   type KnowledgeScope,
   type SearchKnowledgeHit,
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
@@ -13,8 +14,17 @@ const scope: KnowledgeScope = {
   repositoryId: "repo-a",
 };
 
-function knowledgeHit(overrides: Partial<SearchKnowledgeHit> = {}): SearchKnowledgeHit {
-  return {
+function knowledgeHit(
+  overrides: {
+    id?: string;
+    kind?: "memory" | "decision";
+    text?: string;
+    title?: string | null;
+    runId?: string;
+    createdAt?: Date;
+  } = {},
+): SearchKnowledgeHit {
+  const base: KnowledgeHit = {
     tenantId: scope.tenantId,
     repositoryId: scope.repositoryId,
     id: "ak_mem_1",
@@ -26,8 +36,8 @@ function knowledgeHit(overrides: Partial<SearchKnowledgeHit> = {}): SearchKnowle
     taskId: "task-1",
     source: { id: "run-1", kind: "run", label: "Agent run run-1" },
     createdAt: new Date("2026-10-01T10:00:00.000Z"),
-    ...overrides,
   };
+  return { ...base, ...overrides };
 }
 
 interface Harness {
