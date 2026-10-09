@@ -1,6 +1,7 @@
 import { expect, it } from "vitest";
 import { CborCodec } from "../../packages/storage-surrealdb/node_modules/surrealdb";
 import { connectSurrealAgentKnowledgeStore } from "../../packages/storage-surrealdb/src/connect-agent-knowledge-store.ts";
+import { probeSurrealAgentKnowledgeStore } from "../../packages/storage-surrealdb/src/probe-agent-knowledge-store.ts";
 
 /**
  * Proves the SDK 2.0.8 authentication lifecycle of
@@ -68,10 +69,10 @@ async function waitFor(condition: () => boolean, timeoutMs: number, label: strin
   }
 }
 
-function withDeadline(promise: Promise<void>, timeoutMs: number, label: string): Promise<void> {
+function withDeadline<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   return Promise.race([
     promise,
-    new Promise<void>((_, reject) =>
+    new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error(`timed out after ${timeoutMs}ms waiting for ${label}`)), timeoutMs),
     ),
   ]);
@@ -82,6 +83,8 @@ function startFakeSurreal(options: {
   rejectPassword?: string;
   /** Leave the version handshake unanswered so connect() stays pending. */
   neverAnswerVersion?: boolean;
+  /** Answer the handshake but leave every query unanswered. */
+  neverAnswerQuery?: boolean;
 }): FakeSurreal {
   const codec = new CborCodec({});
   const connections: FakeConnection[] = [];
@@ -153,6 +156,7 @@ function startFakeSurreal(options: {
             // token, forcing the SDK off the authenticate/refresh paths.
             return fail(-100, "token expired");
           case "query":
+            if (options.neverAnswerQuery) return;
             // Every store statement (namespace/database DDL, schema DDL,
             // scoped reads) resolves generically; the adapter only inspects
             // the array-of-responses shape, which this preserves.
@@ -300,9 +304,63 @@ it("rejects with the cancellation error when aborted mid-connect", async () => {
     const connecting = connectSurrealAgentKnowledgeStore(connectConfig(fake.endpoint), controller.signal);
     await waitFor(() => fake.connections.length === 1, 5_000, "first websocket connection");
     controller.abort();
-    await expect(connecting).rejects.toThrow("Agent knowledge connection cancelled");
+    await expect(
+      withDeadline(connecting, 5_000, "settlement of the aborted connect"),
+    ).rejects.toThrow("Agent knowledge connection cancelled");
     // The aborted connect must still close its socket server-side.
     await withDeadline(fake.connections[0]!.closeObserved, 5_000, "server-side socket close after aborted connect");
+    // Closing the socket must not trigger the SDK's automatic reconnect.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(fake.connections).toHaveLength(1);
+  } finally {
+    fake.stop();
+  }
+});
+
+it("probe resolves against a healthy server and closes its connection", async () => {
+  const fake = startFakeSurreal({ accessTokenTtlSec: 3600 });
+  try {
+    await probeSurrealAgentKnowledgeStore(connectConfig(fake.endpoint), 2_000);
+    expect(fake.connections).toHaveLength(1);
+    const methods = fake.connections[0]!.requests.map((request) => request.method);
+    expect(methods[methods.length - 1]).toBe("query");
+    // The throwaway probe connection must close, not linger.
+    await withDeadline(fake.connections[0]!.closeObserved, 5_000, "server-side socket close after probe");
+  } finally {
+    fake.stop();
+  }
+});
+
+it("probe times out against a silent server without accumulating connections", async () => {
+  const fake = startFakeSurreal({ accessTokenTtlSec: 3600, neverAnswerQuery: true });
+  try {
+    const started = Date.now();
+    await expect(
+      probeSurrealAgentKnowledgeStore(connectConfig(fake.endpoint), 300),
+    ).rejects.toThrow("timed out");
+    expect(Date.now() - started).toBeGreaterThanOrEqual(250);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    // The timed-out probe's socket is closed server-side, so a repeated
+    // probe starts a fresh connection instead of piling pending RPCs.
+    await withDeadline(fake.connections[0]!.closeObserved, 5_000, "server-side socket close after timed-out probe");
+    await expect(
+      probeSurrealAgentKnowledgeStore(connectConfig(fake.endpoint), 300),
+    ).rejects.toThrow("timed out");
+    expect(fake.connections).toHaveLength(2);
+    await withDeadline(fake.connections[1]!.closeObserved, 5_000, "server-side socket close after second timed-out probe");
+  } finally {
+    fake.stop();
+  }
+});
+
+it("probe observes recovery on a fresh connection", async () => {
+  // Connection refused: nothing is listening on this endpoint.
+  await expect(
+    probeSurrealAgentKnowledgeStore(connectConfig("ws://127.0.0.1:1/rpc"), 2_000),
+  ).rejects.toThrow();
+  const fake = startFakeSurreal({ accessTokenTtlSec: 3600 });
+  try {
+    await probeSurrealAgentKnowledgeStore(connectConfig(fake.endpoint), 2_000);
   } finally {
     fake.stop();
   }

@@ -45,7 +45,18 @@ AK-02 schema, but AK-03 does not create or change knowledge records.
 `/health` reports `knowledge.provider` and
 `knowledge.startup` (`disabled`, `misconfigured`, `connected`, or `unavailable`)
 as the **startup observation**, not a live database probe. Restart to retry
-after a failure or configuration change. AK-03 introduced no knowledge mutation command; AK-05 later added reviewed admission.
+after a failure or configuration change. `GET /api/status` additionally probes
+connectivity at request time and reports it separately as `knowledge.live`
+(`connected`, `unavailable`, or `not_checked`). The probe runs on a throwaway
+connection that is closed when the probe settles or hits its 1.5s deadline
+(plus a 250ms close budget, so a wedged transport can delay one status
+request by at most 1.75s):
+it only connects and runs a trivial read, never writes, and holds no
+transaction. Because every probe frees its own socket, a store that accepts
+connections but stops answering never accumulates pending RPCs, and the next
+request probes on a fresh connection and observes recovery immediately. AK-03
+introduced no knowledge mutation command; AK-05 later added reviewed
+admission.
 
 ## Retrieval contract
 

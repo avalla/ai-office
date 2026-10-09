@@ -1994,6 +1994,12 @@ export function RuntimePage({
       : status.knowledge.startup === "disabled"
         ? "muted"
         : "attention";
+  const knowledgeLiveTone =
+    status.knowledge.live === "connected"
+      ? "good"
+      : status.knowledge.live === "unavailable"
+        ? "attention"
+        : "muted";
   const redisTone =
     status.queue.redis === "reachable"
       ? "good"
@@ -2026,7 +2032,7 @@ export function RuntimePage({
       </Section>
       <Section
         title="Knowledge store"
-        detail="Connection result observed at startup, not a live probe"
+        detail="Connection result observed at startup, plus a live probe executed per request"
       >
         <Card>
           <FactGrid
@@ -2038,6 +2044,15 @@ export function RuntimePage({
                   <StatusBadge
                     label={status.knowledge.startup}
                     tone={knowledgeTone}
+                  />
+                ),
+              },
+              {
+                label: "Live",
+                value: (
+                  <StatusBadge
+                    label={status.knowledge.live}
+                    tone={knowledgeLiveTone}
                   />
                 ),
               },

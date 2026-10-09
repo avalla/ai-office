@@ -71,7 +71,12 @@ import {
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 type AgentKnowledgeConnector = typeof connectSurrealAgentKnowledgeStore;
 type AgentKnowledgeHandle = Awaited<ReturnType<AgentKnowledgeConnector>>;
+type AgentKnowledgeProber = (
+  config: Extract<AgentKnowledgeConfiguration, { kind: "surrealdb" }>["connection"],
+  deadlineMs: number,
+) => Promise<void>;
 const knowledgeConnectTimeoutMs = 5_000;
+const knowledgeProbeTimeoutMs = 1_500;
 
 async function connectKnowledgeWithDeadline(
   connector: AgentKnowledgeConnector,
@@ -125,6 +130,10 @@ export interface BootstrapOptions {
   connectAgentKnowledge?: AgentKnowledgeConnector;
   /** Internal seam for a bounded connection test. */
   agentKnowledgeConnectTimeoutMs?: number;
+  /** Internal seam for a bounded live status probe test. */
+  agentKnowledgeProbeTimeoutMs?: number;
+  /** Internal seam for deterministic live-probe tests. */
+  probeAgentKnowledge?: AgentKnowledgeProber;
   /**
    * Optional host model routing. When omitted, the host reads it once from
    * `<AI_OFFICE_HOME>/model-routing.yaml` or, in the foreground only, from
@@ -319,7 +328,11 @@ export async function bootstrap(
               startup: "misconfigured",
             }
           : { provider: "surrealdb", startup: "unavailable" };
+    let knowledgeConnectionConfig:
+      | Extract<AgentKnowledgeConfiguration, { kind: "surrealdb" }>["connection"]
+      | undefined;
     if (validatedKnowledgeConfiguration.kind === "surrealdb") {
+      knowledgeConnectionConfig = validatedKnowledgeConfiguration.connection;
       try {
         agentKnowledgeHandle = await connectKnowledgeWithDeadline(
           options.connectAgentKnowledge ??
@@ -401,6 +414,40 @@ export async function bootstrap(
     const sourceRevision = (options.readSourceRevision ?? readSourceRevision)(
       sourceDirectory,
     );
+    // Live request-time connectivity probe, separate from the startup-observed
+    // `knowledgeStatus`: the connector runs it on a throwaway connection that
+    // is closed when the probe settles or hits its deadline. A store that
+    // accepts connections but stops answering therefore never accumulates
+    // pending RPCs — each probe frees its own socket — and the next request
+    // probes on a fresh connection, so recovery is observed immediately. The
+    // probe only connects and runs a trivial read; it never writes and holds
+    // no transaction, so a dead store only delays this one status request by
+    // the probe deadline plus a small connection-close budget.
+    const knowledgeLiveStatus = async (): Promise<
+      "connected" | "unavailable" | "not_checked"
+    > => {
+      if (
+        agentKnowledge.state !== "connected" ||
+        knowledgeConnectionConfig === undefined
+      )
+        return "not_checked";
+      try {
+        const probe =
+          options.probeAgentKnowledge ??
+          (
+            await import(
+              "@ai-office/storage-surrealdb/probe-agent-knowledge-store.ts"
+            )
+          ).probeSurrealAgentKnowledgeStore;
+        await probe(
+          knowledgeConnectionConfig,
+          options.agentKnowledgeProbeTimeoutMs ?? knowledgeProbeTimeoutMs,
+        );
+        return "connected";
+      } catch {
+        return "unavailable";
+      }
+    };
     const runtimeStatus = async (): Promise<RuntimeStatus> => {
       const startedAt = statusHost.current?.startedAtInstant ?? new Date();
       return {
@@ -413,7 +460,10 @@ export async function bootstrap(
           0,
           Math.floor((Date.now() - startedAt.getTime()) / 1000),
         ),
-        knowledge: knowledgeStatus,
+        knowledge: {
+          ...knowledgeStatus,
+          live: await knowledgeLiveStatus(),
+        },
         queue: await queueStatus(),
         // Reaching this composition means the authoritative project store
         // opened; a daemon that failed to open it never answers.

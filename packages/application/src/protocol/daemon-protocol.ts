@@ -60,7 +60,16 @@ export interface RuntimeStatus {
   sourceRevision: string | null;
   startedAt: string;
   uptimeSeconds: number;
-  knowledge: NonNullable<DaemonHealthResponse["knowledge"]>;
+  knowledge: NonNullable<DaemonHealthResponse["knowledge"]> & {
+    /**
+     * Live connectivity probe executed at request time on a throwaway
+     * connection (connect plus a trivial read, bounded by a short deadline),
+     * distinct from the startup-observed `startup` state. Deliberately
+     * "not_checked" when no store connected at startup: the Runtime is not
+     * using that endpoint, so its live reachability is not reported.
+     */
+    live: "connected" | "unavailable" | "not_checked";
+  };
   queue: NonNullable<DaemonHealthResponse["queue"]>;
   /**
    * Observed at startup, not a live probe: reaching this composition means
