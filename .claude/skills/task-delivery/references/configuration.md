@@ -35,6 +35,10 @@ they are stricter.
 | `task_lifecycle.review`   | Command that marks a task as in review, run when its pull request is open                     | None: the project's documented way, otherwise report                                        |
 | `task_lifecycle.complete` | Command that marks a task as done, used only after stage 11                                   | None: the project's documented way, otherwise report                                        |
 
+`knowledgePolicy` is a resolved input to knowledge retrieval: where nothing
+resolves it yet, the `auto` default above is descriptive only — applying the
+default and persisting the setup are owned by the configuration task.
+
 ## Types
 
 `integration_branch`, `verification.*`, `external_review.command`,
