@@ -87,6 +87,7 @@ describe("project database migrations", () => {
       "0047_milestone_archived_status.sql",
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -146,6 +147,7 @@ describe("project database migrations", () => {
       { version: "0047_milestone_archived_status.sql" },
       { version: "0048_review_ready_task_dependencies.sql" },
       { version: "0049_task_completion_requires_completed_prerequisites.sql" },
+      { version: "0050_task_delivery_setup.sql" },
     ]);
     database.close();
   });

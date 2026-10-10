@@ -39,6 +39,11 @@ they are stricter.
 resolves it yet, the `auto` default above is descriptive only — applying the
 default and persisting the setup are owned by the configuration task.
 
+Five further keys steer the delivery itself: `checkpointFrequency`,
+`handoffMode`, `resumeDetail`, `knowledgePolicy`, and `contextThreshold`.
+They may sit in this file as a static fallback, and they are documented with
+the Runtime setup below.
+
 ## Types
 
 `integration_branch`, `verification.*`, `external_review.command`,
@@ -97,6 +102,63 @@ task-linked knowledge from the project's knowledge store:
 
 Knowledge stays advisory under every value; no value makes retrieved
 knowledge a gate input, and no value writes anything back.
+
+## Runtime setup
+
+Five keys steer the delivery: `checkpointFrequency`, `handoffMode`,
+`resumeDetail`, `knowledgePolicy`, and `contextThreshold`. They resolve in
+this order:
+
+1. **Runtime setup**, when the project has a Runtime that answers: the
+   project stores its own defaults, with optional overrides per run and per
+   task. Read them with `delivery:setup:show`; a run or task scope adds
+   `--run <id>` or `--task <id>`, and both together resolve both overrides,
+   merged over the project defaults in the order project, then run, then
+   task — the narrowest scope wins. Write one key with
+   `delivery:setup:set --key <key> --value <json>`; a write names a single
+   scope, and `--value null` deletes the key.
+2. **This file**, as a static fallback for a project without a Runtime. The
+   same five keys are accepted here under the same value contract; a key
+   present in both places is read from the Runtime when one answers.
+3. **The built-in defaults** below, when neither answers.
+
+A Runtime that was not contacted is reported as not checked, never as
+unreachable, and it is never required: without it, the file and the defaults
+carry the same contract. From a checkout,
+`bun scripts/skills/setup-resolution.ts [--project <id>] [--task <id>] [--run <id>]`
+runs this whole resolution and prints one JSON line,
+`{schemaVersion: 1, source, values}`, for scripts and tests; `--task` and
+`--run` may be passed together and resolve both overrides. A configuration
+that breaks its contract exits 1 with the typed message on stderr instead of
+guessing around it. Pass `--project` when the project id is known (the
+delivery flow usually knows it): without it, the office CLI discovers the
+binding from the current directory, and a directory the binding cannot reach —
+a task worktree, for example — resolves through the file or the defaults
+instead of pretending the Runtime was checked.
+
+### Setup keys
+
+| Key                   | Values                                             | Default      | Meaning                                                                                                                                         |
+| --------------------- | -------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `checkpointFrequency` | `every-gate`, `stage-boundaries`, `handoff-only`   | `every-gate` | When the implementation context publishes a checkpoint: at every gate, only at stage boundaries, or only when a handoff is prepared             |
+| `handoffMode`         | `offer`, `gate`                                    | `offer`      | `offer` asks at each trigger and never blocks; `gate` makes the handoff question part of the workflow — never a gate of any review              |
+| `resumeDetail`        | `brief`, `standard`, `full`                        | `standard`   | How much stage evidence a resuming context re-reads from the checkpoint before continuing, as [checkpoints](checkpoints.md) describes            |
+| `knowledgePolicy`     | `auto`, `required`, `disabled`                     | `auto`       | The resolved value feeds the knowledge retrieval policy above; it is the only setup key the handoff and resume gates consume                     |
+| `contextThreshold`    | a number from 0 to 1                               | 0.25         | Offers a handoff when the remaining context is estimated below this fraction; applies only where the executor can measure its remaining context  |
+
+The words are unquoted strings; `contextThreshold` is the one numeric key,
+written as plain digits with an optional decimal fraction (`0.25`), never
+quoted.
+
+### Guided setup
+
+On the first invocation, when no Runtime setup and no configuration value
+answers a setup key, ask for it instead of guessing: one question per key,
+offering the default above, through the executor's own question mechanism.
+Persist every answer with `delivery:setup:set` when a Runtime answers, or
+record it in `.task-delivery.yaml` when none does; the resolution order then
+keeps it for every later run. Asking is never blocking: a declined question
+keeps the default and needs nothing.
 
 ## Rules
 

@@ -6,6 +6,26 @@ context resuming the work reads the latest one instead of reconstructing
 state from prose. The handoff packet stays the human map; a handoff cites
 the latest checkpoint's id, and the checkpoint carries the machine state.
 
+## Setup-driven cadence
+
+Before the first checkpoint of a run, the implementation context resolves
+the delivery setup — with
+`bun scripts/skills/setup-resolution.ts [--task <id>] [--run <id>]`, or
+`delivery:setup:show` through the office CLI, which also answers run and
+task overrides — and applies two of its keys:
+
+- `checkpointFrequency` decides when a checkpoint is published:
+  `every-gate` at every gate (the behavior above), `stage-boundaries` only
+  when the work crosses a stage or gate boundary, and `handoff-only` only
+  when a handoff is prepared. A gate that publishes no checkpoint keeps its
+  evidence rules unchanged; the checkpoint is continuity, not proof.
+- `resumeDetail` decides how much stage evidence a resuming context
+  re-reads before continuing: `brief` reads the latest checkpoint alone,
+  `standard` adds the open findings and the next action, and `full`
+  re-reads every gate's evidence since the last handoff.
+
+The resume validation rules below hold under every value of both keys.
+
 ## Layout
 
 All paths are inside the task worktree, per task so successive tasks sharing

@@ -253,7 +253,7 @@ describe("task-delivery configuration contract", () => {
     expect(
       validateTaskDeliveryConfigSource("integration_brnch: main\n"),
     ).toEqual([
-      "unknown key integration_brnch (allowed: integration_branch, knowledgePolicy, verification, git, external_review, task_lifecycle)",
+      "unknown key integration_brnch (allowed: integration_branch, knowledgePolicy, checkpointFrequency, handoffMode, resumeDetail, contextThreshold, verification, git, external_review, task_lifecycle)",
     ]);
   });
 
@@ -265,6 +265,37 @@ describe("task-delivery configuration contract", () => {
     expect(
       validateTaskDeliveryConfigSource(`knowledgePolicy: ${value}\n`),
     ).toEqual([]);
+  });
+
+  test("accepts every setup key with a contract value", () => {
+    expect(
+      validateTaskDeliveryConfigSource(
+        "checkpointFrequency: stage-boundaries\nhandoffMode: gate\nresumeDetail: full\nknowledgePolicy: required\ncontextThreshold: 0.5\n",
+      ),
+    ).toEqual([]);
+    expect(
+      validateTaskDeliveryConfigSource("contextThreshold: 1\n"),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["checkpointFrequency", "whenever"],
+    ["handoffMode", "sometimes"],
+    ["resumeDetail", "verbose"],
+  ])("rejects an out-of-vocabulary %s value", (key, value) => {
+    const errors = validateTaskDeliveryConfigSource(`${key}: ${value}\n`);
+    expect(errors).toEqual([
+      expect.stringMatching(new RegExp(`^${key} must be one of:`, "u")),
+    ]);
+  });
+
+  test.each([
+    ["a word", "contextThreshold: high\n"],
+    ["a quoted number", 'contextThreshold: "0.5"\n'],
+    ["a negative number", "contextThreshold: -1\n"],
+    ["a fraction out of range", "contextThreshold: 1.5\n"],
+  ])("rejects contextThreshold written as %s", (_label, source) => {
+    expect(validateTaskDeliveryConfigSource(source)).not.toEqual([]);
   });
 
   test.each([
@@ -950,5 +981,44 @@ describe("skills:validate covers the project configuration", () => {
     expect(result.stderr.toString()).toContain(
       "git.worktree_required must be a boolean",
     );
+  });
+
+  test("reports setup key drift between the Runtime schema, the YAML schema, and the configuration reference", () => {
+    const root = repositoryCopy();
+    const configurationPath = join(
+      root,
+      "skills",
+      "task-delivery",
+      "references",
+      "configuration.md",
+    );
+    const source = readFileSync(configurationPath, "utf8");
+    writeFileSync(
+      configurationPath,
+      source.replace("| `resumeDetail`", "| `resumeDetailX`"),
+    );
+
+    expect(validateSkills(root)).toEqual([
+      expect.stringContaining(
+        "references/configuration.md setup keys",
+      ),
+    ]);
+  });
+
+  test("reports a missing setup keys table in the configuration reference", () => {
+    const root = repositoryCopy();
+    const configurationPath = join(
+      root,
+      "skills",
+      "task-delivery",
+      "references",
+      "configuration.md",
+    );
+    const source = readFileSync(configurationPath, "utf8");
+    writeFileSync(configurationPath, source.replace("### Setup keys", "### Setup"));
+
+    expect(validateSkills(root)).toEqual([
+      expect.stringContaining("no `### Setup keys` table"),
+    ]);
   });
 });

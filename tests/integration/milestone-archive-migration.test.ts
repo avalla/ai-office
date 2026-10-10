@@ -56,6 +56,7 @@ test("archive migration preserves milestones, requirement links and review subje
       "0047_milestone_archived_status.sql",
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
     ]);
     expect(migrate(database, migrations).applied).toEqual([]);
     expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);

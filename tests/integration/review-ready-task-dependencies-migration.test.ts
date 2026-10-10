@@ -63,6 +63,7 @@ test("upgrading admits review-submitted prerequisites without admitting pending 
     expect(migrate(database, migrations).applied).toEqual([
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
     ]);
     expect(migrate(database, migrations).applied).toEqual([]);
     expect(() =>

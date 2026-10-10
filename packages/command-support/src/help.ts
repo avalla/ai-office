@@ -147,6 +147,8 @@ Commands:
                                                                       # evidence: requirement (not rejected), adr (accepted), review (approved), task, handover; all in this project
   knowledge:admit --project <id> <source> (--kind memory --text <text> | --kind decision --title <title> --text <text>) --approve <plan-hash> --actor <reviewer>  # operator-confirmed: --actor must equal --confirmed-by
   knowledge:trace --project <id> --kind <memory|decision> --id <knowledge-id>  # reports the admission source, its evidence, and the admission audit reference
+  delivery:setup:show --project <id> [--run <id>] [--task <id>]  # read-only resolved task-delivery setup: built-in defaults < project < run < task; both selectors may combine
+  delivery:setup:set --project <id> [--run <id> | --task <id>] --key <key> --value <json> [--actor <name>]  # upsert one setup key; --value null deletes it
   resource:create --project <id> --type <type> --provider <fake|filesystem> --name <name> [--external-ref <absolute-root>] [--configuration <json>]
   resource:list --project <id>
   resource:disable --project <id> --resource <id>

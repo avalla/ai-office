@@ -674,8 +674,8 @@ describe("task-delivery workflow invariants", () => {
       "live at `.task-delivery/<task>/checkpoints/`",
     ],
     [
-      "policy:checkpoint-written-at-every-gate",
-      "written by the implementation context at every gate",
+      "policy:checkpoint-written-per-frequency",
+      "published by the implementation context at the `checkpointFrequency`",
     ],
     ["policy:checkpoint-no-runtime", "work without a Runtime"],
     [
@@ -789,8 +789,10 @@ describe("task-delivery workflow invariants", () => {
     "requires the executor block to cover %s",
     (executor) => {
       const { skillRoot } = repositoryCopy();
+      // Every row the executor owns comes out: with the continuity transfer
+      // table an executor may own more than one row.
       rewrite(join(skillRoot, "SKILL.md"), (source) =>
-        source.replace(new RegExp(`^\\| ${executor} .*\\n`, "mu"), ""),
+        source.replace(new RegExp(`^\\| ${executor} .*\\n`, "gmu"), ""),
       );
 
       expect(validateSkillPackage(skillRoot)).toEqual([

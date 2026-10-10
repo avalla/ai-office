@@ -8,6 +8,14 @@ integration_branch: main
 # auto (default), required, or disabled. See references/configuration.md.
 # knowledgePolicy: auto
 
+# Optional delivery setup (see references/configuration.md, "Runtime
+# setup"): with a Runtime these resolve from it, without one they may sit
+# here as a static fallback. Values must match the documented contract.
+# checkpointFrequency: every-gate
+# handoffMode: offer
+# resumeDetail: standard
+# contextThreshold: 0.25
+
 verification:
   full: "<command that runs the whole check suite>"
   targeted: "<command that runs a narrow test selection>"
