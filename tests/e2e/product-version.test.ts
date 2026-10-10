@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -529,12 +530,30 @@ describe("fail-soft revision reporting", () => {
     await expectProductVersionOnly(root, path);
   });
 
-  test("unreadable or corrupt Git metadata", async () => {
+  // Deterministic fixtures: the corrupt/unreadable states are created directly,
+  // without first building a real repository and deleting its `.git` directory.
+  // Removing a live `.git` and immediately replacing it raced with the runner's
+  // Git and surfaced as EISDIR on CI (issue #165).
+  test("corrupt Git metadata as a gitfile without a prior repository", async () => {
     const root = temporaryRoot();
-    const { path } = sourceCheckout(root);
-    rmSync(join(path, ".git"), { recursive: true, force: true });
+    const path = join(root, "distribution");
+    copyDistribution(path);
     writeFileSync(join(path, ".git"), "gitdir: /nonexistent/ai-office\n");
+    expect(statSync(join(path, ".git")).isFile()).toBe(true);
     await expectProductVersionOnly(root, path);
+  });
+
+  test("unreadable Git metadata", async () => {
+    const root = temporaryRoot();
+    const path = join(root, "distribution");
+    copyDistribution(path);
+    writeFileSync(join(path, ".git"), "gitdir: /nonexistent/ai-office\n");
+    chmodSync(join(path, ".git"), 0o000);
+    try {
+      await expectProductVersionOnly(root, path);
+    } finally {
+      chmodSync(join(path, ".git"), 0o644);
+    }
   });
 
   test("a distribution nested in another repository never reports the enclosing revision", async () => {
