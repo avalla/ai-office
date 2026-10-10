@@ -136,18 +136,61 @@ describe("delivery:setup:show", () => {
     });
   });
 
-  it("refuses --run and --task together, positionals and unknown options", async () => {
+  it("accepts --run and --task together and merges both override scopes", async () => {
+    const { context, stdout } = harness({
+      entries: [
+        {
+          scope: "project",
+          scopeRef: null,
+          key: "checkpointFrequency",
+          value: "stage-boundaries",
+        },
+        {
+          scope: "run",
+          scopeRef: "run-1",
+          key: "checkpointFrequency",
+          value: "handoff-only",
+        },
+        {
+          scope: "task",
+          scopeRef: "task-1",
+          key: "checkpointFrequency",
+          value: "every-gate",
+        },
+      ],
+    });
+    const code = await run(context, "delivery:setup:show", [
+      "--project",
+      "project",
+      "--run",
+      "run-1",
+      "--task",
+      "task-1",
+    ]);
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout[0]!)).toEqual({
+      schemaVersion: 1,
+      source: "runtime",
+      project: { checkpointFrequency: "stage-boundaries" },
+      overrides: [
+        {
+          scope: "run",
+          scopeRef: "run-1",
+          key: "checkpointFrequency",
+          value: "handoff-only",
+        },
+        {
+          scope: "task",
+          scopeRef: "task-1",
+          key: "checkpointFrequency",
+          value: "every-gate",
+        },
+      ],
+    });
+  });
+
+  it("rejects positionals and unknown options on show", async () => {
     const { context } = harness();
-    await expect(
-      run(context, "delivery:setup:show", [
-        "--project",
-        "project",
-        "--run",
-        "run-1",
-        "--task",
-        "task-1",
-      ]),
-    ).rejects.toThrow("at most one of --run and --task");
     await expect(
       run(context, "delivery:setup:show", ["--project", "project", "extra"]),
     ).rejects.toThrow("only accepts named options");
@@ -265,6 +308,24 @@ describe("delivery:setup:set", () => {
       value: null,
     });
     expect(remove).toHaveBeenCalledWith("project", "project", null, "contextThreshold");
+  });
+
+  it("keeps --run and --task mutually exclusive on set", async () => {
+    const { context } = harness();
+    await expect(
+      run(context, "delivery:setup:set", [
+        "--project",
+        "project",
+        "--run",
+        "run-1",
+        "--task",
+        "task-1",
+        "--key",
+        "handoffMode",
+        "--value",
+        '"gate"',
+      ]),
+    ).rejects.toThrow("accepts at most one of --run and --task");
   });
 
   it("rejects invalid JSON, unknown keys and out-of-contract values", async () => {

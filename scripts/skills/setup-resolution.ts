@@ -209,7 +209,7 @@ export function resolveSetup(
     args.push("--project", options.projectId);
   }
   if (options.taskId !== undefined) args.push("--task", options.taskId);
-  else if (options.runId !== undefined) args.push("--run", options.runId);
+  if (options.runId !== undefined) args.push("--run", options.runId);
   const runtime = runner(args);
   const show =
     runtime.status === 0 ? parseShowOutput(runtime.stdout) : null;
@@ -236,8 +236,6 @@ function parseEntryArguments(argv: readonly string[]): EntryArguments {
     else throw new SetupResolutionError(`Unknown argument: ${argument}`);
     index += 1;
   }
-  if (parsed.taskId !== undefined && parsed.runId !== undefined)
-    throw new SetupResolutionError("Pass at most one of --task and --run");
   return parsed;
 }
 

@@ -12,7 +12,27 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function scopeSelection(
+/**
+ * Selectors of a read: show accepts both, and the service merges
+ * project -> run -> task, so a task override can refine its run's.
+ */
+function showScopeSelection(parsed: ParsedArguments): {
+  runId?: string;
+  taskId?: string;
+} {
+  const runId = parsed.options.get("run");
+  const taskId = parsed.options.get("task");
+  return {
+    ...(runId === undefined ? {} : { runId }),
+    ...(taskId === undefined ? {} : { taskId }),
+  };
+}
+
+/**
+ * The single scope of a write: set must name at most one, or the target row
+ * would be ambiguous.
+ */
+function setScopeSelection(
   command: string,
   parsed: ParsedArguments,
 ): { runId?: string; taskId?: string } {
@@ -45,7 +65,7 @@ export async function handleDeliverySetupCommand(
     const parsed = parseArguments(args, new Set(["project", "run", "task"]));
     if (parsed.positionals.length > 0)
       throw new CliUsageError("delivery:setup:show only accepts named options");
-    const filter = scopeSelection(command, parsed);
+    const filter = showScopeSelection(parsed);
     const service = new ReadTaskDeliverySetup({
       projects: context.projects,
       setup: context.taskDeliverySetup,
@@ -72,7 +92,7 @@ export async function handleDeliverySetupCommand(
     );
     if (parsed.positionals.length > 0)
       throw new CliUsageError("delivery:setup:set only accepts named options");
-    const filter = scopeSelection(command, parsed);
+    const filter = setScopeSelection(command, parsed);
     const scope = filter.taskId !== undefined ? "task" : filter.runId !== undefined ? "run" : "project";
     const service = new WriteTaskDeliverySetup({
       projects: context.projects,

@@ -111,11 +111,12 @@ this order:
 
 1. **Runtime setup**, when the project has a Runtime that answers: the
    project stores its own defaults, with optional overrides per run and per
-   task. Read them with `delivery:setup:show` and write one with
-   `delivery:setup:set --key <key> --value <json>`; a run or task scope adds
-   `--run <id>` or `--task <id>`, and `--value null` deletes the key. Values
-   merge over the built-in defaults in the order project, then run, then
-   task: the narrowest scope wins.
+   task. Read them with `delivery:setup:show`; a run or task scope adds
+   `--run <id>` or `--task <id>`, and both together resolve both overrides,
+   merged over the project defaults in the order project, then run, then
+   task — the narrowest scope wins. Write one key with
+   `delivery:setup:set --key <key> --value <json>`; a write names a single
+   scope, and `--value null` deletes the key.
 2. **This file**, as a static fallback for a project without a Runtime. The
    same five keys are accepted here under the same value contract; a key
    present in both places is read from the Runtime when one answers.
@@ -126,7 +127,8 @@ unreachable, and it is never required: without it, the file and the defaults
 carry the same contract. From a checkout,
 `bun scripts/skills/setup-resolution.ts [--project <id>] [--task <id>] [--run <id>]`
 runs this whole resolution and prints one JSON line,
-`{schemaVersion: 1, source, values}`, for scripts and tests; a configuration
+`{schemaVersion: 1, source, values}`, for scripts and tests; `--task` and
+`--run` may be passed together and resolve both overrides. A configuration
 that breaks its contract exits 1 with the typed message on stderr instead of
 guessing around it. Pass `--project` when the project id is known (the
 delivery flow usually knows it): without it, the office CLI discovers the

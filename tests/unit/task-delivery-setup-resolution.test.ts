@@ -196,6 +196,14 @@ describe("resolveSetup", () => {
     expect(calls[0]).toEqual(["delivery:setup:show", "--task", "task-1"]);
     resolveSetup(root, { runner, runId: "run-1" });
     expect(calls[1]).toEqual(["delivery:setup:show", "--run", "run-1"]);
+    resolveSetup(root, { runner, runId: "run-1", taskId: "task-1" });
+    expect(calls[2]).toEqual([
+      "delivery:setup:show",
+      "--task",
+      "task-1",
+      "--run",
+      "run-1",
+    ]);
   });
 
   test("passes an explicit project id through to the show command", () => {
@@ -291,16 +299,16 @@ describe("setup-resolution entry point", () => {
     expect(result.stderr).toContain("checkpointFrequency must be one of:");
   });
 
-  test("rejects unknown arguments and --task together with --run", () => {
+  test("accepts --task and --run together and rejects unknown arguments", () => {
     const root = temporaryRoot();
     expect(runEntryPoint(root, ["--bogus"]).status).toBe(1);
-    expect(
-      runEntryPoint(root, ["--task", "t", "--run", "r"]).status,
-    ).toBe(1);
     expect(runEntryPoint(root, ["--task"]).status).toBe(1);
     expect(runEntryPoint(root, ["--project"]).status).toBe(1);
     expect(runEntryPoint(root, ["--project", "p", "--task", "t"]).status).toBe(
       0,
     );
+    const both = runEntryPoint(root, ["--task", "t", "--run", "r"]);
+    expect(both.status).toBe(0);
+    expect(JSON.parse(both.stdout)).toMatchObject({ schemaVersion: 1 });
   });
 });
