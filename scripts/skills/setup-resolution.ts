@@ -140,14 +140,20 @@ function parseShowOutput(stdout: string): RuntimeSetupShow {
 /**
  * Reads the setup keys from `.task-delivery.yaml`. A file that is present but
  * breaks its contract is a stop condition, exactly as the skill documents:
- * this throws instead of falling back to defaults around a typo.
+ * this throws instead of falling back to defaults around a typo. Only a
+ * file that does not exist at all (ENOENT) means "no static setup"; any
+ * other read failure - a directory in its place, no permission - names
+ * itself, because guessing around it could silently switch a policy off.
  */
 export function readYamlSetup(root: string): Record<string, unknown> | null {
   let source: string;
   try {
     source = readFileSync(join(root, taskDeliveryConfigName), "utf8");
-  } catch {
-    return null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new SetupResolutionError(
+      `${taskDeliveryConfigName} cannot be read (${errorMessage(error)})`,
+    );
   }
   const problems = validateTaskDeliveryConfigSource(source);
   if (problems.length > 0)

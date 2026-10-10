@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveKnowledgePolicy } from "../../scripts/skills/knowledge-policy.ts";
 import {
+  readYamlSetup,
   resolveSetup,
   resolveSetupFromShow,
   SetupResolutionError,
@@ -149,6 +150,58 @@ describe("resolveSetup", () => {
       knowledgePolicy: "auto",
       contextThreshold: 0.25,
     });
+  });
+
+  test("returns every non-default workflow value intact and feeds the knowledge mapping", () => {
+    const resolved = resolveSetupFromShow(
+      {
+        project: {
+          checkpointFrequency: "stage-boundaries",
+          handoffMode: "gate",
+          resumeDetail: "brief",
+        },
+        overrides: [
+          {
+            scope: "task",
+            scopeRef: "task-1",
+            key: "checkpointFrequency",
+            value: "handoff-only",
+          },
+          {
+            scope: "task",
+            scopeRef: "task-1",
+            key: "resumeDetail",
+            value: "full",
+          },
+        ],
+      },
+      null,
+    );
+    expect(resolved.values).toMatchObject({
+      checkpointFrequency: "handoff-only",
+      handoffMode: "gate",
+      resumeDetail: "full",
+    });
+    expect(
+      resolveKnowledgePolicy(resolved.values.knowledgePolicy, "connected"),
+    ).toMatchObject({ action: "retrieve" });
+  });
+
+  test("readYamlSetup returns null only when the file is absent, not unreadable", () => {
+    const absent = temporaryRoot();
+    expect(readYamlSetup(absent)).toBeNull();
+
+    // A directory in the file's place is a present-but-unreadable
+    // configuration, never a silent fallback to the defaults.
+    const directory = temporaryRoot();
+    mkdirSync(join(directory, ".task-delivery.yaml"));
+    expect(() => readYamlSetup(directory)).toThrow(SetupResolutionError);
+    expect(() => readYamlSetup(directory)).toThrow(/cannot be read/u);
+
+    const runner: SetupCommandRunner = () => ({ status: 1, stdout: "" });
+    expect(() => resolveSetup(directory, { runner })).toThrow(
+      /cannot be read/u,
+    );
   });
 
   test("errors when the Runtime answers but the payload breaks the contract", () => {
