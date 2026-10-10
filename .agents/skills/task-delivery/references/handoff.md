@@ -123,3 +123,7 @@ the open findings, and the task state. Anything the handoff claims that the
 primary sources do not confirm is reported to the authorizer before work
 resumes. From there the lifecycle continues as when asked to start part-way:
 a stage without evidence is not passed.
+
+Recorded follow-ups, out of scope today: the agent-to-person transfer path,
+pipeline-stage transfers, and multi-domain pack translations each need their
+own adapter on top of the shared transfer contract.
