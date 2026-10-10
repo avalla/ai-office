@@ -789,8 +789,10 @@ describe("task-delivery workflow invariants", () => {
     "requires the executor block to cover %s",
     (executor) => {
       const { skillRoot } = repositoryCopy();
+      // Every row the executor owns comes out: with the continuity transfer
+      // table an executor may own more than one row.
       rewrite(join(skillRoot, "SKILL.md"), (source) =>
-        source.replace(new RegExp(`^\\| ${executor} .*\\n`, "mu"), ""),
+        source.replace(new RegExp(`^\\| ${executor} .*\\n`, "gmu"), ""),
       );
 
       expect(validateSkillPackage(skillRoot)).toEqual([
