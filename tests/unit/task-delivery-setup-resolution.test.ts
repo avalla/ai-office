@@ -198,6 +198,36 @@ describe("resolveSetup", () => {
     expect(calls[1]).toEqual(["delivery:setup:show", "--run", "run-1"]);
   });
 
+  test("passes an explicit project id through to the show command", () => {
+    const root = temporaryRoot();
+    const calls: string[][] = [];
+    const runner: SetupCommandRunner = (args) => {
+      calls.push(args);
+      return { status: 0, stdout: showOutput({}) };
+    };
+    resolveSetup(root, { runner, projectId: "proj-1", taskId: "task-1" });
+    expect(calls[0]).toEqual([
+      "delivery:setup:show",
+      "--project",
+      "proj-1",
+      "--task",
+      "task-1",
+    ]);
+  });
+
+  test("rejects an empty explicit project id instead of calling the Runtime", () => {
+    const root = temporaryRoot();
+    const calls: string[][] = [];
+    const runner: SetupCommandRunner = (args) => {
+      calls.push(args);
+      return { status: 0, stdout: showOutput({}) };
+    };
+    expect(() =>
+      resolveSetup(root, { runner, projectId: "   " }),
+    ).toThrow(SetupResolutionError);
+    expect(calls).toEqual([]);
+  });
+
   test("the resolved knowledge policy feeds the retrieval decision mapping", () => {
     const resolved = resolveSetupFromShow(null, { knowledgePolicy: "required" });
     expect(
@@ -268,5 +298,9 @@ describe("setup-resolution entry point", () => {
       runEntryPoint(root, ["--task", "t", "--run", "r"]).status,
     ).toBe(1);
     expect(runEntryPoint(root, ["--task"]).status).toBe(1);
+    expect(runEntryPoint(root, ["--project"]).status).toBe(1);
+    expect(runEntryPoint(root, ["--project", "p", "--task", "t"]).status).toBe(
+      0,
+    );
   });
 });

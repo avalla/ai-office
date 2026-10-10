@@ -124,11 +124,15 @@ this order:
 A Runtime that was not contacted is reported as not checked, never as
 unreachable, and it is never required: without it, the file and the defaults
 carry the same contract. From a checkout,
-`bun scripts/skills/setup-resolution.ts [--task <id>] [--run <id>]` runs
-this whole resolution and prints one JSON line,
+`bun scripts/skills/setup-resolution.ts [--project <id>] [--task <id>] [--run <id>]`
+runs this whole resolution and prints one JSON line,
 `{schemaVersion: 1, source, values}`, for scripts and tests; a configuration
 that breaks its contract exits 1 with the typed message on stderr instead of
-guessing around it.
+guessing around it. Pass `--project` when the project id is known (the
+delivery flow usually knows it): without it, the office CLI discovers the
+binding from the current directory, and a directory the binding cannot reach —
+a task worktree, for example — resolves through the file or the defaults
+instead of pretending the Runtime was checked.
 
 ### Setup keys
 

@@ -85,6 +85,7 @@ export interface SetupCommandRunner {
 }
 
 export interface ResolveSetupOptions {
+  readonly projectId?: string;
   readonly runId?: string;
   readonly taskId?: string;
   readonly runner?: SetupCommandRunner;
@@ -202,6 +203,11 @@ export function resolveSetup(
 ): ResolvedTaskDeliverySetup {
   const runner = options.runner ?? defaultRunner(cwd);
   const args = ["delivery:setup:show"];
+  if (options.projectId !== undefined) {
+    if (options.projectId.trim() === "")
+      throw new SetupResolutionError("--project must not be empty");
+    args.push("--project", options.projectId);
+  }
   if (options.taskId !== undefined) args.push("--task", options.taskId);
   else if (options.runId !== undefined) args.push("--run", options.runId);
   const runtime = runner(args);
@@ -212,18 +218,20 @@ export function resolveSetup(
 }
 
 interface EntryArguments {
+  readonly projectId?: string;
   readonly taskId?: string;
   readonly runId?: string;
 }
 
 function parseEntryArguments(argv: readonly string[]): EntryArguments {
-  const parsed: { taskId?: string; runId?: string } = {};
+  const parsed: { projectId?: string; taskId?: string; runId?: string } = {};
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]!;
     const value = argv[index + 1];
     if (value === undefined || value.startsWith("--"))
       throw new SetupResolutionError(`${argument} requires a value`);
-    if (argument === "--task") parsed.taskId = value;
+    if (argument === "--project") parsed.projectId = value;
+    else if (argument === "--task") parsed.taskId = value;
     else if (argument === "--run") parsed.runId = value;
     else throw new SetupResolutionError(`Unknown argument: ${argument}`);
     index += 1;
@@ -241,8 +249,11 @@ function parseEntryArguments(argv: readonly string[]): EntryArguments {
  */
 if (import.meta.main) {
   try {
-    const { taskId, runId } = parseEntryArguments(process.argv.slice(2));
+    const { projectId, taskId, runId } = parseEntryArguments(
+      process.argv.slice(2),
+    );
     const resolved = resolveSetup(process.cwd(), {
+      ...(projectId === undefined ? {} : { projectId }),
       ...(taskId === undefined ? {} : { taskId }),
       ...(runId === undefined ? {} : { runId }),
     });
