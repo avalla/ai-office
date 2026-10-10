@@ -123,7 +123,12 @@ this order:
 
 A Runtime that was not contacted is reported as not checked, never as
 unreachable, and it is never required: without it, the file and the defaults
-carry the same contract.
+carry the same contract. From a checkout,
+`bun scripts/skills/setup-resolution.ts [--task <id>] [--run <id>]` runs
+this whole resolution and prints one JSON line,
+`{schemaVersion: 1, source, values}`, for scripts and tests; a configuration
+that breaks its contract exits 1 with the typed message on stderr instead of
+guessing around it.
 
 ### Setup keys
 

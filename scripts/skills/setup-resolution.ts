@@ -210,3 +210,46 @@ export function resolveSetup(
   const yamlSetup = show === null ? readYamlSetup(cwd) : null;
   return resolveSetupFromShow(show, yamlSetup);
 }
+
+interface EntryArguments {
+  readonly taskId?: string;
+  readonly runId?: string;
+}
+
+function parseEntryArguments(argv: readonly string[]): EntryArguments {
+  const parsed: { taskId?: string; runId?: string } = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index]!;
+    const value = argv[index + 1];
+    if (value === undefined || value.startsWith("--"))
+      throw new SetupResolutionError(`${argument} requires a value`);
+    if (argument === "--task") parsed.taskId = value;
+    else if (argument === "--run") parsed.runId = value;
+    else throw new SetupResolutionError(`Unknown argument: ${argument}`);
+    index += 1;
+  }
+  if (parsed.taskId !== undefined && parsed.runId !== undefined)
+    throw new SetupResolutionError("Pass at most one of --task and --run");
+  return parsed;
+}
+
+/**
+ * CLI entry point: resolves the setup for the current working directory and
+ * prints `{schemaVersion: 1, source, values}`. A typed resolution failure
+ * exits 1 with the message on stderr; an absent Runtime or file is not a
+ * failure, it is the "defaults" answer.
+ */
+if (import.meta.main) {
+  try {
+    const { taskId, runId } = parseEntryArguments(process.argv.slice(2));
+    const resolved = resolveSetup(process.cwd(), {
+      ...(taskId === undefined ? {} : { taskId }),
+      ...(runId === undefined ? {} : { runId }),
+    });
+    console.log(JSON.stringify({ schemaVersion: 1, ...resolved }));
+  } catch (error) {
+    if (!(error instanceof SetupResolutionError)) throw error;
+    console.error(error.message);
+    process.exitCode = 1;
+  }
+}

@@ -5,6 +5,16 @@ from recorded state instead of memory. It is written only when the authorizer
 accepts the offer described in the skill, at one of its triggers: context
 budget running low, task completion, interruption, or executor change.
 
+## Handoff mode
+
+The resolved delivery setup — Runtime first, then `.task-delivery.yaml`,
+then the defaults in [configuration](configuration.md) — carries a
+`handoffMode`. `offer` is the behavior above: the handoff is offered at its
+triggers and never blocks. `gate` raises the offer at the completion of
+every gate, so the question is answered while the stage evidence is fresh.
+Neither mode turns the handoff into a gate: it stays an offer, never an
+input to any review, and a declined offer needs nothing.
+
 ## What a handoff is
 
 A handoff here is a **context handoff**: a short map to recorded state for
@@ -76,7 +86,13 @@ the authorizer can find it - never the reviewers or verifiers.
 
 When the project configures a knowledge policy (see
 [configuration](configuration.md)), the handoff may carry one knowledge
-section, retrieved read-only with `knowledge:task` for the task. The rules:
+section, retrieved read-only with `knowledge:task` for the task. The policy
+value itself is the resolved delivery setup's `knowledgePolicy` — Runtime
+first, then `.task-delivery.yaml`, then the default `auto` — and it enters
+the handoff and resume gate exactly as `resolveKnowledgePolicy` maps it:
+retrieve when the store is connected, proceed with a one-line evidence note
+under `auto`, and block the gate under `required` until the authorizer
+lowers the policy. The rules:
 
 - Content is excerpts and references only: record id, kind, title, a short
   excerpt, and the created date for each hit.

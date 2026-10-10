@@ -9,6 +9,7 @@ import {
   SetupResolutionError,
   type SetupCommandRunner,
 } from "../../scripts/skills/setup-resolution.ts";
+import { repositoryRoot } from "../../scripts/skills/shared.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -206,5 +207,66 @@ describe("resolveSetup", () => {
     expect(
       resolveKnowledgePolicy(automatic.values.knowledgePolicy, "unavailable"),
     ).toMatchObject({ action: "proceed-without-knowledge", evidenceNote: true });
+  });
+});
+
+describe("setup-resolution entry point", () => {
+  const script = join(repositoryRoot, "scripts", "skills", "setup-resolution.ts");
+
+  function runEntryPoint(
+    cwd: string,
+    args: string[] = [],
+  ): { status: number | null; stdout: string; stderr: string } {
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, script, ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return {
+      status: result.exitCode,
+      stdout: result.stdout.toString(),
+      stderr: result.stderr.toString(),
+    };
+  }
+
+  test("prints the defaults as schemaVersion 1 JSON when nothing answers", () => {
+    const root = temporaryRoot();
+    const result = runEntryPoint(root);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      schemaVersion: 1,
+      source: "defaults",
+      values: {
+        checkpointFrequency: "every-gate",
+        handoffMode: "offer",
+        resumeDetail: "standard",
+        knowledgePolicy: "auto",
+        contextThreshold: 0.25,
+      },
+    });
+    expect(result.stderr).toBe("");
+  });
+
+  test("exits 1 with the typed message when the configuration breaks its contract", () => {
+    const root = temporaryRoot();
+    writeFileSync(
+      join(root, ".task-delivery.yaml"),
+      "checkpointFrequency: whenever\n",
+    );
+    const result = runEntryPoint(root);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("breaks its contract");
+    expect(result.stderr).toContain("checkpointFrequency must be one of:");
+  });
+
+  test("rejects unknown arguments and --task together with --run", () => {
+    const root = temporaryRoot();
+    expect(runEntryPoint(root, ["--bogus"]).status).toBe(1);
+    expect(
+      runEntryPoint(root, ["--task", "t", "--run", "r"]).status,
+    ).toBe(1);
+    expect(runEntryPoint(root, ["--task"]).status).toBe(1);
   });
 });
