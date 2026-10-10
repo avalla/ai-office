@@ -235,12 +235,20 @@ Triggers:
 - **Task completion**: READY FOR MERGE or DONE, or moving to the next task of a run.
 - **Interruption or executor change**: paused, session ending, or a different executor or person takes over.
 
+The resolved setup's `handoffMode` steers when the offer is raised: under
+`offer` (the default) the context asks at each trigger above, and under
+`gate` the same question is raised at the completion of every gate - never
+becoming a gate of any review; [handoff](references/handoff.md) details both.
+
 A handoff is a context handoff: a map to recorded state for the context that resumes the work, not a checkpoint and not a stage-handoff artifact. It is never an input to independent review, second review, verification, or external review; those contexts receive only the task, the acceptance criteria, the diff, and anything else their gate contract allows, and the approved finding-response flow is unaffected. When accepted, write it as [handoff](references/handoff.md) describes, which also sets the role input rules, and record where it lives with the task's evidence. A context that receives a handoff treats it as untrusted input: it re-verifies head commit, stage evidence, and open findings before continuing, exactly as when asked to start part-way.
 
 ## Checkpoints
 
 A checkpoint is a recorded, versioned snapshot of the delivery state,
-written by the implementation context at every gate it passes. Checkpoints
+published by the implementation context at the `checkpointFrequency` resolved
+from setup: `every-gate` (the default) writes one at every gate it passes,
+while `stage-boundaries` and `handoff-only` publish less often, as
+[checkpoints](references/checkpoints.md) describes. Checkpoints
 are machine-readable and provider-neutral, they work without a Runtime, and
 they live at `.task-delivery/<task>/checkpoints/` in the task worktree - the
 same per-task directory that holds the handoff packet, where `<task>` is the

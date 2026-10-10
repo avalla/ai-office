@@ -324,8 +324,8 @@ export const skillContracts: Readonly<Record<string, SkillContract>> = {
         pattern: /live at `\.task-delivery\/<task>\/checkpoints\/`/iu,
       },
       {
-        id: "policy:checkpoint-written-at-every-gate",
-        pattern: /written by the implementation context at every gate/iu,
+        id: "policy:checkpoint-written-per-frequency",
+        pattern: /published by the implementation context at the `checkpointFrequency`/iu,
       },
       {
         id: "policy:checkpoint-no-runtime",

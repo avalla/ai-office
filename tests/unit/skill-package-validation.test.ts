@@ -674,8 +674,8 @@ describe("task-delivery workflow invariants", () => {
       "live at `.task-delivery/<task>/checkpoints/`",
     ],
     [
-      "policy:checkpoint-written-at-every-gate",
-      "written by the implementation context at every gate",
+      "policy:checkpoint-written-per-frequency",
+      "published by the implementation context at the `checkpointFrequency`",
     ],
     ["policy:checkpoint-no-runtime", "work without a Runtime"],
     [
