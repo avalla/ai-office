@@ -3,7 +3,7 @@ name: task-delivery
 description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
 license: MIT
 metadata:
-  version: "0.5.1"
+  version: "0.6.0"
 ---
 
 # Task Delivery
@@ -58,6 +58,13 @@ they are stricter. Then load the optional project configuration described in
 listed there and ask only when a default cannot be derived. A configuration
 file that is present but breaks its contract is a stop condition: never guess
 around it.
+
+Delivery setup — checkpoint frequency, handoff mode, resume detail,
+knowledge policy, context threshold — resolves from the Runtime when one
+answers, else from the configuration file, else from the defaults in
+[configuration](references/configuration.md). When nothing is stored, that
+reference describes how to ask once through the executor's question
+mechanism and persist the answers; asking is an offer, never a gate.
 
 ## Task state
 
@@ -276,7 +283,6 @@ and the next action. At the end, report the head commit, the pull request, the
 verification results, the review results, known limitations, and follow-ups.
 
 <!-- executors:start -->
-
 ## Executor mapping
 
 This block is the only executor-specific part of the skill. It translates the
@@ -297,4 +303,12 @@ Codex skill or plugin, or the `codex` command - is an available external
 reviewer for stage 9. Its presence alone does not make it required: it is best
 effort unless the project configures it or the authorizer requests it.
 
+**Continuity transfer.** Checkpoints and handoffs stay executor-neutral; an
+adapter only names how the executor asks questions and moves the packet:
+
+| Executor | Questions | Where checkpoints and the handoff live | Agent to person |
+| -------- | --------- | -------------------------------------- | --------------- |
+| Claude Code | asks through its question tool, one key at a time | `.task-delivery/<task>/checkpoints/` and `.task-delivery/<task>/handoff.md` | the agent writes both; a person moves the task directory or points the next session at it, and the resuming context re-validates head and tree before continuing |
+| Codex | asks in the session prompt, one key at a time | `.task-delivery/<task>/checkpoints/` and `.task-delivery/<task>/handoff.md` | the agent writes both; a person moves the task directory or points the next session at it, and the resuming context re-validates head and tree before continuing |
+| Every other executor | through the executor's own question mechanism | `.task-delivery/<task>/checkpoints/` and `.task-delivery/<task>/handoff.md` | the agent writes both; a person moves the task directory or points the next session at it, and the resuming context re-validates head and tree before continuing |
 <!-- executors:end -->

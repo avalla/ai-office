@@ -3,7 +3,7 @@ name: task-delivery
 description: Deliver one software task end to end through gated stages - preflight, design, implementation, pull request, independent review, hardening, second review, verification, external review, ready for merge, and post-merge completion. Use when asked to deliver, ship, or carry a task or ticket through to a reviewable pull request, to run a delivery pipeline over one or more tasks, or to review, harden, or verify a change before merge.
 license: MIT
 metadata:
-  version: "0.5.1"
+  version: "0.6.0"
 ---
 
 # Task Delivery
@@ -58,6 +58,13 @@ they are stricter. Then load the optional project configuration described in
 listed there and ask only when a default cannot be derived. A configuration
 file that is present but breaks its contract is a stop condition: never guess
 around it.
+
+Delivery setup — checkpoint frequency, handoff mode, resume detail,
+knowledge policy, context threshold — resolves from the Runtime when one
+answers, else from the configuration file, else from the defaults in
+[configuration](references/configuration.md). When nothing is stored, that
+reference describes how to ask once through the executor's question
+mechanism and persist the answers; asking is an offer, never a gate.
 
 ## Task state
 
