@@ -163,6 +163,38 @@ function legacyState(file: LocalInstructionFile): AgentClientFileState {
     : fileState(file, "absent", "missing");
 }
 
+const taskKindsLinePattern = /^Classify tasks as .+ and resolve/mu;
+
+/**
+ * The project skill's "Classify tasks as ..." line is manifest-dependent
+ * (M16.5): `validate` has no project contract to recompute it from, so it
+ * is normalized out of both sides before comparing against the
+ * zero-argument (default-kinds) rendering, to avoid reporting a
+ * correctly `apply`-d project-specific skill as drifted.
+ */
+function normalizedProjectSkill(content: string): string {
+  return content.replace(
+    taskKindsLinePattern,
+    "Classify tasks as <project task kinds> and resolve",
+  );
+}
+
+function projectSkillState(file: LocalInstructionFile): AgentClientFileState {
+  if (!file.exists) return fileState(file, "absent", "missing");
+  if (!isProjectSkillManaged(file))
+    return fileState(file, "user_owned", "unmanaged");
+  const expected = normalizedProjectSkill(compileProjectSkill());
+  const actual =
+    file.content === undefined
+      ? undefined
+      : normalizedProjectSkill(file.content);
+  return fileState(
+    file,
+    "ai_office_owned",
+    equivalentText(actual, expected) ? "integrated" : "drifted",
+  );
+}
+
 interface ClaudeBridgeAnalysis {
   state: AgentClientFileState;
   kind: "absent" | "direct_import" | "managed" | "unmanaged" | "conflict";
@@ -482,11 +514,7 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
       rootPath: root,
       canonicalInstructions: canonicalState(canonical),
       clientInstructions: codexPointerState(pointer),
-      skillInstructions: managedState(
-        projectSkill,
-        isProjectSkillManaged,
-        compileProjectSkill(),
-      ),
+      skillInstructions: projectSkillState(projectSkill),
       legacyInstructions: legacyState(legacy),
       issues,
     };
@@ -712,11 +740,7 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
       rootPath: root,
       canonicalInstructions: canonicalState(canonical),
       clientInstructions: bridge.state,
-      sharedSkillInstructions: managedState(
-        projectSkill,
-        isProjectSkillManaged,
-        compileProjectSkill(),
-      ),
+      sharedSkillInstructions: projectSkillState(projectSkill),
       skillInstructions: managedState(
         claudeSkill,
         isClaudeSkillManaged,

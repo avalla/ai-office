@@ -28,7 +28,11 @@ import {
   codexProjectSkillPath,
 } from "@ai-office/agent-client-integrations/adapters.ts";
 import { DefaultAgentClientCatalog } from "@ai-office/agent-client-integrations/registry.ts";
-import { projectInstructionContract } from "../helpers/project-instruction-contract.ts";
+import { parseProjectInstructionContract } from "@ai-office/domain/agent/project-instruction-contract.ts";
+import {
+  projectInstructionContract,
+  projectInstructionContractValue,
+} from "../helpers/project-instruction-contract.ts";
 
 const roots: string[] = [];
 
@@ -545,6 +549,56 @@ describe("agent client integrations", () => {
     expect(claude.skillInstructions).toMatchObject({
       ownership: "ai_office_owned",
       integrationStatus: "drifted",
+    });
+  });
+
+  test("a manifest-specific task-kind skill applies cleanly and is not reported as drifted (M16.5)", async () => {
+    const root = temporaryRoot("ai-office-client-skill-task-kinds-");
+    const integration = service();
+    const legalContract = parseProjectInstructionContract({
+      ...projectInstructionContractValue,
+      project: {
+        ...projectInstructionContractValue.project,
+        taskKinds: ["matter", "civil-matter"],
+      },
+    });
+    for (const clientId of ["codex", "claude"] as const) {
+      const plan = await integration.plan({
+        clientId,
+        rootPath: root,
+        contract: legalContract,
+      });
+      await integration.apply({
+        clientId,
+        rootPath: root,
+        contract: legalContract,
+        approvedPlanHash: plan.planHash,
+      });
+    }
+
+    const skillContent = readFileSync(
+      join(root, codexProjectSkillPath),
+      "utf8",
+    );
+    expect(skillContent).toContain("Classify tasks as matter or civil-matter");
+    expect(skillContent).not.toContain(
+      "Classify tasks as feature, bugfix, maintenance, research, or release",
+    );
+
+    expect(
+      (await integration.inspect("codex", root)).skillInstructions,
+    ).toMatchObject({
+      ownership: "ai_office_owned",
+      integrationStatus: "integrated",
+    });
+    const claude = await integration.inspect("claude", root);
+    expect(claude.sharedSkillInstructions).toMatchObject({
+      ownership: "ai_office_owned",
+      integrationStatus: "integrated",
+    });
+    expect(claude.skillInstructions).toMatchObject({
+      ownership: "ai_office_owned",
+      integrationStatus: "integrated",
     });
   });
 

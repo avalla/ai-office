@@ -45,4 +45,32 @@ describe("project instruction contract and compiler", () => {
       }),
     ).toThrow("expected one of: approval_required");
   });
+
+  test("project.taskKinds is optional (M16.5): absent means the shipped default kinds", () => {
+    const parsed = parseProjectInstructionContract(
+      projectInstructionContractValue,
+    );
+    expect(parsed.project.taskKinds).toEqual([]);
+  });
+
+  test("project.taskKinds accepts a manifest-declared custom list and still rejects unexpected project fields", () => {
+    const parsed = parseProjectInstructionContract({
+      ...projectInstructionContractValue,
+      project: {
+        ...projectInstructionContractValue.project,
+        taskKinds: ["matter", "civil-matter"],
+      },
+    });
+    expect(parsed.project.taskKinds).toEqual(["matter", "civil-matter"]);
+
+    expect(() =>
+      parseProjectInstructionContract({
+        ...projectInstructionContractValue,
+        project: {
+          ...projectInstructionContractValue.project,
+          unexpectedField: "nope",
+        },
+      }),
+    ).toThrow(InvalidProjectInstructionContractError);
+  });
 });

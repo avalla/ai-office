@@ -17,6 +17,13 @@ function configuredWorkflow(manifest: OfficeManifest): string[] {
   ];
 }
 
+function declaredTaskKinds(manifest: OfficeManifest): string[] {
+  const kinds = new Set<string>();
+  for (const pipeline of manifest.pipelines)
+    for (const kind of pipeline.defaultFor) kinds.add(kind);
+  return [...kinds];
+}
+
 export function buildProjectInstructionContract(input: {
   projectName: string;
   manifest: OfficeManifest;
@@ -49,6 +56,7 @@ export function buildProjectInstructionContract(input: {
             ],
       ),
       workflow: Object.freeze(configuredWorkflow(input.manifest)),
+      taskKinds: Object.freeze(declaredTaskKinds(input.manifest)),
       testing: Object.freeze([
         "Run the narrowest relevant tests, then the repository's complete check suite",
       ]),

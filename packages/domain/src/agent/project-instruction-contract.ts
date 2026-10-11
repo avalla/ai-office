@@ -27,6 +27,8 @@ export interface ProjectInstructionContract {
     testing: readonly string[];
     documentation: readonly string[];
     definitionOfDone: readonly string[];
+    /** Task kinds this project's own office manifest declares a default pipeline for. */
+    taskKinds: readonly string[];
   };
 }
 
@@ -58,6 +60,27 @@ function exactKeys(
       path,
       `expected exactly: ${wanted.join(", ")}`,
     );
+}
+
+function keysWithOptional(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+  path: string,
+): void {
+  const actual = new Set(Object.keys(value));
+  for (const key of required)
+    if (!actual.has(key))
+      throw new InvalidProjectInstructionContractError(
+        path,
+        `missing required field: ${key}`,
+      );
+  for (const key of actual)
+    if (!required.includes(key) && !optional.includes(key))
+      throw new InvalidProjectInstructionContractError(
+        path,
+        `unexpected field: ${key}`,
+      );
 }
 
 function text(value: unknown, path: string): string {
@@ -130,7 +153,7 @@ export function parseProjectInstructionContract(
     "$.policy",
   );
   const project = record(root.project, "$.project");
-  exactKeys(
+  keysWithOptional(
     project,
     [
       "name",
@@ -142,6 +165,10 @@ export function parseProjectInstructionContract(
       "documentation",
       "definitionOfDone",
     ],
+    // M16.5: optional for backward compatibility with contract JSON
+    // written before task kinds became project-specific; absent means
+    // "use the shipped default kinds" (see project-skill-compiler.ts).
+    ["taskKinds"],
     "$.project",
   );
 
@@ -198,6 +225,10 @@ export function parseProjectInstructionContract(
         project.definitionOfDone,
         "$.project.definitionOfDone",
       ),
+      taskKinds:
+        project.taskKinds === undefined
+          ? Object.freeze([])
+          : textList(project.taskKinds, "$.project.taskKinds"),
     }),
   });
 }
