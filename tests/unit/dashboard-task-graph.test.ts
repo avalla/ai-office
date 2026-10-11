@@ -23,6 +23,7 @@ import {
   graphNodeDetail,
   layoutGraph,
   lineage,
+  relationshipEdgeKind,
   taskKey,
   toggleMilestoneFilter,
   withGraphStatusOption,
@@ -119,6 +120,15 @@ const ids = (tasks: readonly TaskGraphNode[]) => tasks.map((t) => t.taskId);
 const all = { ...defaultGraphFilters, hideCompleted: false };
 
 describe("dashboard task graph", () => {
+  test("classifies direct links and transitive lineage from existing edges", () => {
+    const selected = "b";
+    const tree = lineage(graph.edges, selected);
+    expect(relationshipEdgeKind({ taskId: "b", dependsOnTaskId: "a" }, selected, tree)).toBe("direct");
+    expect(relationshipEdgeKind({ taskId: "d", dependsOnTaskId: "b" }, selected, tree)).toBe("direct");
+    expect(relationshipEdgeKind({ taskId: "a", dependsOnTaskId: "done" }, selected, tree)).toBe("transitive");
+    expect(relationshipEdgeKind({ taskId: "d", dependsOnTaskId: "c" }, selected, tree)).toBeNull();
+    expect(relationshipEdgeKind({ taskId: "d", dependsOnTaskId: "a" }, selected, tree)).toBeNull();
+  });
   test("changes presentation only at the two zoom thresholds", () => {
     expect(graphNodeDetail(0.05)).toBe("compact");
     expect(graphNodeDetail(0.399)).toBe("compact");
