@@ -51,6 +51,7 @@ import {
   otherDependentIds,
   quickFilters,
   relationshipEdgeKind,
+  reducedOperationalPreview,
   searchTasks,
   taskKey,
   toggleMilestoneFilter,
@@ -411,6 +412,7 @@ function TaskGraphCanvas({
     useState<NeighborhoodMode | null>(null);
   const [showChain, setShowChain] = useState(true);
   const [showMinimap, setShowMinimap] = useState(true);
+  const [previewEnabled, setPreviewEnabled] = useState(false);
   const [readyPageIndex, setReadyPageIndex] = useState(0);
   const [attentionPageIndex, setAttentionPageIndex] = useState(0);
   const [chainPageIndex, setChainPageIndex] = useState(0);
@@ -519,7 +521,7 @@ function TaskGraphCanvas({
     [neighborhoodMode, selectedRelationships],
   );
 
-  const visible = useMemo(
+  const matching = useMemo(
     () =>
       filterGraph(graph, effectiveFilters, {
         ...(selectedTask === null
@@ -538,14 +540,29 @@ function TaskGraphCanvas({
   );
 
   const hiddenCompleted = useMemo(
-    () => hiddenCompletedPrerequisiteCounts(graph, visible),
-    [graph, visible],
+    () => hiddenCompletedPrerequisiteCounts(graph, matching),
+    [graph, matching],
   );
 
-  const tooLarge = exceedsLayoutLimit(
-    visible.tasks.length,
-    visible.edges.length,
+  const matchingTooLarge = exceedsLayoutLimit(
+    matching.tasks.length,
+    matching.edges.length,
   );
+  const preview = useMemo(
+    () =>
+      matchingTooLarge
+        ? reducedOperationalPreview(matching, selectedTaskId)
+        : null,
+    [matchingTooLarge, matching, selectedTaskId],
+  );
+  const showingPreview = previewEnabled && preview !== null;
+  const visible = showingPreview ? preview : matching;
+  const tooLarge = matchingTooLarge && !showingPreview;
+  // The preview is a choice for one oversized view: once filters bring the
+  // graph back under budget, it must not silently reopen without the banner.
+  useEffect(() => {
+    if (!matchingTooLarge) setPreviewEnabled(false);
+  }, [matchingTooLarge]);
   const positions = useMemo(
     () =>
       tooLarge
@@ -753,7 +770,7 @@ function TaskGraphCanvas({
         .join("|"),
     [positions],
   );
-  const actionKey = `${direction}|${neighborhoodMode}|${JSON.stringify(effectiveFilters)}`;
+  const actionKey = `${direction}|${neighborhoodMode}|${showingPreview}|${JSON.stringify(effectiveFilters)}`;
   const userMoved = useRef(false);
   const lastAction = useRef<string | null>(null);
   const selectedKeyRef = useRef(selectedKey);
@@ -1123,6 +1140,29 @@ function TaskGraphCanvas({
         )}
       </form>
 
+      {showingPreview && (
+        <div
+          role="status"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100"
+        >
+          <p>
+            Reduced task preview: showing{" "}
+            {visible.tasks.length.toLocaleString()} of{" "}
+            {matching.tasks.length.toLocaleString()} matching tasks. Ready and
+            needs-attention tasks come first. Dependency arrows are omitted.
+            Project summaries and search still cover every task.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => setPreviewEnabled(false)}
+          >
+            Close preview
+          </Button>
+        </div>
+      )}
+
       <div
         className="grid gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(18rem,1fr)]"
         onKeyDown={(event) => {
@@ -1160,12 +1200,21 @@ function TaskGraphCanvas({
                   {visible.edges.length.toLocaleString()} dependencies match.
                   The graph can lay out at most{" "}
                   {maxLayoutWeight.toLocaleString()} combined tasks and
-                  dependencies. Narrow the view with a summary shortcut, a
-                  status or milestone filter, or select a task from the lists
-                  and choose a neighborhood scope. Summary counts remain
-                  complete. Search can find any task; ready, attention, and
-                  chain lists are paged.
+                  dependencies. Open a reduced task preview to navigate a
+                  bounded selection without dependency arrows. You can also
+                  narrow the view with a summary shortcut, a status or
+                  milestone filter, or select a task from the lists and choose
+                  a neighborhood scope. Summary counts remain complete. Search
+                  can find any task; ready, attention, and chain lists are
+                  paged.
                 </Empty>
+                <Button
+                  type="button"
+                  className="mt-3"
+                  onClick={() => setPreviewEnabled(true)}
+                >
+                  Open reduced task preview
+                </Button>
               </div>
             ) : (
               <ReactFlow

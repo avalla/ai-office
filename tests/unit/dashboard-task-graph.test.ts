@@ -21,6 +21,8 @@ import {
   hiddenCompletedPrerequisiteCounts,
   graphEdgeKey,
   graphNodeDetail,
+  reducedOperationalPreview,
+  reducedPreviewTaskLimit,
   layoutGraph,
   lineage,
   relationshipEdgeKind,
@@ -138,6 +140,51 @@ describe("dashboard task graph", () => {
     expect(graphNodeDetail(1.75)).toBe("full");
   });
 
+  test("oversized graphs get a bounded operational preview without implied edges", () => {
+    const tasks = Array.from({ length: 350 }, (_, index) =>
+      node(`task-${String(index).padStart(3, "0")}`, {
+        ready: index < 300,
+        needsAttention: index === 340,
+        priority: index === 341 ? 10 : 0,
+      }),
+    );
+    const edges = tasks.slice(1).map((task, index) => ({
+      taskId: task.taskId,
+      dependsOnTaskId: tasks[index]!.taskId,
+    }));
+    const full = { tasks, edges, hiddenTaskCount: 0 };
+    expect(exceedsLayoutLimit(full.tasks.length, full.edges.length)).toBe(true);
+
+    const preview = reducedOperationalPreview(full, "task-349");
+    expect(preview.tasks).toHaveLength(reducedPreviewTaskLimit);
+    expect(preview.edges).toEqual([]);
+    expect(preview.hiddenTaskCount).toBe(350 - reducedPreviewTaskLimit);
+    expect(preview.tasks.map((task) => task.taskId)).toContain("task-349");
+    expect(preview.tasks.map((task) => task.taskId)).toContain("task-340");
+    // The force-kept selection joins the ranked order; it does not jump the
+    // queue ahead of the needs-attention and higher-priority ready tasks.
+    const previewIds = preview.tasks.map((task) => task.taskId);
+    expect(previewIds[0]).toBe("task-340");
+    expect(previewIds.indexOf("task-349")).toBeGreaterThan(
+      previewIds.indexOf("task-341"),
+    );
+    expect(exceedsLayoutLimit(preview.tasks.length, preview.edges.length)).toBe(
+      false,
+    );
+
+    const withoutReady = reducedOperationalPreview(
+      {
+        ...full,
+        tasks: tasks.map((task) => ({
+          ...task,
+          ready: false,
+          needsAttention: false,
+        })),
+      },
+      null,
+    );
+    expect(withoutReady.tasks).toHaveLength(reducedPreviewTaskLimit);
+  });
   test("hides completed work by default but keeps counts exact", () => {
     const visible = filterGraph(graph, defaultGraphFilters);
     expect(ids(visible.tasks)).toEqual(["a", "b", "c", "d", "lone"]);
