@@ -109,4 +109,27 @@ describe("office manifest schema", () => {
     stages[0]!.requiresApproval = true;
     expect(officeManifestSchema.safeParse(value).success).toBe(true);
   });
+
+  test("M16.5: a pipeline's defaultFor may name a task kind outside the shipped five", () => {
+    const value = template();
+    const pipelines = value.pipelines as Array<Record<string, unknown>>;
+    pipelines[0]!.defaultFor = ["matter", "civil-matter"];
+
+    const result = officeManifestSchema.safeParse(value);
+
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.pipelines[0]!.defaultFor).toEqual([
+      "matter",
+      "civil-matter",
+    ]);
+  });
+
+  test("M16.5: an open task kind must still be a lowercase kebab-case identifier", () => {
+    const value = template();
+    const pipelines = value.pipelines as Array<Record<string, unknown>>;
+    pipelines[0]!.defaultFor = ["Civil_Matter"];
+
+    expect(officeManifestSchema.safeParse(value).success).toBe(false);
+  });
 });

@@ -5685,11 +5685,13 @@ order, and each entry is set by the item's scope proposal.
 
 **Left open by this decision.**
 
-- Core still holds the closed list of five software task kinds
-  (`officeTaskKinds`). Opening it is needed before a legal or manufacturing
-  task type can route; no task owns it. Whether the M16 clause "no
-  privileged core import or branch" covers that closed list is not decided
-  here. It needs an owner ruling before GP-20's scope is approved.
+- Core held the closed list of five software task kinds (`officeTaskKinds`).
+  Opening it was needed before a legal or manufacturing task type could
+  route; no task owned it, and whether the M16 clause "no privileged core
+  import or branch" covered that closed list was not decided here.
+  **Resolved 2026-10-11** by the project owner, at the generic-open-string
+  design, not by adding vertical-specific literals to the core: see the
+  "officeTaskKinds opens to any manifest-declared kind" addendum below.
 - ADR-0026 is unchanged and stays an accepted target. Its parts on Runtime
   consumption of the resolved view, run pinning, removal blocked on active
   pinned runs, previewed migration to a development-pack binding, fail-closed
@@ -5735,3 +5737,56 @@ third-party marketplace/distribution; remote registry and dynamic downloading;
 untrusted executable plugins or runtime-generated packs; replacing the
 pipeline engine, governance, `ProjectStorage`, `AgentKnowledgeStore`, model
 routing or worker queue. Future Pro deployment work remains in M15/M9 tracks.
+
+## officeTaskKinds opens to any manifest-declared kind (2026-10-11 addendum)
+
+**Status: implemented**, at the user's explicit request and design choice,
+resolving M16.5 open decision 1
+(`docs/development/m16-5-domain-pack-runtime-activation-scope.md`).
+
+**Decision.** `packages/domain/src/office/office-manifest.ts`'s
+`OfficeTaskKind` was a closed union of exactly five literal strings
+(`feature`, `bugfix`, `maintenance`, `research`, `release`), enforced by
+`z.enum(officeTaskKinds)` in the office-manifest Zod schema and by a
+membership check in the `office:pipeline` CLI command. Two designs were
+possible: (a) add vertical-specific literals (e.g. `matter`,
+`civil-matter`) directly to the core's closed list, or (b) open the type to
+any identifier-shaped string, leaving which kinds exist entirely to each
+project's own manifest. (a) was rejected: it would put legal/manufacturing
+vocabulary inside the generic core, repeating for every future domain and
+directly conflicting with the "no privileged core import or branch"
+principle this decomposition exists to protect — `tests/unit/architecture-boundaries.test.ts`'s
+"every official pack imports only itself or the contracts package" test
+already scans `domain`/`application`/`runtime-host` source for exactly this
+kind of vertical literal leak. (b) was chosen and implemented.
+
+**What changed.** `OfficeTaskKind` is now `string`. `officeTaskKinds`
+(the five legacy literals) remains exported unchanged — it is still the
+shipped default manifest's and the legacy development profile's default
+set, nothing about their behavior changes — but it is no longer a
+membership check for the type. The office-manifest schema's
+`defaultFor` field now validates each task kind with the same
+`identifierSchema` (lowercase kebab-case, 1-64 chars) already used for
+every other manifest identifier, instead of `z.enum(officeTaskKinds)`. The
+`office:pipeline` CLI command no longer pre-rejects an unrecognized kind
+with a fixed "must be one of" list; `GetOfficeContext.resolvePipeline`
+already throws `OfficePipelineNotFoundError` for any kind no pipeline in
+the project's manifest declares, legacy or not, so that single check now
+covers every kind.
+
+**What this does not do.** It does not wire the legal pack's practice-area
+task types (`matter`, `civil-matter`, `criminal-matter`, `labor-matter`) to
+any project's manifest, adopt any pack, or change pipeline/stage/role
+*selection*, which stays manifest-driven exactly as before. A project's
+manifest must still declare a pipeline whose `defaultFor` names the kind
+for it to route anywhere; this change only stops the core from refusing to
+let a manifest name a kind outside the original five.
+
+**Acceptance.** `tests/unit/office-manifest-schema.test.ts` proves a
+pipeline's `defaultFor` can name a kind outside the shipped five and that
+shape validation (kebab-case) still applies.
+`tests/integration/office-task-kind-open.test.ts` proves
+`GetOfficeContext.resolvePipeline` routes a manifest-declared non-software
+kind end to end against a real SQLite-backed project, that the legacy
+software kinds keep routing exactly as before, and that an undeclared kind
+still fails closed with `OfficePipelineNotFoundError`.

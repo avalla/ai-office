@@ -11,11 +11,7 @@ import {
   parseTaskPageQuery,
   queryLimits,
 } from "@ai-office/application/protocol/query-protocol.ts";
-import {
-  officeTaskKinds,
-  type OfficeManifest,
-  type OfficeTaskKind,
-} from "@ai-office/domain/office/office-manifest.ts";
+import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import {
   CliUsageError,
   type CommandContext,
@@ -32,10 +28,6 @@ function parseBoundedManifest(source: string): OfficeManifest {
     );
   }
   return parseOfficeManifestJson(source);
-}
-
-function isTaskKind(value: string): value is OfficeTaskKind {
-  return officeTaskKinds.some((candidate) => candidate === value);
 }
 
 function manifestFromOptions(
@@ -253,12 +245,10 @@ export async function handleOfficeCommand(
     if (parsed.positionals.length > 0)
       throw new CliUsageError("office:pipeline only accepts named options");
     const projectId = requiredOption(parsed, "project");
+    // M16.5: task kinds are named by the project's own manifest, not a
+    // fixed global list. An unknown kind surfaces as
+    // OfficePipelineNotFoundError from resolvePipeline below.
     const taskKind = requiredOption(parsed, "task-kind");
-    if (!isTaskKind(taskKind)) {
-      throw new CliUsageError(
-        `Task kind must be one of: ${officeTaskKinds.join(", ")}`,
-      );
-    }
     const pipeline = await new GetOfficeContext(
       context.projects,
       context.profiles,

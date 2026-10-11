@@ -1,8 +1,5 @@
 import * as z from "zod";
-import {
-  officeTaskKinds,
-  type OfficeManifest,
-} from "@ai-office/domain/office/office-manifest.ts";
+import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import { agentOperations } from "@ai-office/domain/project/project-profile.ts";
 import { InvalidOfficeManifestError } from "../errors.ts";
 
@@ -67,7 +64,9 @@ export const officeManifestSchema = z
           id: identifierSchema,
           name: shortTextSchema,
           description: longTextSchema,
-          defaultFor: z.array(z.enum(officeTaskKinds)).min(1).max(5),
+          // M16.5: a project's own manifest names its task kinds; the core
+          // schema only checks shape, never membership in a fixed list.
+          defaultFor: z.array(identifierSchema).min(1).max(5),
           enforcement: z.enum(["guidance", "enforced"]).optional(),
           stages: z
             .array(
