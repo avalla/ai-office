@@ -241,6 +241,57 @@ describe("dashboard task graph", () => {
     expect(isolated.tasks).toHaveLength(2);
   });
 
+  test("flags a completed prerequisite the reduced preview drops even though the filtered view still includes it", () => {
+    // Regression for PR #167 (GV-UX-07): with "All statuses" selected, a
+    // completed prerequisite stays in the filtered graph but can still be
+    // bumped out of the capped preview by 300+ competing tasks. The hidden
+    // cue must be computed against what the preview actually renders, not
+    // against the larger filtered graph it was carved out of.
+    const completedId = "task-completed";
+    const dependentId = "task-dependent";
+    const tasks: TaskGraphNode[] = [
+      node(completedId, {
+        recordedStatus: "completed",
+        operationalStatus: "completed",
+        terminal: true,
+        ready: false,
+      }),
+      node(dependentId, {
+        ready: false,
+        waiting: true,
+        needsAttention: true,
+      }),
+      ...Array.from({ length: 348 }, (_, index) =>
+        node(`filler-${String(index).padStart(3, "0")}`, { ready: true }),
+      ),
+    ];
+    const bigGraph: TaskGraph = {
+      ...graph,
+      tasks,
+      edges: [{ taskId: dependentId, dependsOnTaskId: completedId }],
+    };
+
+    const matching = filterGraph(bigGraph, all);
+    expect(ids(matching.tasks)).toContain(completedId);
+    expect(
+      exceedsLayoutLimit(matching.tasks.length, matching.edges.length),
+    ).toBe(true);
+
+    const preview = reducedOperationalPreview(matching, null);
+    expect(preview.tasks.map((t) => t.taskId)).toContain(dependentId);
+    expect(preview.tasks.map((t) => t.taskId)).not.toContain(completedId);
+
+    // The buggy wiring (counting against the full filtered graph) sees the
+    // prerequisite as still "visible" and misses the gap entirely.
+    expect(
+      hiddenCompletedPrerequisiteCounts(bigGraph, matching).get(dependentId),
+    ).toBeUndefined();
+    // The fixed wiring counts against the preview's actual node set.
+    expect(
+      hiddenCompletedPrerequisiteCounts(bigGraph, preview).get(dependentId),
+    ).toBe(1);
+  });
+
   test("keeps cancelled prerequisites visible while they block open work", () => {
     const cancelled = (taskId: string) =>
       node(taskId, {

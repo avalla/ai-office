@@ -539,11 +539,6 @@ function TaskGraphCanvas({
     [effectiveFilters, graph, neighborhood, selectedTask],
   );
 
-  const hiddenCompleted = useMemo(
-    () => hiddenCompletedPrerequisiteCounts(graph, matching),
-    [graph, matching],
-  );
-
   const matchingTooLarge = exceedsLayoutLimit(
     matching.tasks.length,
     matching.edges.length,
@@ -558,6 +553,13 @@ function TaskGraphCanvas({
   const showingPreview = previewEnabled && preview !== null;
   const visible = showingPreview ? preview : matching;
   const tooLarge = matchingTooLarge && !showingPreview;
+
+  // Hidden-prerequisite cues describe what is actually rendered: the preview's
+  // capped node set when it is open, or the full filtered graph otherwise.
+  const hiddenCompleted = useMemo(
+    () => hiddenCompletedPrerequisiteCounts(graph, visible),
+    [graph, visible],
+  );
   // The preview is a choice for one oversized view: once filters bring the
   // graph back under budget, it must not silently reopen without the banner.
   useEffect(() => {
