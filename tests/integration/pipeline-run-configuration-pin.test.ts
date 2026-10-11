@@ -12,6 +12,7 @@ import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/rea
 import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
+import type { TransactionRunner } from "@ai-office/application/ports/transaction-runner.port.ts";
 import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
 import {
   computeArtifactDigest,
@@ -135,6 +136,28 @@ async function harness() {
 
 type Harness = Awaited<ReturnType<typeof harness>>;
 
+/**
+ * Counts how many separate transactions open on the wrapped runner and lets
+ * a test fire a side effect the instant one of them commits -- a
+ * deterministic stand-in for "a concurrent writer commits in the gap
+ * between two transactions", with no sleep or wall-clock timing involved.
+ */
+class ObservedTransactionRunner implements TransactionRunner {
+  openCount = 0;
+  constructor(
+    private readonly inner: TransactionRunner,
+    private readonly onCommit: (openIndex: number) => Promise<void>,
+  ) {}
+
+  async run<T>(work: () => Promise<T>): Promise<T> {
+    this.openCount += 1;
+    const openIndex = this.openCount;
+    const result = await this.inner.run(work);
+    await this.onCommit(openIndex);
+    return result;
+  }
+}
+
 async function seedProject(
   h: Harness,
   projectId: string,
@@ -257,5 +280,113 @@ describe("pipeline run configuration pin (M16.5 Runtime activation, first slice)
       principal: localOperatorPrincipal,
     });
     expect(run.snapshot().configurationPin).toBeUndefined();
+  });
+
+  test("resolves the configuration pin inside the same transaction as the run insert, so a concurrent rebind cannot leave a stale pin (P1, PR #168)", async () => {
+    const h = await harness();
+    const projectId = "pin-race-project";
+    const taskId = "pin-race-task";
+    await seedProject(h, projectId, taskId);
+
+    const bytes = readFileSync(
+      new URL(
+        "../../packages/domain-pack-legal/manifest.json",
+        import.meta.url,
+      ),
+    );
+    const pack = h.catalog.register({
+      bytes,
+      artifactDigest: computeArtifactDigest(bytes),
+      provenance: { installerId: "pin-fixture", reference: "legal" },
+    });
+    const preview = await h.binding.preview(projectId, [pack]);
+    await h.binding.apply({
+      projectId,
+      desired: [pack],
+      expectedRevision: preview.current.configurationRevision,
+      actorId: "operator",
+    });
+    const beforeConcurrentRebind = await h.configuration.read(projectId);
+    expect(beforeConcurrentRebind.selectedPacks).toEqual([pack]);
+
+    // A wrapped TransactionRunner shared by the configuration reader and
+    // the pipeline-run manager: it counts how many separate transactions
+    // open for one `start()` call, and fires a concurrent rebind -- unbind
+    // the pack entirely -- the instant the FIRST one commits. With the
+    // pre-fix code, that first transaction is `ReadProjectConfiguration`'s
+    // own (separate) transaction, so the rebind lands in the real gap
+    // before the run-insert transaction opens, and the insert would still
+    // persist the pin resolved from the now-superseded read. With the fix,
+    // the read and the insert share one transaction, so this hook only
+    // fires after the run (with a pin consistent with its own transaction)
+    // has already been committed.
+    let rebindApplied = false;
+    const observed = new ObservedTransactionRunner(
+      h.storage.transactions,
+      async (openIndex) => {
+        if (openIndex !== 1 || rebindApplied) return;
+        rebindApplied = true;
+        const current = await h.configuration.read(projectId);
+        await h.binding.apply({
+          projectId,
+          desired: [],
+          expectedRevision: current.pin.bindingRevision,
+          actorId: "concurrent-writer",
+        });
+      },
+    );
+    const racingConfiguration = new ReadProjectConfiguration({
+      projects: h.storage.projects,
+      bindings: h.storage.packBindings,
+      definitions: h.storage.definitions,
+      transactions: observed,
+      catalog: h.catalog,
+    });
+    const ids = new SequenceIds();
+    const clock = new FixedClock();
+    const audit = new RecordAuditEvent(h.storage.auditEvents, ids, clock);
+    const racingManager = new ManagePipelineRuns(
+      h.storage.officeManifests,
+      h.storage.pipelines,
+      h.storage.tasks,
+      h.storage.runtime,
+      audit,
+      ids,
+      clock,
+      observed,
+      h.storage.jobOutbox,
+      h.storage.taskDependencies,
+      racingConfiguration,
+    );
+
+    const run = await racingManager.start({
+      projectId,
+      taskId,
+      pipelineId: "delivery",
+      principal: localOperatorPrincipal,
+    });
+
+    // Exactly one transaction must cover both the configuration read and
+    // the run insert -- this is the structural fix itself.
+    expect(observed.openCount).toBe(1);
+    expect(rebindApplied).toBe(true);
+
+    // The persisted pin must be the one authoritative throughout that one
+    // transaction (the pre-rebind selection), never a value torn between a
+    // stale pre-transaction read and a later, superseded insert.
+    expect(run.snapshot().configurationPin).toEqual(
+      beforeConcurrentRebind.pin,
+    );
+    const afterConcurrentRebind = await h.configuration.read(projectId);
+    expect(afterConcurrentRebind.selectedPacks).toEqual([]);
+    expect(afterConcurrentRebind.pin).not.toEqual(beforeConcurrentRebind.pin);
+
+    const restored = await h.storage.pipelines.findById(
+      run.snapshot().id,
+      projectId,
+    );
+    expect(restored?.snapshot().configurationPin).toEqual(
+      beforeConcurrentRebind.pin,
+    );
   });
 });

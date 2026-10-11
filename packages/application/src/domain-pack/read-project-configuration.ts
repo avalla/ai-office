@@ -26,30 +26,60 @@ export class ReadProjectConfiguration {
   ) {}
 
   async read(projectId: string): Promise<ResolvedProjectConfiguration> {
-    const { binding, definitions } = await this.ports.transactions.run(
-      async () => {
-        if (!(await this.ports.projects.findById(projectId)))
-          throw new ProjectNotFoundError(projectId);
-        const binding = await this.ports.bindings.get(projectId);
-        const definitions = await this.ports.definitions.get(projectId);
-        const bindingCheck = await this.ports.bindings.get(projectId);
-        const definitionsCheck = await this.ports.definitions.get(projectId);
-        if (
-          binding.configurationRevision !==
-            bindingCheck.configurationRevision ||
-          definitions.revision !== definitionsCheck.revision
-        )
-          throw new ProjectConfigurationResolutionError(
-            "stale_resolution",
-            "Project configuration changed during the read",
-          );
-        return { binding, definitions };
-      },
+    const revisions = await this.ports.transactions.run(() =>
+      this.readRevisions(projectId),
     );
+    return this.resolve(projectId, revisions);
+  }
+
+  /**
+   * Same authoritative, staleness-checked read as `read()`, but assumes the
+   * caller already holds an active transaction opened by the same
+   * `TransactionRunner`/connection as `this.ports.transactions` (for example
+   * another application service resolving a configuration pin inside its
+   * own write transaction). Opening a second transaction here would throw
+   * `TransactionAlreadyActiveError`, and reading outside that transaction
+   * would reopen the race this staleness check exists to close.
+   */
+  async readWithinActiveTransaction(
+    projectId: string,
+  ): Promise<ResolvedProjectConfiguration> {
+    const revisions = await this.readRevisions(projectId);
+    return this.resolve(projectId, revisions);
+  }
+
+  private async readRevisions(projectId: string): Promise<{
+    binding: Awaited<ReturnType<ProjectPackBindingRepository["get"]>>;
+    definitions: Awaited<ReturnType<ProjectDefinitionRepository["get"]>>;
+  }> {
+    if (!(await this.ports.projects.findById(projectId)))
+      throw new ProjectNotFoundError(projectId);
+    const binding = await this.ports.bindings.get(projectId);
+    const definitions = await this.ports.definitions.get(projectId);
+    const bindingCheck = await this.ports.bindings.get(projectId);
+    const definitionsCheck = await this.ports.definitions.get(projectId);
+    if (
+      binding.configurationRevision !== bindingCheck.configurationRevision ||
+      definitions.revision !== definitionsCheck.revision
+    )
+      throw new ProjectConfigurationResolutionError(
+        "stale_resolution",
+        "Project configuration changed during the read",
+      );
+    return { binding, definitions };
+  }
+
+  private resolve(
+    projectId: string,
+    revisions: {
+      binding: Awaited<ReturnType<ProjectPackBindingRepository["get"]>>;
+      definitions: Awaited<ReturnType<ProjectDefinitionRepository["get"]>>;
+    },
+  ): ResolvedProjectConfiguration {
     return resolveProjectConfiguration({
       projectId,
-      binding,
-      definitions,
+      binding: revisions.binding,
+      definitions: revisions.definitions,
       catalog: this.ports.catalog,
       coreContractVersion: this.ports.catalog.coreContractVersion,
       ...(this.ports.providers === undefined
