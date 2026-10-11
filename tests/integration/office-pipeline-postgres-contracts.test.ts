@@ -161,6 +161,100 @@ describe.skipIf(connectionString === undefined)(
     defineOfficeManifestRepositoryContracts(createFixture);
     definePipelineRunRepositoryContracts(createFixture);
 
+    test("fails closed on insert when a run carries a pack-configuration pin (M16.5 first slice, not yet supported here)", async () => {
+      const fixture = await createFixture();
+      const now = new Date("2026-09-22T00:00:00.000Z");
+      const projectId = "pin-unsupported-project";
+      const taskId = "pin-unsupported-task";
+      const manifestId = "pin-unsupported-manifest";
+      const definition = {
+        id: "delivery",
+        name: "Delivery",
+        description: "Pin unsupported",
+        defaultFor: ["feature"] as const,
+        enforcement: "enforced" as const,
+        stages: [
+          {
+            id: "build",
+            name: "Build",
+            roleId: "developer",
+            objective: "Build",
+            checks: [],
+            requiresApproval: false,
+            capabilities: [],
+          },
+        ],
+      };
+      try {
+        await fixture.projects.save(
+          Project.create({ id: projectId, name: projectId, now }),
+        );
+        await fixture.tasks.save(
+          Task.create({ id: taskId, projectId, title: "Feature", now }),
+        );
+        await fixture.manifests.save({
+          id: manifestId,
+          projectId,
+          revision: 1,
+          manifest: {
+            schemaVersion: 1,
+            provenance: {
+              host: "codex",
+              skill: "ai-office",
+              skillVersion: "1.0.0",
+            },
+            project: {
+              mission: "Pin unsupported",
+              goals: ["Ship"],
+              constraints: [],
+              preferences: [],
+              permissionPreferences: [],
+            },
+            office: {
+              name: "Pin unsupported office",
+              roles: [
+                {
+                  id: "developer",
+                  title: "Developer",
+                  purpose: "Build",
+                  responsibilities: ["Build"],
+                },
+              ],
+            },
+            pipelines: [definition],
+          },
+          appliedAt: now,
+        });
+        const run = PipelineRun.create({
+          id: "pin-unsupported-run",
+          projectId,
+          taskId,
+          manifestRevisionId: manifestId,
+          manifestRevision: 1,
+          definition,
+          startedBy: "operator",
+          stageRunIds: ["pin-unsupported-stage"],
+          configurationPin: {
+            configurationDigest: `sha256:${"e".repeat(64)}`,
+            coreContractVersion: 1,
+            bindingRevision: 1,
+            definitionRevision: 0,
+            selectedPacks: [],
+            resolvedPacks: [],
+          },
+          now,
+        });
+        await expect(fixture.pipelines.insert(run)).rejects.toThrow(
+          /configuration pin/,
+        );
+        await expect(
+          fixture.pipelines.findById(run.snapshot().id, projectId),
+        ).resolves.toBeNull();
+      } finally {
+        await fixture.close();
+      }
+    });
+
     test("does not read or write another tenant's manifest and pipeline rows", async () => {
       const fixture = await createFixture();
       const now = new Date("2026-09-22T00:00:00.000Z");

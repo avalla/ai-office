@@ -18,6 +18,7 @@ import type { ModelProviderCatalog } from "@ai-office/application/ports/model-pr
 import type { GatewayModelProviders } from "@ai-office/llm-gateway/gateway-worker-runtime.ts";
 import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import type { OperationProviderCatalog } from "@ai-office/application/ports/operation-provider-catalog.port.ts";
+import type { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
 
 export interface CommandContext extends ProjectStorage {
   onRunChanged?: () => void;
@@ -58,6 +59,13 @@ export interface CommandContext extends ProjectStorage {
    * report and check capability contracts; it authorizes nothing.
    */
   operationProviders: OperationProviderCatalog;
+  /**
+   * One resolver built from this same composition's ports (GP-06). Built
+   * here, not in `commands/pipeline.ts`, so a scheduling file never holds
+   * `definitions`/`packBindings` directly (GP-07's scheduling boundary);
+   * `ManagePipelineRuns` reads only its `.pin` field for run identity.
+   */
+  projectConfiguration: ReadProjectConfiguration;
 }
 
 export * from "@ai-office/command-support/arguments.ts";

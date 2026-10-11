@@ -3,6 +3,8 @@ import type { PipelineRunRepository } from "@ai-office/application/ports/pipelin
 import {
   PipelineRun,
   type PipelineOverrideRecord,
+  type PipelineRunConfigurationPackIdentity,
+  type PipelineRunConfigurationPin,
   type PipelineRunProps,
   type PipelineRunStatus,
   type PipelineStageRunProps,
@@ -26,6 +28,17 @@ interface RunRow {
   updated_at: string;
   completed_at: string | null;
   cancelled_at: string | null;
+  configuration_digest: string | null;
+  core_contract_version: number | null;
+  binding_revision: number | null;
+  definition_revision: number | null;
+}
+
+interface ConfigurationPackRow {
+  relation: "selected" | "resolved";
+  pack_id: string;
+  pack_version: string;
+  manifest_digest: string;
 }
 
 interface StageRow {
@@ -103,30 +116,72 @@ export class SqlitePipelineRunRepository implements PipelineRunRepository {
 
   async insert(run: PipelineRun): Promise<void> {
     const value = run.snapshot();
-    this.database
-      .prepare(
-        `INSERT INTO pipeline_run(
-         id, project_id, task_id, manifest_revision_id, manifest_revision,
-         definition_json, status, current_stage_index, started_by, version,
-         created_at, updated_at, completed_at, cancelled_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        value.id,
-        value.projectId,
-        value.taskId,
-        value.manifestRevisionId,
-        value.manifestRevision,
-        canonicalStringify(value.definition),
-        value.status,
-        value.currentStageIndex,
-        value.startedBy,
-        value.version,
-        value.createdAt.toISOString(),
-        value.updatedAt.toISOString(),
-        value.completedAt?.toISOString() ?? null,
-        value.cancelledAt?.toISOString() ?? null,
-      );
+    // Two shapes, not one INSERT with four always-NULL columns: a run
+    // without a configuration pin (every run before M16.5's first slice,
+    // and every run today for a project with no pack selection) must stay
+    // insertable against a database that predates migration 0051 -- see
+    // tests/helpers/legacy-development-fixture.ts's pre-pack fixture, which
+    // intentionally freezes schema history before any pack-related
+    // migration and still exercises current application code against it.
+    if (value.configurationPin === undefined) {
+      this.database
+        .prepare(
+          `INSERT INTO pipeline_run(
+           id, project_id, task_id, manifest_revision_id, manifest_revision,
+           definition_json, status, current_stage_index, started_by, version,
+           created_at, updated_at, completed_at, cancelled_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          value.id,
+          value.projectId,
+          value.taskId,
+          value.manifestRevisionId,
+          value.manifestRevision,
+          canonicalStringify(value.definition),
+          value.status,
+          value.currentStageIndex,
+          value.startedBy,
+          value.version,
+          value.createdAt.toISOString(),
+          value.updatedAt.toISOString(),
+          value.completedAt?.toISOString() ?? null,
+          value.cancelledAt?.toISOString() ?? null,
+        );
+    } else {
+      const pin = value.configurationPin;
+      this.database
+        .prepare(
+          `INSERT INTO pipeline_run(
+           id, project_id, task_id, manifest_revision_id, manifest_revision,
+           definition_json, status, current_stage_index, started_by, version,
+           created_at, updated_at, completed_at, cancelled_at,
+           configuration_digest, core_contract_version, binding_revision,
+           definition_revision
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          value.id,
+          value.projectId,
+          value.taskId,
+          value.manifestRevisionId,
+          value.manifestRevision,
+          canonicalStringify(value.definition),
+          value.status,
+          value.currentStageIndex,
+          value.startedBy,
+          value.version,
+          value.createdAt.toISOString(),
+          value.updatedAt.toISOString(),
+          value.completedAt?.toISOString() ?? null,
+          value.cancelledAt?.toISOString() ?? null,
+          pin.configurationDigest,
+          pin.coreContractVersion,
+          pin.bindingRevision,
+          pin.definitionRevision,
+        );
+      this.insertConfigurationPackTuples(value.id, value.projectId, pin);
+    }
     for (const valueStage of value.stages)
       this.insertStage(value.id, value.projectId, valueStage);
   }
@@ -282,8 +337,70 @@ export class SqlitePipelineRunRepository implements PipelineRunRepository {
       ...(row.cancelled_at === null
         ? {}
         : { cancelledAt: new Date(row.cancelled_at) }),
+      // `undefined` (column absent: a database that predates migration
+      // 0051) must be treated the same as `null` (column present, no pin
+      // stored) -- both mean "no configuration pin", so this checks
+      // falsiness, not strict `=== null`.
+      ...(row.configuration_digest
+        ? { configurationPin: this.restoreConfigurationPin(row) }
+        : {}),
     };
     return PipelineRun.restore(props);
+  }
+
+  /** Call only when `row.configuration_digest` is known non-null. */
+  private restoreConfigurationPin(row: RunRow): PipelineRunConfigurationPin {
+    const tuples = this.database
+      .query<ConfigurationPackRow, [string, string]>(
+        `SELECT relation, pack_id, pack_version, manifest_digest
+       FROM pipeline_run_configuration_pack
+       WHERE pipeline_run_id = ? AND project_id = ?
+       ORDER BY relation, pack_id`,
+      )
+      .all(row.id, row.project_id);
+    const byRelation = (
+      relation: "selected" | "resolved",
+    ): PipelineRunConfigurationPackIdentity[] =>
+      tuples
+        .filter((tuple) => tuple.relation === relation)
+        .map((tuple) => ({
+          id: tuple.pack_id,
+          version: tuple.pack_version,
+          manifestDigest: tuple.manifest_digest,
+        }));
+    return {
+      configurationDigest: row.configuration_digest!,
+      coreContractVersion: row.core_contract_version!,
+      bindingRevision: row.binding_revision!,
+      definitionRevision: row.definition_revision!,
+      selectedPacks: byRelation("selected"),
+      resolvedPacks: byRelation("resolved"),
+    };
+  }
+
+  private insertConfigurationPackTuples(
+    pipelineRunId: string,
+    projectId: string,
+    pin: PipelineRunConfigurationPin,
+  ): void {
+    const insert = this.database.prepare(
+      `INSERT INTO pipeline_run_configuration_pack(
+         pipeline_run_id, project_id, relation, pack_id, pack_version, manifest_digest
+       ) VALUES (?, ?, ?, ?, ?, ?)`,
+    );
+    for (const [relation, packs] of [
+      ["selected", pin.selectedPacks],
+      ["resolved", pin.resolvedPacks],
+    ] as const)
+      for (const pack of packs)
+        insert.run(
+          pipelineRunId,
+          projectId,
+          relation,
+          pack.id,
+          pack.version,
+          pack.manifestDigest,
+        );
   }
 
   private insertStage(

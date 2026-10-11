@@ -338,6 +338,7 @@ describe("GP-09 committed legacy fixtures", () => {
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
     ]);
     const preExisting = Object.keys(before).filter(
       (name) => name !== "schema_migration",
@@ -353,7 +354,17 @@ describe("GP-09 committed legacy fixtures", () => {
                   archived_at: null,
                 }),
               )
-            : before[name],
+            : name === "pipeline_run"
+              ? before[name]!.map((row) =>
+                  JSON.stringify({
+                    ...(JSON.parse(row) as Record<string, unknown>),
+                    configuration_digest: null,
+                    core_contract_version: null,
+                    binding_revision: null,
+                    definition_revision: null,
+                  }),
+                )
+              : before[name],
         ]),
       ),
     );

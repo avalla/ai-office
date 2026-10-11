@@ -128,6 +128,7 @@ test("SQLite upgrade backfills authoritative execution and keeps the marker mono
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
     ]);
     expect(migrate(database, migrations).applied).toEqual([]);
     const rows = database

@@ -5,6 +5,33 @@ export type PipelineRunStatus = "active" | "completed" | "cancelled";
 export type PipelineStageRunStatus =
   "pending" | "active" | "awaiting_approval" | "completed" | "cancelled";
 
+/**
+ * Minimal, package-local shape of a pack identity tuple. Deliberately not
+ * imported from `@ai-office/domain-pack-contracts`: core domain stays
+ * pack-agnostic (GP-02/GP-03), and this file only needs the three fields.
+ */
+export interface PipelineRunConfigurationPackIdentity {
+  readonly id: string;
+  readonly version: string;
+  readonly manifestDigest: string;
+}
+
+/**
+ * M16.5 Runtime activation, first slice (ADR-0026): the minimum evidence a
+ * run pins about the Domain Pack configuration in effect when it started,
+ * additively alongside the existing manifest/definition pins below. Absent
+ * when the project had no pack selection at start time. Pinning this never
+ * changes which pipeline, stage or role runs -- that stays manifest-driven.
+ */
+export interface PipelineRunConfigurationPin {
+  readonly configurationDigest: string;
+  readonly coreContractVersion: number;
+  readonly bindingRevision: number;
+  readonly definitionRevision: number;
+  readonly selectedPacks: readonly PipelineRunConfigurationPackIdentity[];
+  readonly resolvedPacks: readonly PipelineRunConfigurationPackIdentity[];
+}
+
 export interface PipelineStageRunProps {
   id: string;
   stageId: string;
@@ -36,6 +63,7 @@ export interface PipelineRunProps {
   updatedAt: Date;
   completedAt?: Date;
   cancelledAt?: Date;
+  configurationPin?: PipelineRunConfigurationPin;
 }
 
 export interface PipelineOverrideRecord {
@@ -62,6 +90,18 @@ function required(value: string, name: string): string {
   if (normalized === "")
     throw new DomainValidationError(`${name} cannot be empty`);
   return normalized;
+}
+
+function requiredConfigurationPin(
+  value: PipelineRunConfigurationPin,
+): PipelineRunConfigurationPin {
+  return {
+    ...value,
+    configurationDigest: required(
+      value.configurationDigest,
+      "Configuration digest",
+    ),
+  };
 }
 
 function cloneStage(value: PipelineStageRunProps): PipelineStageRunProps {
@@ -91,6 +131,7 @@ export class PipelineRun {
     definition: OfficePipeline;
     startedBy: string;
     stageRunIds: readonly string[];
+    configurationPin?: PipelineRunConfigurationPin;
     now: Date;
   }): PipelineRun {
     if (input.definition.enforcement !== "enforced")
@@ -129,6 +170,9 @@ export class PipelineRun {
       version: 1,
       createdAt: input.now,
       updatedAt: input.now,
+      ...(input.configurationPin === undefined
+        ? {}
+        : { configurationPin: requiredConfigurationPin(input.configurationPin) }),
     });
   }
 

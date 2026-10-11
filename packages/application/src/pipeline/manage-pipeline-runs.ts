@@ -1,7 +1,9 @@
 import {
   PipelineRun,
   type PipelineOverrideRecord,
+  type PipelineRunConfigurationPin,
 } from "@ai-office/domain/pipeline/pipeline-run.ts";
+import type { ReadProjectConfiguration } from "../domain-pack/read-project-configuration.ts";
 import {
   OfficeManifestNotFoundError,
   OfficePipelineNotFoundError,
@@ -47,6 +49,13 @@ export class ManagePipelineRuns {
     private readonly transactions: TransactionRunner,
     private readonly outbox?: JobOutboxRepository,
     private readonly taskDependencies?: TaskDependencyRepository,
+    /**
+     * M16.5 Runtime activation, first slice: when present, a new run's
+     * configuration pin is read from here. Which pipeline/stage/role runs
+     * stays manifest-driven; this collaborator is consulted only for the
+     * pin, never for selection (see `resolveConfigurationPin`).
+     */
+    private readonly configuration?: ReadProjectConfiguration,
   ) {}
 
   async start(input: {
@@ -83,6 +92,9 @@ export class ManagePipelineRuns {
     if (definition.enforcement !== "enforced")
       throw new PipelineDefinitionNotEnforcedError(definition.id);
     const now = this.clock.now();
+    const configurationPin = await this.resolveConfigurationPin(
+      input.projectId,
+    );
     const run = PipelineRun.create({
       id: this.ids.generate(),
       projectId: input.projectId,
@@ -92,6 +104,7 @@ export class ManagePipelineRuns {
       definition,
       startedBy: input.principal.id,
       stageRunIds: definition.stages.map(() => this.ids.generate()),
+      ...(configurationPin === undefined ? {} : { configurationPin }),
       now,
     });
     task.start(now);
@@ -379,6 +392,22 @@ export class ManagePipelineRuns {
   ): Promise<void> {
     if (!(await this.pipelines.save(run, expectedVersion)))
       throw new ConcurrentPipelineTransitionError(run.snapshot().id);
+  }
+
+  /**
+   * M16.5 Runtime activation, first slice. Reads only the `pin` field of
+   * the resolved configuration (digest, revisions, exact pack tuples) --
+   * never `workflows`, `roles`, `agents`, `policies` or any other derived
+   * view -- so this stays identity pinning and cannot influence which
+   * pipeline, stage or role the run above selects.
+   */
+  private async resolveConfigurationPin(
+    projectId: string,
+  ): Promise<PipelineRunConfigurationPin | undefined> {
+    if (this.configuration === undefined) return undefined;
+    const configuration = await this.configuration.read(projectId);
+    if (configuration.selectedPacks.length === 0) return undefined;
+    return configuration.pin;
   }
 
   private requireOperator(actor: OperatorPrincipal): void {

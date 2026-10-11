@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   PipelineRun,
   PipelineTransitionError,
+  type PipelineRunConfigurationPin,
 } from "@ai-office/domain/pipeline/pipeline-run.ts";
 import type { OfficePipeline } from "@ai-office/domain/office/office-manifest.ts";
 
@@ -187,5 +188,72 @@ describe("pipeline run", () => {
         expect.objectContaining({ approvalDecision: "rejected" }),
       ]),
     });
+  });
+
+  test("pins nothing by default, matching every run before M16.5's first slice", () => {
+    expect(create().snapshot().configurationPin).toBeUndefined();
+  });
+
+  test("pins and round-trips a pack configuration identity alongside the legacy manifest pin", () => {
+    const pin: PipelineRunConfigurationPin = {
+      configurationDigest: `sha256:${"a".repeat(64)}`,
+      coreContractVersion: 1,
+      bindingRevision: 2,
+      definitionRevision: 3,
+      selectedPacks: [
+        { id: "org.ai-office.legal", version: "0.2.0", manifestDigest: `sha256:${"b".repeat(64)}` },
+      ],
+      resolvedPacks: [
+        { id: "org.ai-office.legal", version: "0.2.0", manifestDigest: `sha256:${"b".repeat(64)}` },
+      ],
+    };
+    const run = PipelineRun.create({
+      id: "pipeline-run",
+      projectId: "project",
+      taskId: "task",
+      manifestRevisionId: "manifest",
+      manifestRevision: 1,
+      definition: pipeline,
+      startedBy: "operator",
+      stageRunIds: ["implementation-run", "review-run"],
+      configurationPin: pin,
+      now: new Date("2026-08-28T00:00:00.000Z"),
+    });
+    expect(run.snapshot().configurationPin).toEqual(pin);
+    // The pin is pass-through evidence, not domain state: nothing about
+    // pipeline selection or transitions reads or changes because of it.
+    run.assign(
+      "developer-agent",
+      "developer",
+      new Date("2026-08-28T00:01:00Z"),
+    );
+    expect(run.snapshot().configurationPin).toEqual(pin);
+    const restored = PipelineRun.restore(run.snapshot());
+    expect(restored.snapshot().configurationPin).toEqual(pin);
+  });
+
+  test("rejects an empty configuration digest", () => {
+    const pin: PipelineRunConfigurationPin = {
+      configurationDigest: "   ",
+      coreContractVersion: 1,
+      bindingRevision: 0,
+      definitionRevision: 0,
+      selectedPacks: [],
+      resolvedPacks: [],
+    };
+    expect(() =>
+      PipelineRun.create({
+        id: "pipeline-run",
+        projectId: "project",
+        taskId: "task",
+        manifestRevisionId: "manifest",
+        manifestRevision: 1,
+        definition: pipeline,
+        startedBy: "operator",
+        stageRunIds: ["implementation-run", "review-run"],
+        configurationPin: pin,
+        now: new Date("2026-08-28T00:00:00.000Z"),
+      }),
+    ).toThrow("Configuration digest");
   });
 });

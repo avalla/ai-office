@@ -106,6 +106,21 @@ function override(row: OverrideRow): PipelineOverrideRecord {
   };
 }
 
+/**
+ * M16.5 Runtime activation, first slice: PostgreSQL does not yet persist a
+ * run's pack-configuration pin (no column or table exists for it here,
+ * unlike SQLite). Rather than silently drop the pin, `insert` fails closed.
+ */
+export class PostgresPipelineRunConfigurationPinUnsupportedError extends Error {
+  constructor(pipelineRunId: string) {
+    super(
+      `PipelineRun ${pipelineRunId} has a configuration pin, which the ` +
+        "PostgreSQL PipelineRunRepository does not yet support persisting",
+    );
+    this.name = "PostgresPipelineRunConfigurationPinUnsupportedError";
+  }
+}
+
 export class PostgresPipelineRunRepository implements PipelineRunRepository {
   private readonly tenantId: string;
 
@@ -118,6 +133,8 @@ export class PostgresPipelineRunRepository implements PipelineRunRepository {
 
   async insert(run: PipelineRun): Promise<void> {
     const value = run.snapshot();
+    if (value.configurationPin !== undefined)
+      throw new PostgresPipelineRunConfigurationPinUnsupportedError(value.id);
     await this.database.runInTransaction(async () => {
       const inserted = await this.database.query<{ id: string }>(
         `
