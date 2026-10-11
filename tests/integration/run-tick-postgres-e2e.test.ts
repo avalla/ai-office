@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { Role } from "@ai-office/domain/agent/role.ts";
 import { Project } from "@ai-office/domain/project/project.ts";
@@ -7,7 +10,9 @@ import { SimulatedAgentExecutor } from "@ai-office/agent-runtime/executor.ts";
 import { InMemoryWorktreeManager } from "@ai-office/agent-runtime/worktree.ts";
 import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
+import type { ProjectStorage } from "@ai-office/application/ports/project-storage.port.ts";
 import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
+import { RunExecutionControl } from "@ai-office/application/runtime/run-execution-control.ts";
 import { AdmitAgentRun } from "@ai-office/application/commands/admit-agent-run.ts";
 import { ExecuteAgentRun } from "@ai-office/application/commands/execute-agent-run.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
@@ -17,15 +22,24 @@ import {
   TaskPrerequisiteIncompleteError,
 } from "@ai-office/application/commands/manage-task-dependencies.ts";
 import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
+import { executeRuntimeCommand } from "@ai-office/runtime-host/runtime-command.ts";
+import type { RuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
+import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
+import { migrate as migrateSqlite } from "@ai-office/storage-sqlite/database/migrate.ts";
+import { createSqliteProjectStorage } from "@ai-office/storage-sqlite/sqlite-project-storage.ts";
 import { PostgresClient } from "@ai-office/storage-postgres/database/postgres-client.ts";
 import { PostgresTransactionRunner } from "@ai-office/storage-postgres/database/postgres-transaction-runner.ts";
 import { PostgresAgentRuntimeRepository } from "@ai-office/storage-postgres/repositories/postgres-agent-runtime.repository.ts";
 import { PostgresAuditEventRepository } from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
+import { PostgresGovernanceRepository } from "@ai-office/storage-postgres/repositories/postgres-governance.repository.ts";
 import { PostgresOfficeManifestRepository } from "@ai-office/storage-postgres/repositories/postgres-office-manifest.repository.ts";
 import { PostgresPipelineRunRepository } from "@ai-office/storage-postgres/repositories/postgres-pipeline-run.repository.ts";
+import { PostgresProjectDefinitionRepository } from "@ai-office/storage-postgres/repositories/postgres-project-definition.repository.ts";
+import { PostgresProjectPackBindingRepository } from "@ai-office/storage-postgres/repositories/postgres-project-pack-binding.repository.ts";
 import { PostgresProjectRepository } from "@ai-office/storage-postgres/repositories/postgres-project.repository.ts";
 import { PostgresTaskDependencyRepository } from "@ai-office/storage-postgres/repositories/postgres-task-dependency.repository.ts";
 import { PostgresTaskRepository } from "@ai-office/storage-postgres/repositories/postgres-task.repository.ts";
+import { PostgresTaskRequirementRepository } from "@ai-office/storage-postgres/repositories/postgres-task-requirement.repository.ts";
 import {
   createPostgresTestDatabase,
   type PostgresTestDatabase,
@@ -193,6 +207,7 @@ describe.skipIf(connectionString === undefined)(
         projectId,
         prerequisiteId,
         dependentId,
+        tenantId,
         agent,
         manifests,
         runtime,
@@ -209,6 +224,151 @@ describe.skipIf(connectionString === undefined)(
         "UPDATE core.task SET status = $2, updated_at = $3 WHERE id = $1",
         [taskId, status, at],
       );
+    }
+
+    // The handler runs on the host SystemClock, while the suite schedules with
+    // a fixed epoch; keep the schedule-time lease valid for the handler tick.
+    async function extendTaskLease(taskId: string) {
+      await db.client.query(
+        "UPDATE core.task_lock SET expires_at = $2 WHERE task_id = $1",
+        [taskId, new Date("2027-01-01T00:00:00.000Z")],
+      );
+    }
+
+    /**
+     * A Runtime command context whose run:tick-relevant ports are the
+     * PostgreSQL repositories under test. Ports that run:tick never touches
+     * for runs without an action intent (capabilities, controlled execution,
+     * costs, job outbox, and the other ports storage-postgres has not
+     * implemented yet) come from an isolated SQLite store so the composed
+     * ProjectStorage stays complete; every read or write on the
+     * schedule/admit/execute/stage-completion path is PostgreSQL.
+     */
+    async function composeHandler(f: Awaited<ReturnType<typeof seedOffice>>) {
+      const directory = await mkdtemp(join(tmpdir(), "rrd03-runtime-"));
+      const sqlite = openDatabase(join(directory, "project.sqlite"));
+      migrateSqlite(sqlite, "migrations/project");
+      const base = createSqliteProjectStorage(sqlite);
+      const client = db.client;
+      const storage: ProjectStorage = {
+        ...base,
+        projects: new PostgresProjectRepository(client, f.tenantId),
+        packBindings: new PostgresProjectPackBindingRepository(
+          client,
+          f.tenantId,
+        ),
+        definitions: new PostgresProjectDefinitionRepository(
+          client,
+          f.tenantId,
+        ),
+        officeManifests: new PostgresOfficeManifestRepository(
+          client,
+          f.tenantId,
+        ),
+        pipelines: new PostgresPipelineRunRepository(client, f.tenantId),
+        tasks: new PostgresTaskRepository(client, f.tenantId),
+        taskDependencies: new PostgresTaskDependencyRepository(
+          client,
+          f.tenantId,
+        ),
+        taskRequirements: new PostgresTaskRequirementRepository(
+          client,
+          f.tenantId,
+        ),
+        runtime: new PostgresAgentRuntimeRepository(client, f.tenantId),
+        governance: new PostgresGovernanceRepository(client, f.tenantId),
+        auditEvents: new PostgresAuditEventRepository(client, f.tenantId),
+        transactions: new PostgresTransactionRunner(client),
+      };
+      const executionControl = new RunExecutionControl("rrd03-test-host");
+      const runtimePaths: RuntimePaths = {
+        runtimeHome: directory,
+        projectDatabasePath: join(directory, "project.sqlite"),
+        socketPath: join(directory, "runtime.sock"),
+        globalDatabasePath: join(directory, "global.sqlite"),
+        draftsDirectory: join(directory, "drafts"),
+        generatedDirectory: join(directory, "generated"),
+      };
+      async function run(args: string[]) {
+        const stdout: string[] = [];
+        const stderr: string[] = [];
+        const code = await executeRuntimeCommand(args, {
+          projectRoot: directory,
+          runtimePaths,
+          projectStorage: storage,
+          executionControl,
+          io: {
+            stdout: (message) => stdout.push(message),
+            stderr: (message) => stderr.push(message),
+          },
+        });
+        return { code, stdout, stderr };
+      }
+      return {
+        executionControl,
+        run,
+        async close() {
+          sqlite.close();
+          await rm(directory, { recursive: true, force: true });
+        },
+      };
+    }
+
+    async function seedDeliveryManifest(
+      f: Awaited<ReturnType<typeof seedOffice>>,
+    ) {
+      await f.manifests.save({
+        id: `rrd03-manifest-${randomUUID()}`,
+        projectId: f.projectId,
+        revision: 1,
+        manifest: {
+          schemaVersion: 1,
+          provenance: {
+            host: "codex",
+            skill: "ai-office",
+            skillVersion: "1.0.0",
+          },
+          project: {
+            mission: "RRD-03",
+            goals: ["Cover run:tick on PostgreSQL"],
+            constraints: [],
+            preferences: [],
+            permissionPreferences: [],
+          },
+          office: {
+            name: "RRD-03 office",
+            roles: [
+              {
+                id: "developer",
+                title: "Developer",
+                purpose: "Build",
+                responsibilities: ["Build"],
+              },
+            ],
+          },
+          pipelines: [
+            {
+              id: "delivery",
+              name: "Delivery",
+              description: "Single-stage delivery",
+              defaultFor: ["feature"],
+              enforcement: "enforced",
+              stages: [
+                {
+                  id: "build",
+                  name: "Build",
+                  roleId: "developer",
+                  objective: "Build",
+                  checks: ["Tests"],
+                  requiresApproval: false,
+                  capabilities: [],
+                },
+              ],
+            },
+          ],
+        },
+        appliedAt: epoch,
+      });
     }
 
     test("claims and executes a queued run behind a review-submitted prerequisite", async () => {
@@ -368,58 +528,7 @@ describe.skipIf(connectionString === undefined)(
 
     test("holds pipeline stage completion until prerequisites complete", async () => {
       const f = await seedOffice();
-      await f.manifests.save({
-        id: `rrd03-manifest-${randomUUID()}`,
-        projectId: f.projectId,
-        revision: 1,
-        manifest: {
-          schemaVersion: 1,
-          provenance: {
-            host: "codex",
-            skill: "ai-office",
-            skillVersion: "1.0.0",
-          },
-          project: {
-            mission: "RRD-03",
-            goals: ["Cover run:tick on PostgreSQL"],
-            constraints: [],
-            preferences: [],
-            permissionPreferences: [],
-          },
-          office: {
-            name: "RRD-03 office",
-            roles: [
-              {
-                id: "developer",
-                title: "Developer",
-                purpose: "Build",
-                responsibilities: ["Build"],
-              },
-            ],
-          },
-          pipelines: [
-            {
-              id: "delivery",
-              name: "Delivery",
-              description: "Single-stage delivery",
-              defaultFor: ["feature"],
-              enforcement: "enforced",
-              stages: [
-                {
-                  id: "build",
-                  name: "Build",
-                  roleId: "developer",
-                  objective: "Build",
-                  checks: ["Tests"],
-                  requiresApproval: false,
-                  capabilities: [],
-                },
-              ],
-            },
-          ],
-        },
-        appliedAt: epoch,
-      });
+      await seedDeliveryManifest(f);
       const started = await f.pipelineManager.start({
         projectId: f.projectId,
         taskId: f.dependentId,
@@ -507,6 +616,210 @@ describe.skipIf(connectionString === undefined)(
           [f.dependentId],
         ),
       ).toEqual([{ status: "completed" }]);
+    });
+
+    test(
+      "run:tick command tolerates the prerequisite-exit race and retries cleanly",
+      { timeout: 30_000 },
+      async () => {
+        const f = await seedOffice();
+        const runId = await f.scheduler.execute({
+          projectId: f.projectId,
+          taskId: f.dependentId,
+          agentId: f.agent.id,
+        });
+        await extendTaskLease(f.dependentId);
+        const handler = await composeHandler(f);
+
+        const mutation = new PostgresClient(db.connectionString);
+        const observer = new PostgresClient(db.connectionString);
+        let release!: () => void;
+        let locked!: () => void;
+        const lockAcquired = new Promise<void>((resolve) => {
+          locked = resolve;
+        });
+        const releaseGate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        const mutationDone = mutation.transaction(async () => {
+          await mutation.query(
+            "UPDATE core.task SET status = 'failed', updated_at = $2 WHERE id = $1",
+            [f.prerequisiteId, new Date(epoch.getTime() + 1)],
+          );
+          locked();
+          await releaseGate;
+        });
+        try {
+          await lockAcquired;
+          // The command-level claim blocks on the advisory lock held by the
+          // exit transaction; the handler must tolerate the storage refusal.
+          const tick = handler.run([
+            "run:tick",
+            "--project",
+            f.projectId,
+            "--simulate",
+            "--json",
+          ]);
+          tick.catch(() => undefined);
+          for (let attempt = 0; attempt < 1000; attempt += 1) {
+            const [row] = await observer.query<{ count: number }>(
+              `SELECT count(*)::int AS count FROM pg_stat_activity
+               WHERE datname = current_database()
+                 AND wait_event_type = 'Lock' AND state = 'active'`,
+            );
+            if ((row?.count ?? 0) > 0) break;
+            await new Promise<void>((resolve) => setImmediate(resolve));
+            if (attempt === 999)
+              throw new Error("claim did not reach the dependency-gate lock");
+          }
+          release();
+          const refused = await tick;
+          await mutationDone;
+
+          // The refused run is skipped, not failed: exit 0, empty results,
+          // nothing on stderr, and the execution-control reservation is
+          // released even though the claim raced the refusal.
+          expect(refused.code).toBe(0);
+          expect(refused.stderr).toEqual([]);
+          expect(JSON.parse(refused.stdout.join("\n"))).toEqual({
+            schemaVersion: 1,
+            results: [],
+            unsuccessful: 0,
+          });
+          expect(handler.executionControl.has(runId)).toBe(false);
+          expect((await f.runtime.findRun(runId))?.snapshot().status).toBe(
+            "queued",
+          );
+          expect(
+            (await f.runtime.listRunEvents(runId)).map((event) => event.status),
+          ).toEqual(["queued"]);
+
+          // Retry: once the prerequisite is back in review, the next tick
+          // re-claims the same queued run and executes it to completion.
+          await setTaskStatus(
+            f.prerequisiteId,
+            "waiting_review",
+            new Date(epoch.getTime() + 2),
+          );
+          const retry = await handler.run([
+            "run:tick",
+            "--project",
+            f.projectId,
+            "--simulate",
+            "--json",
+          ]);
+          expect(retry.code).toBe(0);
+          expect(retry.stderr).toEqual([]);
+          const report = JSON.parse(retry.stdout.join("\n")) as {
+            results: { runId: string; status: string }[];
+            unsuccessful: number;
+          };
+          expect(report.unsuccessful).toBe(0);
+          expect(report.results).toEqual([
+            expect.objectContaining({ runId, status: "completed" }),
+          ]);
+          expect(handler.executionControl.has(runId)).toBe(false);
+          expect(
+            (await f.runtime.listRunEvents(runId)).map((event) => event.status),
+          ).toEqual([
+            "queued",
+            "preparing",
+            "running",
+            "reviewing",
+            "completed",
+          ]);
+          expect(await f.runtime.findTaskLock(f.dependentId)).toBeNull();
+        } finally {
+          release();
+          await mutationDone.catch(() => undefined);
+          await observer.close();
+          await mutation.close();
+          await handler.close();
+        }
+      },
+    );
+
+    test("run:tick command reports STAGE_AWAITING_PREREQUISITES for a stage-bound run", async () => {
+      const f = await seedOffice();
+      await seedDeliveryManifest(f);
+      const started = await f.pipelineManager.start({
+        projectId: f.projectId,
+        taskId: f.dependentId,
+        pipelineId: "delivery",
+        principal: localOperatorPrincipal,
+      });
+      const pipelineRunId = started.snapshot().id;
+      await f.pipelineManager.assign({
+        projectId: f.projectId,
+        pipelineRunId,
+        agentId: f.agent.id,
+        principal: localOperatorPrincipal,
+      });
+      const runId = await f.scheduler.execute({
+        projectId: f.projectId,
+        taskId: f.dependentId,
+        agentId: f.agent.id,
+      });
+      await extendTaskLease(f.dependentId);
+      const handler = await composeHandler(f);
+      try {
+        // The run completes but the final stage cannot close while the
+        // prerequisite is still in review; the command translates the typed
+        // refusal into a per-run error instead of failing the batch.
+        const tick = await handler.run([
+          "run:tick",
+          "--project",
+          f.projectId,
+          "--simulate",
+          "--json",
+        ]);
+        expect(tick.code).toBe(1);
+        const report = JSON.parse(tick.stdout.join("\n")) as {
+          results: {
+            runId: string;
+            status: string;
+            error?: { code: string; message: string };
+          }[];
+          unsuccessful: number;
+        };
+        expect(report.unsuccessful).toBe(1);
+        expect(report.results).toEqual([
+          expect.objectContaining({
+            runId,
+            status: "completed",
+            error: expect.objectContaining({
+              code: "STAGE_AWAITING_PREREQUISITES",
+            }),
+          }),
+        ]);
+        expect(handler.executionControl.has(runId)).toBe(false);
+        expect(
+          (await f.pipelines.findById(pipelineRunId, f.projectId))?.snapshot()
+            .status,
+        ).toBe("active");
+        expect(
+          await db.client.query("SELECT status FROM core.task WHERE id = $1", [
+            f.dependentId,
+          ]),
+        ).toEqual([{ status: "running" }]);
+
+        // Once the prerequisite completes, the stage closes. run:tick does
+        // not re-drive completed runs, so closure goes through the same
+        // application service the command used.
+        await setTaskStatus(
+          f.prerequisiteId,
+          "completed",
+          new Date(epoch.getTime() + 1),
+        );
+        const completed = await f.pipelineManager.completeStageFromAgentRun({
+          projectId: f.projectId,
+          agentRunId: runId,
+          expectedPipelineRunId: pipelineRunId,
+        });
+        expect(completed.snapshot().status).toBe("completed");
+      } finally {
+        await handler.close();
+      }
     });
   },
 );
