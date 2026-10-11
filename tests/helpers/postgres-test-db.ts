@@ -7,7 +7,8 @@ import { migratePostgres } from "@ai-office/storage-postgres/database/migrate-po
  * which share the `ai_office_test` database named by
  * `AI_OFFICE_TEST_POSTGRES_URL`, each instance here is a dedicated database
  * created from the admin connection and dropped with FORCE on dispose, so a
- * suite leaves no schema, data, or migrated state behind.
+ * suite leaves no schema, data, or migrated state behind. Requires
+ * PostgreSQL 13 or later (DROP DATABASE ... WITH (FORCE)).
  */
 export interface PostgresTestDatabase {
   readonly name: string;
@@ -31,7 +32,8 @@ async function dropDatabase(
     withDatabaseName(adminConnectionString, "postgres"),
   );
   try {
-    // Quoted identifier from randomUUID; never interpolated from input.
+    // Quoted identifier: the name is a fixed prefix literal plus a random
+    // UUID; callers never supply arbitrary input.
     await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
   } finally {
     await admin.close();

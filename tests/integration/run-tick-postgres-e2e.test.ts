@@ -67,7 +67,9 @@ describe.skipIf(connectionString === undefined)(
     }, 60_000);
 
     afterAll(async () => {
-      await db.dispose();
+      // beforeAll may have failed before assigning db; the helper already
+      // cleans up its own failure paths, so only dispose a live database.
+      if (db !== undefined) await db.dispose();
     });
 
     async function seedOffice() {
@@ -270,6 +272,9 @@ describe.skipIf(connectionString === undefined)(
           // The application-level check still sees waiting_review; the claim
           // then blocks on the advisory lock held by the exit transaction.
           const claim = f.admission.execute(queued[0]!);
+          // If the observer loop below gives up, the in-flight claim rejects
+          // without a handler; keep the real failure free of that noise.
+          claim.catch(() => undefined);
           for (let attempt = 0; attempt < 1000; attempt += 1) {
             const [row] = await observer.query<{ count: number }>(
               `SELECT count(*)::int AS count FROM pg_stat_activity
