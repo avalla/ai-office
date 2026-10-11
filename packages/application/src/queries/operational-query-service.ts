@@ -78,7 +78,6 @@ import {
   type ProjectSummary,
   type RequirementSummary,
   type ReviewState,
-  terminalTaskOperationalStatuses,
   type TaskOperationalState,
   type TaskDetail,
   type TaskGraph,
@@ -1078,7 +1077,12 @@ export class OperationalQueryService {
       taskId: edge.taskId,
       dependsOnTaskId: edge.dependsOnTaskId,
     }));
-    const tasks = projectTaskGraphNodes(states, edges);
+    const tasks = projectTaskGraphNodes(states, edges, {
+      requirementLinkedTaskIds: new Set(snapshot.requirementLinkedTaskIds),
+      milestoneLinkedTaskIds: new Set(
+        snapshot.milestoneLinks.map((link) => link.taskId),
+      ),
+    });
     return {
       generatedAt: now.toISOString(),
       projectId,
@@ -1132,6 +1136,9 @@ export class OperationalQueryService {
     let hasUnassignedMilestone = false;
     const matches: TaskOperationalState[] = [];
     const search = filters.search?.toLowerCase();
+    const milestoneFilters =
+      filters.milestoneIds ??
+      (filters.milestoneId === undefined ? [] : [filters.milestoneId]);
     const batchSize = queryLimits.tasks.default;
     for (let cursor = 0; cursor < projectTaskCount; cursor += batchSize) {
       const records = await this.reads.listTasks(projectId, batchSize, cursor);
@@ -1166,11 +1173,7 @@ export class OperationalQueryService {
           )
         )
           continue;
-        if (
-          filters.status === "active" &&
-          terminalTaskOperationalStatuses.includes(task.operationalStatus)
-        )
-          continue;
+        if (filters.status === "active" && task.terminal) continue;
         if (
           filters.status !== undefined &&
           filters.status !== "active" &&
@@ -1190,12 +1193,12 @@ export class OperationalQueryService {
           continue;
         if (filters.unassigned && involved.length > 0) continue;
         if (
-          filters.milestoneId !== undefined &&
-          (filters.milestoneId === "unassigned"
-            ? milestones.length > 0
-            : !milestones.some(
-                (milestone) => milestone.milestoneId === filters.milestoneId,
-              ))
+          milestoneFilters.length > 0 &&
+          !milestoneFilters.some((id) =>
+            id === "unassigned"
+              ? milestones.length === 0
+              : milestones.some((milestone) => milestone.milestoneId === id),
+          )
         )
           continue;
         matches.push(task);

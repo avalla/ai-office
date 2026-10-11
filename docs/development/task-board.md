@@ -85,6 +85,35 @@ ai-office task:start --project <project-id> --task <task-id>
 ai-office task:complete --project <project-id> --task <task-id>
 ```
 
+A task with prerequisites may start when each prerequisite is `completed` or
+`waiting_review`. The same rule governs `task:readiness`, AgentRun admission,
+and active pipeline admission. A prerequisite that leaves review for `blocked`,
+`failed`, or `cancelled` blocks new dependent starts and run admissions.
+`waiting_review` remains distinct from `completed`:
+the prerequisite still needs its own review and completion.
+
+Completion is stricter than start. A dependent task, including one whose
+pipeline finishes, can complete only when every prerequisite is `completed`;
+`task:complete` and pipeline completion are refused while a prerequisite is
+still in review or has left review for `blocked`, `failed`, or `cancelled`. The
+rule is enforced by the domain policy, by the application commands, and by
+SQLite and PostgreSQL triggers on the task status transition. PostgreSQL
+serializes a prerequisite leaving review with dependent admission on the
+project's graph-edit lock. Historical completion records (`task:record-completion`)
+attest work done outside the lifecycle and are not subject to the rule.
+
+If a pipeline's final stage finishes while a prerequisite is still in review,
+the refusal rolls back and the pipeline stays active; `run:tick` reports the
+run with `STAGE_AWAITING_PREREQUISITES`. Nothing resumes it automatically: once
+the prerequisite is completed, close the stage with `pipeline:transition --event
+complete --agent-run <id>`.
+
+When dependent work uses a prerequisite in review, the delivery workflow must
+start the dependent branch from a commit containing that prerequisite's current
+review head. With several prerequisites in review, the base must contain every
+review head. The Runtime records task state and checks prerequisite statuses; it
+does not store task Git heads or verify Git ancestry.
+
 Every transition validates the current state, refuses an impossible one with an
 error naming what *is* allowed, runs in one transaction with its audit event,
 moves `updated_at`, and never writes the status column directly. Transitions are

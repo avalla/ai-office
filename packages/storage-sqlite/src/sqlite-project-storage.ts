@@ -19,6 +19,7 @@ import { SqliteProjectDefinitionRepository } from "./repositories/sqlite-project
 import { SqliteProjectStateRepository } from "./repositories/sqlite-project-state.repository.ts";
 import { SqliteRepositoryIdentityRepository } from "./repositories/sqlite-repository-identity.repository.ts";
 import { SqliteTaskRequirementRepository } from "./repositories/sqlite-task-requirement.repository.ts";
+import { SqliteTaskDeliverySetupRepository } from "./repositories/sqlite-task-delivery-setup.repository.ts";
 import { SqliteTaskRepository } from "./repositories/sqlite-task.repository.ts";
 import { SqliteTaskDependencyRepository } from "./repositories/sqlite-task-dependency.repository.ts";
 import { SqliteTransactionRunner } from "./database/sqlite-transaction-runner.ts";
@@ -48,6 +49,7 @@ export function createSqliteProjectStorage(database: Database): ProjectStorage {
       database,
     ),
     operationalReads: new SqliteOperationalReadRepository(database),
+    taskDeliverySetup: new SqliteTaskDeliverySetupRepository(database),
     transactions: new SqliteTransactionRunner(database),
     jobOutbox: new SqliteJobOutboxRepository(database),
   };

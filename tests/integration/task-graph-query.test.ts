@@ -219,6 +219,95 @@ describe("task dependency graph read model", () => {
     expect(graph.tasks.find((t) => t.taskId === "b")?.milestoneIds).toEqual([]);
   });
 
+  test("tells a task without a requirement from one whose requirement has no milestone", async () => {
+    const f = await fixture();
+    await f.project("p");
+    await f.project("other");
+    for (const id of ["owned", "none", "orphaned", "both"])
+      await f.task("p", id);
+    await f.task("other", "foreign");
+    const milestoneId = await f.governance.createMilestone({
+      projectId: "p",
+      title: "M1",
+    });
+    const requirement = (projectId: string, key: string, milestone?: string) =>
+      f.governance.createRequirement({
+        projectId,
+        key,
+        title: key,
+        description: key,
+        ...(milestone === undefined ? {} : { milestoneId: milestone }),
+      });
+    const link = async (
+      projectId: string,
+      taskId: string,
+      requirementId: string,
+    ) => f.taskRequirements.link({ projectId, taskId, requirementId, now });
+    const owned = await requirement("p", "REQ-OWNED", milestoneId);
+    const orphan = await requirement("p", "REQ-ORPHAN");
+    await link("p", "owned", owned);
+    await link("p", "orphaned", orphan);
+    await link("p", "both", owned);
+    await link("p", "both", orphan);
+    // Another project's unmilestoned requirement never leaks in.
+    await link("other", "foreign", await requirement("other", "REQ-OTHER"));
+
+    const snapshot = await f.reads.readTaskGraphSnapshot("p");
+    expect(snapshot.requirementLinkedTaskIds).toEqual([
+      "both",
+      "orphaned",
+      "owned",
+    ]);
+    const gap = Object.fromEntries(
+      (await f.queries.getTaskGraph("p")).tasks.map((task) => [
+        task.taskId,
+        task.milestoneGap,
+      ]),
+    );
+    expect(gap).toEqual({
+      owned: null,
+      both: null,
+      none: "no_requirement",
+      orphaned: "requirement_without_milestone",
+    });
+  });
+
+  test("a milestone missing from the milestone read never turns a requirement into no requirement", async () => {
+    const f = await fixture();
+    await f.project("p");
+    await f.task("p", "owned");
+    const milestoneId = await f.governance.createMilestone({
+      projectId: "p",
+      title: "M1",
+    });
+    const requirementId = await f.governance.createRequirement({
+      projectId: "p",
+      key: "REQ-OWNED",
+      title: "Owned",
+      description: "Owned",
+      milestoneId,
+    });
+    await f.taskRequirements.link({
+      projectId: "p",
+      taskId: "owned",
+      requirementId,
+      now,
+    });
+    // The milestone read happens outside the task snapshot; simulate it
+    // losing the milestone the snapshot still links.
+    const milestones = vi
+      .spyOn(f.reads, "listMilestones")
+      .mockResolvedValue([]);
+    const graph = await f.queries.getTaskGraph("p");
+    milestones.mockRestore();
+
+    expect(graph.tasks[0]).toMatchObject({
+      milestoneIds: [],
+      // The snapshot still links it to a milestone, so it is never "none".
+      milestoneGap: null,
+    });
+  });
+
   test("an unknown project is not found", async () => {
     const f = await fixture();
     await expect(f.queries.getTaskGraph("missing")).rejects.toBeInstanceOf(
@@ -449,8 +538,20 @@ describe("task dependency graph read model", () => {
   test("terminal follows the recorded status, not the operational one", async () => {
     const f = await fixture();
     await f.project("p");
-    for (const id of ["open", "failed", "retry", "next"]) await f.task("p", id);
+    for (const id of [
+      "open",
+      "failed",
+      "retry",
+      "next",
+      "done",
+      "cancelled",
+      "blocked",
+    ])
+      await f.task("p", id);
     f.setStatus("failed", "failed");
+    f.setStatus("done", "completed");
+    f.setStatus("cancelled", "cancelled");
+    f.setStatus("blocked", "blocked");
     await f.depend("p", "next", "retry");
     // A failed latest run changes the operational status, but leaves the
     // recorded task pending and eligible to be completed after a retry.
@@ -487,5 +588,44 @@ describe("task dependency graph read model", () => {
       terminal: false,
     });
     expect(by("retry").completionUnblocks).toEqual(["next"]);
+    expect(by("done").terminal).toBe(true);
+    expect(by("cancelled").terminal).toBe(true);
+    expect(by("blocked").terminal).toBe(false);
+
+    const active = await f.queries.getProjectDetail("p", {
+      taskQuery: { status: "active" },
+    });
+    expect(active.tasks.items.map((task) => task.taskId).sort()).toEqual([
+      "blocked",
+      "next",
+      "open",
+      "retry",
+    ]);
+    expect(active.tasks.total).toBe(active.summary.tasks.open);
+    expect(active.summary.tasks).toMatchObject({
+      total: 7,
+      open: 4,
+      terminal: 3,
+    });
+    for (const task of active.tasks.items)
+      expect(task.terminal).toBe(by(task.taskId).terminal);
+
+    const failed = await f.queries.getProjectDetail("p", {
+      taskQuery: { status: "failed" },
+    });
+    expect(failed.tasks.items.map((task) => task.taskId).sort()).toEqual([
+      "failed",
+      "retry",
+    ]);
+    expect(
+      failed.tasks.items.find((task) => task.taskId === "retry"),
+    ).toMatchObject({
+      recordedStatus: "pending",
+      operationalStatus: "failed",
+      terminal: false,
+    });
+
+    const overview = await f.queries.getDashboardOverview();
+    expect(overview.totals.openTasks).toBe(active.tasks.total);
   });
 });

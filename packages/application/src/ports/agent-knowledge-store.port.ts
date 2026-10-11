@@ -16,6 +16,8 @@ export const knowledgeRetrievalLimits = {
   identifierCharacters: 256,
   maxResults: 5,
   maxGraphResults: 100,
+  /** Character bound of the excerpt a task-linked retrieval reports per hit. */
+  excerptCharacters: 400,
 } as const;
 
 /** The literal search text is supplied by the application caller; the adapter may lowercase it. */
@@ -344,6 +346,22 @@ export interface AgentKnowledgeStore {
     scope: KnowledgeScope,
     decisionId: string,
   ): Promise<KnowledgeProvenance | null>;
+  /**
+   * Read-only task-linked retrieval for handoff/resume enrichment: the run
+   * memories carrying the task and the decisions affecting it, using the
+   * same task join as findCurrentDecisions (decisions traverse the affects
+   * edge; memories carry the task alongside their run provenance).
+   * Superseded decisions are excluded, matching every other read path. Hits
+   * are ordered by creation time descending, then kind and ID ascending,
+   * capped by `limit` (an omitted limit uses the fixed maximum of five); the
+   * adapter validates the scope on every hit and fails closed with a typed
+   * error on malformed rows. No match returns `[]`.
+   */
+  findTaskKnowledge(
+    scope: KnowledgeScope,
+    taskId: string,
+    limit?: number,
+  ): Promise<SearchKnowledgeHit[]>;
   findCurrentDecisions(
     scope: KnowledgeScope,
     taskId: string,

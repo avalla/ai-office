@@ -267,6 +267,7 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
     const calls = [
       (id: string) => store.traceMemoryProvenance(scopeA, id),
       (id: string) => store.traceDecisionProvenance(scopeA, id),
+      (id: string) => store.findTaskKnowledge(scopeA, id),
       (id: string) => store.findCurrentDecisions(scopeA, id),
       (id: string) => store.listTaskDependencies(scopeA, id),
       (id: string) => store.listAgentKnowledge(scopeA, id),
@@ -509,6 +510,68 @@ describe.skipIf(!enabled)("SurrealDB AgentKnowledgeStore integration", () => {
       taskId: current.taskId,
       agentId: current.agentId,
     });
+  });
+
+  it("retrieves only memories and decisions linked to the requested task", async () => {
+    await store.recordMemory({ ...memory(scopeA, "tk-mem-a"), taskId: "task-handoff" });
+    await store.recordMemory({ ...memory(scopeA, "tk-mem-b"), taskId: "task-other" });
+    await store.recordDecision(decision(scopeA, "tk-dec-a", "task-handoff"));
+    await store.recordDecision(decision(scopeA, "tk-dec-b", "task-other"));
+    // Same record ids and task ids in other scopes must not leak in or out.
+    await store.recordMemory({ ...memory(scopeB, "tk-mem-a"), taskId: "task-handoff" });
+    await store.recordDecision(decision(scopeSameTenantOtherProject, "tk-dec-a", "task-handoff"));
+
+    const hits = await store.findTaskKnowledge(scopeA, "task-handoff");
+    expect(hits.map((hit) => `${hit.kind}:${hit.id}`)).toEqual(["decision:tk-dec-a", "memory:tk-mem-a"]);
+    expect(hits[0]).toMatchObject({ taskId: "task-handoff", runId: expect.any(String) });
+    expect((await store.findTaskKnowledge(scopeA, "task-other")).map((hit) => hit.id))
+      .toEqual(["tk-dec-b", "tk-mem-b"]);
+    expect((await store.findTaskKnowledge(scopeB, "task-handoff")).map((hit) => hit.id))
+      .toEqual(["tk-mem-a"]);
+    expect((await store.findTaskKnowledge(scopeSameTenantOtherProject, "task-handoff")).map((hit) => hit.id))
+      .toEqual(["tk-dec-a"]);
+    expect(await store.findTaskKnowledge(scopeA, "task-missing")).toEqual([]);
+  });
+
+  it("applies the shared ordering and the limit across task-linked memories and decisions", async () => {
+    const at = (hour: number) => new Date(`2026-09-27T${String(hour).padStart(2, "0")}:00:00.000Z`);
+    await store.recordMemory({ ...memory(scopeA, "order-m1"), taskId: "task-order", createdAt: at(9) });
+    await store.recordDecision({ ...decision(scopeA, "order-d1", "task-order"), createdAt: at(11) });
+    await store.recordMemory({ ...memory(scopeA, "order-m2"), taskId: "task-order", createdAt: at(11) });
+    await store.recordMemory({ ...memory(scopeA, "order-m3"), taskId: "task-order", createdAt: at(12) });
+
+    expect((await store.findTaskKnowledge(scopeA, "task-order")).map((hit) => hit.id))
+      .toEqual(["order-m3", "order-d1", "order-m2", "order-m1"]);
+    expect((await store.findTaskKnowledge(scopeA, "task-order", 2)).map((hit) => hit.id))
+      .toEqual(["order-m3", "order-d1"]);
+    await expect(store.findTaskKnowledge(scopeA, "task-order", 0)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+    await expect(store.findTaskKnowledge(scopeA, "task-order", 6)).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_QUERY" });
+  });
+
+  it("excludes superseded decisions from task-linked retrieval", async () => {
+    const old = decision(scopeA, "tk-sup-old", "task-sup");
+    const current = decision(scopeA, "tk-sup-current", "task-sup", "Use blue green deployment");
+    await store.recordDecision(old);
+    await store.recordDecision(current);
+    await store.supersedeDecision(scopeA, current.id, old.id);
+
+    expect((await store.findTaskKnowledge(scopeA, "task-sup")).map((hit) => hit.id)).toEqual([current.id]);
+  });
+
+  it("fails closed on a malformed task-linked row instead of returning it", async () => {
+    // Seeded like the legacy fixtures: a persisted row whose own identity
+    // disagrees with its scoped record id must fail closed, not read.
+    await db.query("CREATE $record CONTENT $content", {
+      record: record(scopeA, "knowledge_memory", "tk-malformed"),
+      content: {
+        tenant_id: scopeA.tenantId, project_id: scopeA.repositoryId,
+        external_id: "different-id", text: "Malformed task note",
+        agent_id: "agent-1", run_id: "run-mal", task_id: "task-malformed",
+        source_id: "source-mal", source_kind: "task", source_label: "Task M",
+        created_at: new Date("2026-09-27T10:00:00.000Z"),
+      },
+    });
+    await expect(store.findTaskKnowledge(scopeA, "task-malformed")).rejects.toMatchObject({ code: "KNOWLEDGE_INVALID_RESULT" });
   });
 
   it("rejects same-task violations and two-decision supersession cycles without changing edges", async () => {

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- `task-delivery` 0.5.1: `SKILL.md` is about a third smaller, so each
+  invocation loads fewer tokens, with the 0.5.0 Checkpoints section, store and
+  invariants unchanged. "What to deliver" is restructured into short lists
+  (target, pipeline, dependencies and summary), and the rules that only apply
+  to a run over several tasks - clarify first, re-planning, run-wide stacking
+  and stop propagation - move unchanged in meaning to the new
+  `references/multi-task.md`, read only when the selection has more than one
+  task. Only a request that itself names exactly one task skips the summary;
+  every other selection needs the approved summary before preflight. The
+  package validator now checks each workflow invariant in the file that owns
+  it. The handoff section is shortened to its triggers and rules.
+- Add `ai-office requirement:assign-milestone` (`--project`, `--requirement`,
+  `--milestone`) to repair a `proposed` requirement recorded without a
+  milestone, whose tasks therefore appeared under no milestone. It assigns once
+  and never moves a milestone that is already set, so `requirement:update` and
+  the immutability of an existing milestone are unchanged; the change is
+  audited as a `requirement.updated` event. `requirement:create` now warns on
+  stderr when `--milestone` is omitted, `requirement:list` marks requirements
+  without a milestone, and the dashboard graph tells which open tasks linked by
+  dependency to the filtered milestone belong to none. A requirement that is no
+  longer `proposed` cannot be repaired this way yet, and a `cancelled` or
+  `archived` milestone is refused as a target.
 - `task-delivery` 0.3.0: for a run over several tasks the summary offers to
   clarify every task before development starts - questions asked together,
   task by task, with the answers recorded in the project's tasks and

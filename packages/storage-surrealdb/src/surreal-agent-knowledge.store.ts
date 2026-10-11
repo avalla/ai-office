@@ -324,6 +324,21 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
     return rows.map((row) => this.runHit(row, "decision", scope));
   }
 
+  async findTaskKnowledge(scope: KnowledgeScope, taskId: string, limit = knowledgeRetrievalLimits.maxResults): Promise<SearchKnowledgeHit[]> {
+    assertKnowledgeScope(scope);
+    assertKnowledgeIdentifier(taskId);
+    assertKnowledgeLimit(limit, knowledgeRetrievalLimits.maxResults);
+    const params = { tenant: scope.tenantId, project: scope.repositoryId, task_id: taskId, task_key: scopedId(scope, "task", taskId), limit };
+    const [memories, decisions] = await Promise.all([
+      this.rows("SELECT * FROM knowledge_memory WHERE tenant_id = $tenant AND project_id = $project AND task_id = $task_id ORDER BY created_at DESC, external_id ASC LIMIT $limit", params),
+      this.rows("SELECT * FROM knowledge_decision WHERE tenant_id = $tenant AND project_id = $project AND id IN (SELECT VALUE in FROM affects WHERE out = type::record('knowledge_task', $task_key) AND tenant_id = $tenant AND project_id = $project) AND id NOT IN (SELECT VALUE out FROM supersedes WHERE tenant_id = $tenant AND project_id = $project) ORDER BY created_at DESC, external_id ASC LIMIT $limit", params),
+    ]);
+    return [
+      ...memories.map((row) => this.taskHit(row, "memory", scope, taskId)),
+      ...decisions.map((row) => this.taskHit(row, "decision", scope, taskId)),
+    ].sort(sortKnowledge).slice(0, limit);
+  }
+
   async listTaskDependencies(scope: KnowledgeScope, taskId: string, limit = knowledgeRetrievalLimits.maxGraphResults): Promise<string[]> {
     assertKnowledgeScope(scope);
     assertKnowledgeIdentifier(taskId);
@@ -455,6 +470,13 @@ export class SurrealAgentKnowledgeStoreImpl implements AgentKnowledgeStore {
   private runHit(row: Row, kind: KnowledgeHit["kind"], scope: KnowledgeScope): KnowledgeHit {
     const hit = this.hit(row, kind, scope);
     if (hit.runId === null) throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
+    return hit;
+  }
+
+  /** A task-linked row must also carry the requested task in its own provenance. */
+  private taskHit(row: Row, kind: KnowledgeHit["kind"], scope: KnowledgeScope, taskId: string): KnowledgeHit {
+    const hit = this.runHit(row, kind, scope);
+    if (hit.taskId !== taskId) throw new KnowledgeStoreError("KNOWLEDGE_INVALID_RESULT");
     return hit;
   }
 

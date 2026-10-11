@@ -55,6 +55,7 @@ export const queryLimits = {
   /** Upper bound on identifier length accepted from a route parameter. */
   maxIdentifierLength: 128,
   taskSearchLength: 256,
+  maxTaskMilestoneFilters: 50,
 } as const;
 
 /**
@@ -174,12 +175,16 @@ export function parseTaskPageQuery(parameters: URLSearchParams): TaskPageQuery {
       );
     result.unassigned = true;
   }
-  const milestoneId = parameters.get("milestone");
-  if (milestoneId)
-    result.milestoneId =
-      milestoneId === "unassigned"
-        ? milestoneId
-        : parseIdentifier(milestoneId, "milestone");
+  const milestoneParameters = parameters.getAll("milestone");
+  if (milestoneParameters.length > queryLimits.maxTaskMilestoneFilters)
+    throw new QueryValidationError("Too many milestone filters");
+  const milestoneIds = [...new Set(milestoneParameters.filter(Boolean))];
+  const validMilestoneIds = milestoneIds.map((id) =>
+    id === "unassigned" ? id : parseIdentifier(id, "milestone"),
+  );
+  if (validMilestoneIds.length === 1)
+    result.milestoneId = validMilestoneIds[0]!;
+  if (validMilestoneIds.length > 1) result.milestoneIds = validMilestoneIds;
   const sort = parameters.get("sort");
   if (sort) {
     if (sort !== "milestone" && sort !== "short_name")
@@ -204,7 +209,9 @@ export function taskPageParameters(query: TaskPageQuery): URLSearchParams {
   if (query.priority !== undefined)
     parameters.set("priority", String(query.priority));
   if (query.agentId) parameters.set("agent", query.agentId);
-  if (query.milestoneId) parameters.set("milestone", query.milestoneId);
+  if (query.milestoneIds !== undefined) {
+    for (const id of query.milestoneIds) parameters.append("milestone", id);
+  } else if (query.milestoneId) parameters.set("milestone", query.milestoneId);
   if (query.unassigned) parameters.set("unassigned", "true");
   if (query.sort) parameters.set("sort", query.sort);
   if (query.offset) parameters.set("offset", String(query.offset));

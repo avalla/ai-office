@@ -28,7 +28,13 @@ import {
   KnowledgeStoreError,
   type RuntimeAgentKnowledge,
 } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
-import type { DaemonHealthResponse } from "@ai-office/application/protocol/daemon-protocol.ts";
+import {
+  daemonProtocolVersion,
+  type DaemonHealthResponse,
+  type RuntimeStatus,
+} from "@ai-office/application/protocol/daemon-protocol.ts";
+import { productVersion } from "@ai-office/command-support/version.ts";
+import { readSourceRevision } from "./source-revision.ts";
 import {
   agentKnowledgeEnvironment,
   isAgentKnowledgeTenantId,
@@ -65,7 +71,13 @@ import {
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
 type AgentKnowledgeConnector = typeof connectSurrealAgentKnowledgeStore;
 type AgentKnowledgeHandle = Awaited<ReturnType<AgentKnowledgeConnector>>;
+type AgentKnowledgeProber = (
+  config: Extract<AgentKnowledgeConfiguration, { kind: "surrealdb" }>["connection"],
+  deadlineMs: number,
+) => Promise<void>;
 const knowledgeConnectTimeoutMs = 5_000;
+const knowledgeProbeTimeoutMs = 1_500;
+const knowledgeProbeTtlMs = 10_000;
 
 async function connectKnowledgeWithDeadline(
   connector: AgentKnowledgeConnector,
@@ -119,6 +131,14 @@ export interface BootstrapOptions {
   connectAgentKnowledge?: AgentKnowledgeConnector;
   /** Internal seam for a bounded connection test. */
   agentKnowledgeConnectTimeoutMs?: number;
+  /** Internal seam for a bounded live status probe test. */
+  agentKnowledgeProbeTimeoutMs?: number;
+  /** Internal seam for a cached live status probe test. */
+  agentKnowledgeProbeTtlMs?: number;
+  /** Internal seam for deterministic live-probe cache expiry tests. */
+  agentKnowledgeProbeNow?: () => number;
+  /** Internal seam for deterministic live-probe tests. */
+  probeAgentKnowledge?: AgentKnowledgeProber;
   /**
    * Optional host model routing. When omitted, the host reads it once from
    * `<AI_OFFICE_HOME>/model-routing.yaml` or, in the foreground only, from
@@ -141,6 +161,8 @@ export interface BootstrapOptions {
   projectStorageBootstrap?: ProjectStorageBootstrapLike;
   /** Internal bootstrap seam for deterministic global-database failure tests. */
   openGlobalDatabase?: typeof openDatabase;
+  /** Internal bootstrap seam for deterministic source-revision capture tests. */
+  readSourceRevision?: (directory: string) => string | null;
 }
 
 interface ProjectStorageBootstrapLike {
@@ -311,7 +333,11 @@ export async function bootstrap(
               startup: "misconfigured",
             }
           : { provider: "surrealdb", startup: "unavailable" };
+    let knowledgeConnectionConfig:
+      | Extract<AgentKnowledgeConfiguration, { kind: "surrealdb" }>["connection"]
+      | undefined;
     if (validatedKnowledgeConfiguration.kind === "surrealdb") {
+      knowledgeConnectionConfig = validatedKnowledgeConfiguration.connection;
       try {
         agentKnowledgeHandle = await connectKnowledgeWithDeadline(
           options.connectAgentKnowledge ??
@@ -384,9 +410,115 @@ export async function bootstrap(
       agentRunWorker: queue?.consuming.execute_agent_run ?? false,
     });
 
+    // The provider reads the host through a holder, assigned just below; it
+    // only runs at request time, once the host has recorded its start instant.
+    // The source revision is resolved once, here: re-reading mutable git
+    // metadata per request could report a checkout that moved after this
+    // process loaded its code, misrepresenting the running distribution.
+    const statusHost: { current?: PersistentRuntimeHost } = {};
+    const sourceRevision = (options.readSourceRevision ?? readSourceRevision)(
+      sourceDirectory,
+    );
+    // Live request-time connectivity probe, separate from the startup-observed
+    // `knowledgeStatus`: the connector runs it on a throwaway connection that
+    // is closed when the probe settles or hits its deadline. A store that
+    // accepts connections but stops answering therefore never accumulates
+    // pending RPCs — each probe frees its own socket — and a later request
+    // probes on a fresh connection, so recovery is observed within the probe
+    // TTL. The probe only connects and runs a trivial read; it never writes
+    // and holds no transaction. Both outcomes stay cached for a short TTL and
+    // concurrent requests share one in-flight probe, so aggressive dashboard
+    // polling generates at most one probe per TTL; a slow probe does not eat
+    // the TTL because expiry is computed when the probe settles. A dead store
+    // therefore delays only the request that starts the probe, by the probe
+    // deadline plus a small connection-close budget.
+    let knowledgeProbeCache:
+      { result: "connected" | "unavailable"; expiresAt: number } | undefined;
+    let knowledgeProbeInFlight:
+      Promise<"connected" | "unavailable"> | undefined;
+    const runKnowledgeProbe = async (
+      config: Extract<AgentKnowledgeConfiguration, { kind: "surrealdb" }>["connection"],
+    ): Promise<"connected" | "unavailable"> => {
+      try {
+        const probe =
+          options.probeAgentKnowledge ??
+          (
+            await import("@ai-office/storage-surrealdb/probe-agent-knowledge-store.ts")
+          ).probeSurrealAgentKnowledgeStore;
+        await probe(
+          config,
+          options.agentKnowledgeProbeTimeoutMs ?? knowledgeProbeTimeoutMs,
+        );
+        return "connected";
+      } catch {
+        return "unavailable";
+      }
+    };
+    const knowledgeLiveStatus = async (): Promise<
+      "connected" | "unavailable" | "not_checked"
+    > => {
+      if (
+        agentKnowledge.state !== "connected" ||
+        knowledgeConnectionConfig === undefined
+      )
+        return "not_checked";
+      const now = options.agentKnowledgeProbeNow ?? Date.now;
+      if (
+        knowledgeProbeCache !== undefined &&
+        now() < knowledgeProbeCache.expiresAt
+      )
+        return knowledgeProbeCache.result;
+      knowledgeProbeInFlight ??= runKnowledgeProbe(
+        knowledgeConnectionConfig,
+      ).then(
+        (result) => {
+          knowledgeProbeCache = {
+            result,
+            expiresAt:
+              now() + (options.agentKnowledgeProbeTtlMs ?? knowledgeProbeTtlMs),
+          };
+          knowledgeProbeInFlight = undefined;
+          return result;
+        },
+        () => {
+          // `runKnowledgeProbe` catches probe failures; this only defends the
+          // status endpoint against an unexpected rejection without caching.
+          knowledgeProbeInFlight = undefined;
+          return "unavailable";
+        },
+      );
+      return knowledgeProbeInFlight;
+    };
+    const runtimeStatus = async (): Promise<RuntimeStatus> => {
+      const startedAt = statusHost.current?.startedAtInstant ?? new Date();
+      return {
+        protocolVersion: daemonProtocolVersion,
+        status: "ok",
+        productVersion,
+        sourceRevision,
+        startedAt: startedAt.toISOString(),
+        uptimeSeconds: Math.max(
+          0,
+          Math.floor((Date.now() - startedAt.getTime()) / 1000),
+        ),
+        knowledge: {
+          ...knowledgeStatus,
+          live: await knowledgeLiveStatus(),
+        },
+        queue: await queueStatus(),
+        // Reaching this composition means the authoritative project store
+        // opened; a daemon that failed to open it never answers.
+        storage: { project: "available" },
+      };
+    };
+
     const host = new PersistentRuntimeHost({
       socketPath: runtimePaths.socketPath,
-      queryApi: new QueryApi({ queries, events: queryEvents }),
+      queryApi: new QueryApi({
+        queries,
+        events: queryEvents,
+        status: runtimeStatus,
+      }),
       queryEvents,
       handler: new LocalCommandHandler(runtime),
       events,
@@ -411,6 +543,7 @@ export async function bootstrap(
         await runtime.stop();
       },
     });
+    statusHost.current = host;
     ownershipTransferred = true;
     return host;
   } finally {

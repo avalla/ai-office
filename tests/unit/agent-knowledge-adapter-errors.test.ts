@@ -18,6 +18,7 @@ describe("AgentKnowledgeStore retrieval failures", () => {
       store.findKnowledge(scope, { text: "needle" }),
       store.traceMemoryProvenance(scope, "memory-a"),
       store.traceDecisionProvenance(scope, "decision-a"),
+      store.findTaskKnowledge(scope, "task-a"),
       store.findCurrentDecisions(scope, "task-a"),
       store.listTaskDependencies(scope, "task-a"),
       store.listAgentKnowledge(scope, "agent-a"),

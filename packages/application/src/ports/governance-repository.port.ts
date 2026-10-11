@@ -77,9 +77,26 @@ export interface GovernanceRepository {
     now: Date,
     event: { id: string; metadata: Record<string, string> },
   ): Promise<boolean>;
+  /**
+   * Gives a proposed requirement that has no milestone its first one and
+   * appends one audit event in the same transaction. Returns false when the
+   * requirement is gone, no longer proposed, or already has a milestone.
+   */
+  assignRequirementMilestone(
+    id: string,
+    projectId: string,
+    milestoneId: string,
+    now: Date,
+    event: { id: string; metadata: Record<string, string> },
+  ): Promise<boolean>;
   saveAdr(value: AdrRecord): Promise<void>;
   saveReview(value: ReviewRecord): Promise<void>;
   findMilestoneProject(id: string): Promise<string | null>;
+  /** One requirement of the project, or null; no whole-snapshot read. */
+  findRequirement(
+    id: string,
+    projectId: string,
+  ): Promise<RequirementRecord | null>;
   findSubjectProject(
     type: ReviewSubjectType,
     id: string,

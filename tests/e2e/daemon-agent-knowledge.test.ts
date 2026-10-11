@@ -537,6 +537,149 @@ describe("Runtime agent knowledge composition", () => {
     );
   });
 
+  it("reports task-linked knowledge with store state and distinguishes an unusable store from no hits", async () => {
+    const repository = mkdtempSync(
+      join(tmpdir(), "ai-office-knowledge-task-repo-"),
+    );
+    roots.push(repository);
+    writeFileSync(join(repository, "README.md"), "# Demo\n");
+    const longText = `${"staged rollout context ".repeat(30)}tail`;
+    const findTaskKnowledge = vi.fn(
+      async (_scope: KnowledgeScope, _taskId: string, _limit?: number) => [
+        {
+          tenantId: "tenant-a",
+          repositoryId: "ignored-by-output",
+          id: "ak_mem_task",
+          kind: "memory" as const,
+          text: longText,
+          title: null,
+          agentId: "agent-1",
+          runId: "run-9",
+          taskId: "task-1",
+          source: { id: "run-9", kind: "run" as const, label: "Agent run run-9" },
+          createdAt: new Date("2026-09-30T10:00:00.000Z"),
+        },
+      ],
+    );
+    const store = { findTaskKnowledge } as unknown as AgentKnowledgeStore;
+    await withHost(
+      {
+        agentKnowledgeConfiguration: configuration,
+        connectAgentKnowledge: async () => ({ store, close: async () => {} }),
+      },
+      async (client) => {
+        const imported = await client.execute([
+          "project:import",
+          repository,
+          "--json",
+        ]);
+        expect(imported.exitCode).toBe(0);
+        const { projectId } = JSON.parse(imported.stdout[0]!) as {
+          projectId: string;
+        };
+        const task = (...args: string[]) =>
+          client.execute(["knowledge:task", "--project", projectId, ...args]);
+
+        const found = await task("--task", "task-1", "--limit", "2");
+        expect(found.exitCode).toBe(0);
+        const output = JSON.parse(found.stdout.join("\n")) as {
+          schemaVersion: number;
+          state: string;
+          hits: {
+            id: string;
+            kind: string;
+            title: string | null;
+            excerpt: string;
+            createdAt: string;
+            runId: string;
+          }[];
+        };
+        expect(output.schemaVersion).toBe(1);
+        expect(output.state).toBe("connected");
+        expect(output.hits).toHaveLength(1);
+        expect(output.hits[0]).toEqual({
+          id: "ak_mem_task",
+          kind: "memory",
+          title: null,
+          excerpt: `${longText.slice(0, 400)}…`,
+          createdAt: "2026-09-30T10:00:00.000Z",
+          runId: "run-9",
+        });
+        expect(findTaskKnowledge).toHaveBeenCalledWith(
+          { tenantId: "tenant-a", repositoryId: expect.any(String) },
+          "task-1",
+          2,
+        );
+        expect(found.stdout.join("\n")).not.toMatch(/tenant-a|secret/u);
+
+        findTaskKnowledge.mockResolvedValue([]);
+        const empty = await task("--task", "task-1");
+        expect(empty.exitCode).toBe(0);
+        expect(JSON.parse(empty.stdout.join("\n"))).toEqual({
+          schemaVersion: 1,
+          state: "connected",
+          hits: [],
+        });
+
+        for (const [args, message] of [
+          [[], "Missing required option --task"],
+          [["--task", " padded"], "Knowledge task id is invalid"],
+          [
+            ["--task", "task-1", "--limit", "6"],
+            "Knowledge task limit must be 1 to 5",
+          ],
+          [
+            ["--task", "task-1", "--query", "x"],
+            "Unknown option --query",
+          ],
+          [
+            ["--task", "task-1", "extra"],
+            "knowledge:task only accepts named options",
+          ],
+        ] as const) {
+          const refused = await task(...args);
+          expect(refused.exitCode).toBe(1);
+          expect(refused.stderr.join("\n")).toContain(message);
+        }
+
+        findTaskKnowledge.mockRejectedValue(
+          new KnowledgeStoreError("KNOWLEDGE_QUERY_FAILED"),
+        );
+        const typed = await task("--task", "task-1");
+        expect(typed.exitCode).toBe(1);
+        expect(typed.stderr.join("\n")).toContain("KNOWLEDGE_QUERY_FAILED");
+
+        findTaskKnowledge.mockRejectedValue(
+          new Error("secret endpoint password"),
+        );
+        const untyped = await task("--task", "task-1");
+        expect(untyped.exitCode).toBe(1);
+        expect(
+          untyped.stdout.join("\n") + untyped.stderr.join("\n"),
+        ).not.toMatch(/secret|endpoint|password/u);
+      },
+    );
+
+    await withHost(
+      { agentKnowledgeConfiguration: { kind: "disabled" } },
+      async (client) => {
+        const reported = await client.execute([
+          "knowledge:task",
+          "--project",
+          "any",
+          "--task",
+          "task-1",
+        ]);
+        expect(reported.exitCode).toBe(0);
+        expect(JSON.parse(reported.stdout.join("\n"))).toEqual({
+          schemaVersion: 1,
+          state: "disabled",
+          hits: [],
+        });
+      },
+    );
+  });
+
   it("admits handover and operator-confirmed knowledge over the Runtime socket with real evidence only", async () => {
     const repository = mkdtempSync(join(tmpdir(), "ai-office-knowledge-repo-"));
     roots.push(repository);

@@ -235,18 +235,27 @@ export class ReconcileTasks {
             prerequisites.map((edge) => edge.dependsOnTaskId),
             statusByTask,
           );
-          if (blockedBy.length > 0 && !isTerminalTaskStatus(task.status))
+          if (blockedBy.length > 0 && !isTerminalTaskStatus(task.status)) {
+            const started =
+              task.status === "running" || task.status === "waiting_review";
+            const unmet = blockedBy
+              .map((item) => `${item.taskId} (${item.status})`)
+              .join(", ");
             issues.push({
               ...base,
               finding: "blocking_prerequisite_incomplete",
               severity: "warning",
-              summary: `incomplete prerequisites: ${blockedBy.map((item) => `${item.taskId} (${item.status})`).join(", ")}`,
+              summary: started
+                ? `started with prerequisites neither completed nor in review: ${unmet}; completing it requires every prerequisite completed`
+                : `cannot start until prerequisites are completed or in review: ${unmet}`,
               suggestedCommand: null,
               repairOperation: null,
               repairable: false,
-              refusalReason:
-                "prerequisites must complete through their own lifecycle",
+              refusalReason: started
+                ? "prerequisites must be completed before this task can complete; resolve them through their own lifecycle"
+                : "prerequisites must reach review or completion through their own lifecycle",
             });
+          }
         } catch {
           issues.push({
             ...base,
@@ -354,7 +363,20 @@ export class ReconcileTasks {
         const operation: TaskLifecycleOperation =
           target === "completed" ? "complete" : "cancel";
         const reachable = this.lifecycleAllows(task.status, target);
-        const repairable = !ambiguous && reachable;
+        // `complete` is refused while a prerequisite is not completed, so an
+        // approved plan must not offer it.
+        const prerequisitesOpen =
+          operation === "complete" &&
+          dependencies !== undefined &&
+          blockingPrerequisites(
+            task.id,
+            dependencies
+              .filter((edge) => edge.taskId === task.id)
+              .map((edge) => edge.dependsOnTaskId),
+            statusByTask,
+            "completion",
+          ).length > 0;
+        const repairable = !ambiguous && reachable && !prerequisitesOpen;
         issues.push({
           ...base,
           finding: "terminal_pipeline_open_task",
@@ -363,15 +385,19 @@ export class ReconcileTasks {
           // When the lifecycle cannot reach the pipeline's outcome, the honest
           // next step is the explicit operator correction, not a transition the
           // task would reject.
-          suggestedCommand: reachable
-            ? taskLifecycleOperations[operation].command
-            : correctionCommandFor(task.status, target),
+          suggestedCommand: prerequisitesOpen
+            ? null
+            : reachable
+              ? taskLifecycleOperations[operation].command
+              : correctionCommandFor(task.status, target),
           repairOperation: repairable ? operation : null,
           repairable,
           refusalReason: ambiguous
             ? "pipelines for this task disagree or one is still active"
             : reachable
-              ? null
+              ? prerequisitesOpen
+                ? "completion requires every prerequisite to be completed"
+                : null
               : `task cannot move from ${task.status} to ${target}`,
         });
       }

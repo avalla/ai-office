@@ -231,6 +231,64 @@ export class ManageGovernance {
         `requirement ${requirement.id} was modified concurrently`,
       );
   }
+  /**
+   * Repairs a requirement recorded without a milestone. A milestone that is
+   * already set stays immutable: this only ever fills the empty slot.
+   */
+  async assignRequirementMilestone(input: {
+    projectId: string;
+    requirementId: string;
+    milestoneId: string;
+  }): Promise<void> {
+    await this.project(input.projectId);
+    const requirement = await this.governance.findRequirement(
+      input.requirementId,
+      input.projectId,
+    );
+    if (requirement === null)
+      throw new GovernanceSubjectNotFoundError(
+        "requirement",
+        input.requirementId,
+      );
+    const milestoneProject = await this.governance.findMilestoneProject(
+      input.milestoneId,
+    );
+    if (milestoneProject === null)
+      throw new GovernanceSubjectNotFoundError("milestone", input.milestoneId);
+    if (milestoneProject !== input.projectId)
+      throw new GovernanceCrossProjectReferenceError("Requirement milestone");
+    // The assignment is irreversible, so never pin a requirement to a
+    // milestone that has already been abandoned.
+    const milestoneStatus = await this.governance.findStatus(
+      "milestone",
+      input.milestoneId,
+      input.projectId,
+    );
+    if (milestoneStatus === "cancelled" || milestoneStatus === "archived")
+      throw new DomainValidationError(
+        `milestone ${input.milestoneId} is ${milestoneStatus}; a requirement cannot be assigned to it`,
+      );
+    if (!isRequirementEditable(requirement.status))
+      throw new RequirementNotEditableError(requirement.id, requirement.status);
+    if (requirement.milestoneId !== undefined)
+      throw new DomainValidationError(
+        `requirement ${requirement.key} already belongs to a milestone; its milestone cannot be changed`,
+      );
+    const assigned = await this.governance.assignRequirementMilestone(
+      requirement.id,
+      input.projectId,
+      input.milestoneId,
+      this.clock.now(),
+      {
+        id: this.ids.generate(),
+        metadata: { key: requirement.key, milestoneTo: input.milestoneId },
+      },
+    );
+    if (!assigned)
+      throw new DomainValidationError(
+        `requirement ${requirement.id} was modified concurrently`,
+      );
+  }
   async createAdr(input: {
     projectId: string;
     title: string;

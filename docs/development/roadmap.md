@@ -1800,9 +1800,11 @@ See [Professional-work verticals](professional-work-verticals.md).
 
 ## M16 — Generic Core & Domain Packs
 
-Status: active in AI Office and in progress. GP-01 through GP-09, GP-10A,
-GP-10B-1, GP-10B-2, GP-11 through GP-13, GP-15, GP-16, GP-22, GP-23 and GP-25
-(the contract and development pack 0.4.0) are merged: public contracts,
+Status: completed at the re-scoped definition-layer exit (2026-10-08). Every
+M16 requirement in the AI Office project record is verified. GP-01 through
+GP-09, GP-10A, GP-10B-1, GP-10B-2, GP-10C-1, GP-11 through GP-13, GP-14A,
+GP-15, GP-16A, GP-17 through GP-23 and GP-25 (the contract and development
+pack 0.4.0) are merged: public contracts,
 host-local catalog/resolver, exact project binding, definition ownership and
 source-pinned overrides, derived effective configuration with read-only
 inspection, reviewed upgrades, the legacy development profile, role, agent
@@ -1878,10 +1880,14 @@ linked to each task. Existing GP task prerequisites are stored as typed task
 dependency edges; GP-02's cross-milestone M15-4 prerequisite is also stored as
 a typed task dependency edge in the project Runtime. GP-10A, GP-10B-1,
 GP-10B-2 and GP-10C-1 remain separately tracked extraction slices. Runtime
-records for the split keys (GP-14A, GP-14B, GP-10C-1, GP-10C-2) and for the
-rows reworded by the re-scope are updated separately; until then the records
-carry the pre-split GP-14 and GP-10C. GP-14B, GP-10C-2, GP-24, the GP-16 run
-gate, Runtime activation and
+records carry the split. GP-14 was narrowed to its delivered definition half
+(GP-14A, PRs #128 and #129) and verified; GP-14B is a separate M16.5
+requirement. GP-16 was rejected as a scope split, not for a defect: GP-16A
+(the delivered capability contracts, PR #116) is verified in M16, and GP-16-RG
+(the run gate) is an M16.5 requirement. GP-10C was likewise split into GP-10C-1
+(M16, verified) and GP-10C-2 (M16.5), and GP-24 moved to M16.5 as GP-24-M165.
+The two GP-12 follow-up tasks (`57a1833f`, `e003843f`) are owned by M16.5.
+GP-14B, GP-10C-2, GP-24, the GP-16 run gate, Runtime activation and
 the execution parity task are planned for M16.5 and are not M16 delivery
 tasks; the plan's
 [M16 exit re-scope](generic-core-domain-packs.md#m16-exit-re-scope-owner-decision-2026-10-06)
@@ -2208,7 +2214,8 @@ proposal:
   version-bound review. Depends on M11.6 Phase B.
 - GP-10C-2: previewed explicit adoption of the development pack and its
   registration, preserving old bindings.
-- The GP-16 run gate: bind registered providers at bootstrap and reject a
+- The GP-16 run gate (requirement GP-16-RG, the split-off half of GP-16; the
+  delivered half is GP-16A in M16): bind registered providers at bootstrap and reject a
   missing required provider before runs. The delivered GP-16 section names
   `a45ddb12` and GP-24 as its owners; this item's scope proposal decides the
   split and is not a second owner.

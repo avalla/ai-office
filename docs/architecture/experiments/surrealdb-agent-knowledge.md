@@ -64,6 +64,8 @@ AI_OFFICE_TEST_SURREALDB_URL=ws://127.0.0.1:8000 \
   bunx --bun vitest run tests/integration/agent-knowledge-surrealdb.test.ts
 ```
 
+In CI, `.github/workflows/surrealdb-agent-knowledge.yml` starts the pinned image as a service and runs the four server-dependent SurrealDB suites — agent knowledge, storage contracts, and the two concurrency experiments — against the real server. The fake-wire auth-lifecycle suite (token expiry, signin replay after reconnect) runs in the same job regardless of server availability, since it uses its own loopback fake server. If SurrealDB never becomes healthy on the runner, the job records an explicit fail-closed skip (job summary plus a warning annotation) for the server-dependent suites and runs no server tests; it never reports a fake green. Token expiry and connect-time signin replay after reconnect remain covered only at SDK level by the fake-wire suite, because a real SurrealDB server cannot be forced to expire tokens. `tests/integration/agent-knowledge-persistence.test.ts` (AK-09) is not part of this job; it belongs to the separate `agent-knowledge-persistence.yml` workflow.
+
 The adapter is currently an opt-in experimental package, with no daemon lifecycle, production credentials, deployment persistence, backup/restore, metrics, or migration compatibility contract. The in-memory CI/test server is ephemeral; production-like durability and operations have not been evaluated.
 
 ## Known limitations

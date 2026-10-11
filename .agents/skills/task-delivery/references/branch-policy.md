@@ -37,6 +37,13 @@ They are independent. Decide each explicitly and write both in the pull request.
   stacked run counts as an approved Git branch dependency on it; otherwise the
   task waits, or needs a separately approved Git branch dependency on the
   prerequisite.
+- A task with an under-review prerequisite may start on its current review head
+  before that prerequisite is DONE. Verify that the dependent branch's starting
+  head contains the current review head of every under-review prerequisite;
+  one reviewed head does not cover an independent prerequisite branch. Record
+  the checked commit IDs in delivery evidence. A prerequisite still pending,
+  running, blocked, failed, or cancelled does not qualify for this review-head
+  start.
 - When a task in a stacked run stops or is postponed, the tasks whose branches are stacked on it, directly or through other tasks, stop too, and so does every later task of the chain that is not yet started; the authorizer decides how their branches are rebuilt, and the changed plan is shown and approved before any of them starts. If the stop is resolved without changing the plan, the authorizer's go-ahead is enough to resume them. Never rewrite reviewed history to do so.
 - A stacked pull request targets the branch it is stacked on, and says so. Its
   review covers only its own diff. An external review command is run against

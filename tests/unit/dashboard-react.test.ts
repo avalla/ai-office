@@ -29,7 +29,14 @@ import {
   parseRoute,
   routeHref,
 } from "../../apps/dashboard/src/ui/view-model.ts";
-import { taskFilterQuery } from "../../apps/dashboard/src/lib/task-filters.ts";
+import {
+  milestoneChoiceDisabled,
+  taskFilterQuery,
+} from "../../apps/dashboard/src/lib/task-filters.ts";
+import {
+  parseTaskPageQuery,
+  taskPageParameters,
+} from "@ai-office/application/protocol/query-protocol.ts";
 import { SidebarLinks } from "../../apps/dashboard/src/app/app.tsx";
 
 const now = "2026-09-03T12:00:00.000Z";
@@ -206,6 +213,7 @@ const task: TaskOperationalState = {
   description: "A clear and readable description.",
   priority: 0,
   recordedStatus: "pending",
+  terminal: false,
   operationalStatus: "in_progress",
   divergesFromRecordedStatus: true,
   divergenceReasons: ["agent_run_active_without_task_transition"],
@@ -357,6 +365,7 @@ describe("React dashboard routes", () => {
     "#/agents",
     "#/runs/run-1",
     "#/memory",
+    "#/runtime",
   ])("round trips %s", (hash) =>
     expect(routeHref(parseRoute(hash))).toBe(hash),
   );
@@ -376,6 +385,20 @@ describe("React dashboard routes", () => {
     expect(html).toMatch(
       /href="\/projects\/project-1\/graph"[^>]*>.*?Graph<\/a>/,
     );
+  });
+  test("shows Runtime in the workspace navigation", () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        MemoryRouter,
+        null,
+        createElement(SidebarLinks, {
+          currentProject: null,
+          path: "/runtime",
+        }),
+      ),
+    );
+    expect(html).toMatch(/href="\/runtime"[^>]*>.*?Runtime<\/a>/);
+    expect(html).toContain('aria-current="page"');
   });
   test("rejects malformed task filters", () =>
     expect(parseRoute("#/projects/project-1/tasks?priority=abc").kind).toBe(
@@ -722,6 +745,35 @@ describe("operational presentation", () => {
     );
     expect(html(TaskTable, { tasks: [task] })).toContain("No linked milestone");
   });
+  test("labels the task status filter as operational without changing its value", () => {
+    const markup = html(ProjectPage, {
+      data: {
+        kind: "project",
+        project: {
+          ...project,
+          taskPage: {
+            filters: { status: "failed" },
+            offset: 0,
+            limit: 20,
+            options: {
+              statuses: ["failed", "completed"],
+              priorities: [],
+              agents: [],
+              hasUnassigned: false,
+            },
+          },
+        },
+        activePipelines: { total: 0, items: [], truncated: false },
+        activeRuns: { total: 0, items: [], truncated: false },
+      },
+      section: "tasks",
+    });
+    expect(markup).toMatch(/Operational status.*?<select/s);
+    expect(markup).toContain(
+      '<option value="failed">Failed (operational)</option>',
+    );
+    expect(markup).toContain('<option value="completed">completed</option>');
+  });
   test("hides archived milestones in the default project view", () => {
     const page = {
       kind: "project",
@@ -810,4 +862,79 @@ describe("task filters", () => {
         agent: "none",
       }),
     ).toMatchObject({ status: "all", unassigned: true }));
+  test("round-trips multiple milestone categories and rejects oversized filters", () => {
+    const query = taskFilterQuery({
+      search: "",
+      status: "all",
+      priority: "",
+      agent: "",
+      milestones: ["milestone-1", "unassigned", "milestone-2"],
+    });
+    expect(query).toEqual({
+      status: "all",
+      milestoneIds: ["milestone-1", "unassigned", "milestone-2"],
+    });
+    expect(parseTaskPageQuery(taskPageParameters(query))).toEqual(query);
+    const tooMany = new URLSearchParams();
+    for (let i = 0; i < 51; i++) tooMany.append("milestone", `m-${i}`);
+    expect(() => parseTaskPageQuery(tooMany)).toThrow(
+      "Too many milestone filters",
+    );
+    const duplicates = new URLSearchParams();
+    for (let i = 0; i < 51; i++) duplicates.append("milestone", "m-1");
+    expect(() => parseTaskPageQuery(duplicates)).toThrow(
+      "Too many milestone filters",
+    );
+    const selected = Array.from({ length: 50 }, (_, index) => `m-${index}`);
+    expect(milestoneChoiceDisabled(selected, "m-49")).toBe(false);
+    expect(milestoneChoiceDisabled(selected, "m-50")).toBe(true);
+    expect(milestoneChoiceDisabled(selected.slice(1), "m-50")).toBe(false);
+  });
+  test("shows the completed shortcut when all results are paginated", () => {
+    const tasksPage: ProjectDetail = {
+      ...project,
+      summary: {
+        ...summary,
+        tasks: {
+          ...summary.tasks,
+          total: 101,
+          terminal: 1,
+          byStatus: { ...summary.tasks.byStatus, completed: 1 },
+        },
+      },
+      tasks: { total: 101, items: [task], truncated: true },
+      taskPage: {
+        filters: {
+          status: "all",
+          milestoneIds: ["milestone-1", "milestone-2"],
+        },
+        offset: 0,
+        limit: 100,
+        options: {
+          statuses: ["in_progress", "completed"],
+          priorities: [0],
+          agents: [],
+          milestones: [],
+          hasUnassigned: true,
+          hasUnassignedMilestone: true,
+        },
+      },
+    };
+    const markup = html(ProjectPage, {
+      data: {
+        kind: "project",
+        project: tasksPage,
+        activePipelines: { total: 0, items: [], truncated: false },
+        activeRuns: { total: 0, items: [], truncated: false },
+      },
+      section: "tasks",
+    });
+    expect(markup).toContain("1 completed project task");
+    expect(markup).toContain("View all completed");
+    expect(markup).toContain("?status=completed");
+    expect(markup).toContain("1–1 of 101 matching");
+    expect(markup).toContain(
+      "milestone=milestone-1&amp;milestone=milestone-2&amp;offset=100",
+    );
+  });
 });

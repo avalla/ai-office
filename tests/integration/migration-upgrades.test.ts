@@ -132,6 +132,9 @@ describe("migration upgrades", () => {
         "0045_project_agent_disable.sql",
         "0046_project_workflow_override.sql",
         "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
       ]);
       expect(
         database.query("SELECT * FROM role WHERE id='role'").get(),
@@ -253,6 +256,9 @@ describe("migration upgrades", () => {
         "0045_project_agent_disable.sql",
         "0046_project_workflow_override.sql",
         "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
       ]);
       expect(
         database
@@ -444,7 +450,7 @@ describe("migration upgrades", () => {
         .run(definition, timestamp, timestamp);
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0047_milestone_archived_status.sql",
+        "0050_task_delivery_setup.sql",
       );
       const stored = database
         .query<{ manifest_json: string }, []>(
@@ -529,7 +535,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0047_milestone_archived_status.sql",
+        "0050_task_delivery_setup.sql",
       );
       expect(
         database
@@ -643,6 +649,9 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
     ]);
     insertEvent.run(
       "updated",
@@ -741,6 +750,9 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
     ]);
     expect(
       database
@@ -824,6 +836,9 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
     ]);
     expect(
       database
@@ -987,6 +1002,9 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
     ]);
     expect(
       database
@@ -1054,6 +1072,9 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
     ]);
     database
       .prepare(
@@ -1395,6 +1416,9 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
     ]);
     expect(
       upgraded
@@ -1464,6 +1488,9 @@ describe("migration upgrades", () => {
       "0045_project_agent_disable.sql",
       "0046_project_workflow_override.sql",
       "0047_milestone_archived_status.sql",
+      "0048_review_ready_task_dependencies.sql",
+      "0049_task_completion_requires_completed_prerequisites.sql",
+      "0050_task_delivery_setup.sql",
     ]);
     expect(
       database
@@ -1484,5 +1511,48 @@ describe("migration upgrades", () => {
     ).toThrow(/CHECK constraint/);
     expect(migrate(database, migrations).applied).toEqual([]);
     database.close();
+  });
+
+  test("adds the task-delivery setup table to an existing M19-T3 database without touching it", () => {
+    const root = mkdtempSync(join(tmpdir(), "ai-office-setup-upgrade-"));
+    roots.push(root);
+    const partial = join(root, "partial-migrations");
+    mkdirSync(partial);
+    for (const file of readdirSync(migrations).sort())
+      if (file <= "0049_task_completion_requires_completed_prerequisites.sql")
+        copyFileSync(join(migrations, file), join(partial, file));
+    const database = openDatabase(join(root, "project.sqlite"));
+    try {
+      migrate(database, partial);
+      const at = "2026-10-09T00:00:00.000Z";
+      database
+        .prepare(
+          `INSERT INTO project(id,name,description,created_at,updated_at)
+           VALUES ('project','Existing',NULL,?,?)`,
+        )
+        .run(at, at);
+
+      expect(migrate(database, migrations).applied).toEqual([
+        "0050_task_delivery_setup.sql",
+      ]);
+      // The setup store is empty for existing projects; defaults come from
+      // the application, not from backfilled rows.
+      expect(
+        database
+          .query<{ count: number }, []>(
+            "SELECT COUNT(*) AS count FROM task_delivery_setup",
+          )
+          .get()?.count,
+      ).toBe(0);
+      expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
+      expect(
+        database
+          .query<{ integrity_check: string }, []>("PRAGMA integrity_check")
+          .get(),
+      ).toEqual({ integrity_check: "ok" });
+      expect(migrate(database, migrations).applied).toEqual([]);
+    } finally {
+      database.close();
+    }
   });
 });

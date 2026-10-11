@@ -94,6 +94,12 @@ export interface TaskGraphSnapshotRecord {
   dependencies: { taskId: string; dependsOnTaskId: string }[];
   /** Explicit task→requirement→milestone facts, without requirement text. */
   milestoneLinks: { taskId: string; milestoneId: string }[];
+  /**
+   * Tasks linked to at least one requirement, whatever its milestone, sorted
+   * by id. Read in the same snapshot as `milestoneLinks`, it tells a task with
+   * no requirement from one whose requirements carry no milestone.
+   */
+  requirementLinkedTaskIds: string[];
 }
 
 export interface OperationalMilestoneRecord {

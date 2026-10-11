@@ -150,6 +150,7 @@ audit event id; the SQLite `rowid` is deliberately not part of the contract.
 | Route                                 | Returns                                                         |
 | ------------------------------------- | --------------------------------------------------------------- |
 | `GET /api/dashboard`                  | Cross-project overview, attention, active runs                  |
+| `GET /api/status`                     | Runtime identity, uptime, knowledge/queue/storage state         |
 | `GET /api/memory`                     | Global roles, patterns, and lessons                             |
 | `GET /api/projects`                   | Project summaries                                               |
 | `GET /api/projects/:id`               | Project detail data used by the section pages                   |
@@ -180,6 +181,10 @@ and React Router hash routes provide these views:
 
 - `#/` — exact cross-project totals, active work, attention, and activity;
 - `#/projects`, `#/work`, `#/pipelines`, `#/agents`, `#/memory` — global views;
+- `#/runtime` — daemon identity and uptime, knowledge, queue, storage, and
+  distribution versions (read-only host state, not project data); it
+  re-queries on the shell's 30s cadence because uptime and live reachability
+  emit no invalidation events;
 - `#/projects/:id` — current work, exact aggregates, attention, progress, and activity;
 - `#/projects/:id/pipeline` — active pipeline runs, current stage, stage timeline,
   assignments, active run evidence, and involved agents;
@@ -211,20 +216,23 @@ only presents it:
 
 - `ready`: `isTaskRunnable` accepts the recorded status (`pending`, `assigned`,
   `running`, `waiting_review`; never `blocked` or terminal) and every
-  prerequisite's recorded status is `completed`: the same rule as
-  `ManageTaskDependencies.readiness`. A cancelled or failed prerequisite keeps
-  its dependents unmet.
+  prerequisite's recorded status is `completed` or `waiting_review`: the same
+  rule as `ManageTaskDependencies.readiness`. A cancelled or failed prerequisite
+  keeps its dependents unmet.
 - `terminal`: the recorded status is terminal (`isTerminalTaskStatus`); not the
   same as an operational `failed`, which a runnable task can show after a failed
-  run.
+  run. The task list's `active` filter, project open-task counts, and graph
+  terminal flag use this same recorded-task rule. An operational `failed` filter
+  still finds both a failed task and an open task with a failed latest run.
 - `waiting`: not terminal and at least one prerequisite is unmet;
   `unmetPrerequisiteIds` lists them.
 - `needsAttention`: the task carries an authoritative attention reason
   (blocked, failed, and the other documented attention kinds).
-- `completionUnblocks`: the dependents that become ready when the task
-  completes (it is their only unmet prerequisite and their status allows work);
+- `completionUnblocks`: the dependents that become ready when the task reaches
+  `waiting_review` or `completed` (it is their only unmet prerequisite and their
+  status allows work);
   empty for a terminal task (a completed task is nobody's unmet prerequisite
-  any more; a failed or cancelled one can never complete).
+  any more; a failed or cancelled one can never reach review or completion).
 - `summary`: counts of `ready`, `waiting`, operationally `blocked`,
   `inProgress` and `needsAttention`, derived from the same nodes (a task counts
   in every bucket that applies).
@@ -242,28 +250,44 @@ task→requirement→milestone link; there is no task→milestone dependency, an
 milestones never take part in the dependency layout.
 
 The **Graph** project section is an operational view of the project, answering
-what can run now, what is blocked and why, and what completing a task unblocks:
+what can run now, what is blocked and why, and what reaching review or completion unblocks:
 
 - a summary row (Ready, Waiting on prerequisites, Blocked, In progress, Needs
   attention) whose buttons are filter shortcuts;
-- data filters (find, status, milestone, and under "More filters" hide
+- data filters (find, status, multiple milestones, and under "More filters" hide
   completed, operational view, filter-by-search);
 - a React Flow canvas of task→task dependencies only (dagre, left-to-right by
   default, top-down optional), with each task showing status, priority, READY or
   its blocker count, and its first milestone (`+N` for more). Arrows point from
   a prerequisite to the task that needs it. Dashed amber edges are unmet
-  prerequisites, completed ones recede, and the longest chain is thick red.
-  For a selected task, direct links are thick blue while transitive lineage
-  context is thin blue at lower opacity; unrelated edges recede;
+  prerequisites (neither completed nor in review), satisfied ones (completed or
+  in review) recede, and the longest chain is thick red. For a selected
+  task, direct links are thick blue while transitive lineage context is
+  thin blue at lower opacity; unrelated edges recede;
+- graph nodes reduce visible detail as the user zooms out: full task detail at
+  high zoom, title/status/ready or blocker state at medium zoom, and a compact
+  title/state card with a state stripe at low zoom. Node dimensions and the
+  layout stay fixed, and each tier retains the complete accessible name and
+  selection state;
+- a small cue counts direct completed prerequisites hidden from the current
+  view. It sits below the node in left-to-right layout and above its right side
+  in top-to-bottom layout, clear of centered dependency edges; dimmed nodes
+  dim the cue too. At compact zoom it shows just the count; the accessible name
+  keeps the full context at every zoom level;
 - view controls beside the canvas (Fit graph, layout, longest chain overlay,
   minimap), distinct from the data filters;
 - a side panel: with no selection, a "what happens next" list (ready tasks by
   priority, tasks needing attention, the longest dependency chain, legend); with
   a selection, the task description and explicitly linked requirement titles,
   statuses and descriptions, followed by its blockers (only while it is waiting),
-  what completing it unblocks, its other dependents, completed prerequisites (also
-  when those tasks are hidden from the canvas), milestones, and an "Only this
-  lineage" option that exists only while something is selected.
+  what reaching review or completion unblocks, its other dependents,
+  prerequisites in review and completed prerequisites (also when those tasks
+  are hidden from the canvas), milestones, and a neighborhood
+  selector that exists only while something is selected. Direct relations shows
+  incident dependencies; 1 hop keeps the same tasks and also draws dependencies
+  among them; 2 hops extends up to two levels along prerequisite and dependent
+  paths; Full lineage shows every ancestor and descendant. The selected task
+  stays visible in every mode, including when it is isolated.
 
 Searching locates: results are listed from the whole project, Enter or a click
 selects the task, frames it and dims the rest of the graph. "Show only tasks
@@ -288,10 +312,15 @@ cancelled tasks that block no open work are hidden by default. A cancelled
 prerequisite remains visible with its edge when it still blocks a non-terminal
 task; an explicit search or filter may narrow it away. An operational shortcut
 or status filter overrides the default hiding rule.
+The Status control calls that default **Active statuses**. Selecting **All
+statuses** explicitly turns off Hide completed and includes completed tasks;
+the separate checkbox can switch the view back. The milestone selector matches
+tasks belonging to any selected milestone. "No milestone" can be combined with
+named milestones, and clearing the selection shows all milestones.
 
 Filter and selection state is component state, so it survives live refresh and
 resets when the project changes, but is not in the URL. Persisting search,
-status, milestone and the operational view
+status, selected milestones and the operational view
 in the hash would refetch the graph on every change with the current route
 model, so it is a follow-up (it needs section-level query parameters that do not
 trigger a refetch). The Graph route fetches only the exhaustive graph endpoint;
@@ -307,20 +336,25 @@ references, with a control to reveal the rest in batches of eight.
 ### Task search, filters, and pages
 
 The project task table searches title, description, and task ID with literal,
-case-insensitive matching. The default `active` view omits operational
-`failed`, `completed`, and `cancelled` tasks. The Status filter also offers
-`all` and each exact operational status, so terminal tasks remain available
-without occupying the default work queue. Status means the application's
-operational status;
+case-insensitive matching. The default `active` view includes every task whose
+recorded lifecycle is not terminal, even if its latest run makes its operational
+status `failed`. The Operational status filter also offers `all` and each exact
+operational status, so terminal tasks remain available without occupying the
+default work queue. Exact status filters use the application's operational status;
 priority is the persisted integer, including zero and negative values. Agent
 matches any active run or current assignment in an active pipeline, and
 "No current agent" matches neither. Historical run agents are excluded.
-Milestone matches any milestone linked through an explicitly linked requirement;
-"No milestone" matches tasks with no such link. Status, priority, agent, and
-milestone choices come from the project's actual tasks and project milestones.
+Selected milestones match any linked through an explicitly linked requirement;
+"No milestone" can be selected alongside named milestones and matches tasks
+with no such link. An empty selection includes all milestones. Operational
+status, priority, agent, and milestone choices come from the project's actual
+tasks and project milestones.
 
 The browser requests `GET /api/projects/:id?taskView=paged`, with optional
-`search`, `status`, `priority`, `agent`, `milestone`, `unassigned=true`, `sort`, and `offset` parameters.
+`search`, `status`, `priority`, `agent`, repeated `milestone`,
+`unassigned=true`, `sort`, and `offset` parameters. A single `milestone` value
+retains its existing query shape; repeated values use OR matching. The query
+accepts up to 50 milestone values, and the picker enforces that same limit.
 Malformed filters return `400`; selecting both an agent and unassigned tasks is
 invalid. The response adds `taskPage` with applied filters, offset, page limit,
 and project-wide choices. Existing callers without `taskView=paged` retain the
@@ -341,6 +375,9 @@ reloads and task-detail round trips in the hash URL. Applying filters resets the
 preserve drafts and keyboard focus. Pagination reads current state rather than
 a frozen snapshot, so concurrent changes can move tasks between pages.
 Project summaries and attention counts always cover the whole project.
+The task page states the project-wide completed count and links directly to the
+Completed filter. This makes completed work reachable even when the first page
+of All statuses contains only open tasks due to sorting and pagination.
 
 ### Task details and progress
 

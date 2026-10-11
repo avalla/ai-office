@@ -3,6 +3,10 @@
 
 integration_branch: main
 
+# Knowledge retrieval policy for handoff/resume enrichment (M19-T3):
+# auto (default), required, or disabled. See skills/task-delivery/references/configuration.md.
+knowledgePolicy: auto
+
 verification:
   full: bun run check
   targeted: bunx --bun vitest run <test files>

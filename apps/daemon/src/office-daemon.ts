@@ -57,6 +57,11 @@ export class PersistentRuntimeHost {
     this.now = options.now ?? (() => new Date());
   }
 
+  /** The instant this host started serving; `undefined` before start. */
+  get startedAtInstant(): Date | undefined {
+    return this.startedAt;
+  }
+
   async start(signal: AbortSignal): Promise<void> {
     if (this.started)
       throw new Error("Office daemon instances can only be started once");

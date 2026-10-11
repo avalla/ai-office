@@ -571,6 +571,7 @@ describe("task operational state", () => {
     });
 
     expect(state.operationalStatus).toBe("failed");
+    expect(state.terminal).toBe(false);
     expect(state.divergenceReasons).toEqual([
       "agent_run_failed_without_task_transition",
     ]);
@@ -622,6 +623,7 @@ describe("task operational state", () => {
         agentsById: new Map(),
       });
       expect(state.operationalStatus).toBe(status);
+      expect(state.terminal).toBe(true);
       expect(state.divergesFromRecordedStatus).toBe(false);
     }
   });

@@ -25,6 +25,10 @@ evidence is not passed, whatever its apparent state.
   not DONE is unresolved: stop until the authorizer decides. Decide the Git
   base separately, following the [branch policy](branch-policy.md); a stacked
   base never resolves a task dependency.
+- For each under-review prerequisite used as a base, verify that the proposed
+  starting head contains its current review head. With several such
+  prerequisites, verify every head and record the commit IDs before marking the
+  task started.
 - Confirm the working tree is clean and isolated as the project requires (for
   example a dedicated worktree).
 - Update the base, create the task branch, and establish a green baseline: run

@@ -17,8 +17,22 @@ import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { SqliteAuditEventRepository } from "@ai-office/storage-sqlite/repositories/sqlite-audit-event.repository.ts";
 import { SqliteOperationalReadRepository } from "@ai-office/storage-sqlite/repositories/sqlite-operational-read.repository.ts";
+import type { AgentKnowledgeStore } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import type { AgentKnowledgeConfiguration } from "@ai-office/storage-surrealdb/agent-knowledge-configuration.ts";
 
 const temporaryDirectories: string[] = [];
+
+const knowledgeConfiguration: AgentKnowledgeConfiguration = {
+  kind: "surrealdb",
+  tenantId: "tenant-status",
+  connection: {
+    endpoint: "ws://127.0.0.1:8000",
+    namespace: "ai_office",
+    database: "knowledge",
+    username: "operator",
+    password: "secret",
+  },
+};
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0))
@@ -46,14 +60,16 @@ interface Harness {
   stop(): Promise<void>;
 }
 
-async function startDaemon(): Promise<Harness> {
+async function startDaemon(
+  options: Parameters<typeof bootstrap>[0] = {},
+): Promise<Harness> {
   const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-query-api-"));
   temporaryDirectories.push(projectRoot);
   writeFileSync(join(projectRoot, "README.md"), "# Query API fixture");
   const socket = createTestUnixSocket();
   temporaryDirectories.push(socket.root);
   const socketPath = socket.socketPath;
-  const daemon = await bootstrap({ projectRoot, socketPath });
+  const daemon = await bootstrap({ projectRoot, socketPath, ...options });
   const controller = new AbortController();
   const running = daemon.start(controller.signal);
   await waitForDaemon(socketPath);
@@ -179,6 +195,7 @@ describe("daemon query API", () => {
             taskId,
             description: "First line\nSecond line",
             operationalStatus: "not_started",
+            terminal: false,
             assignedAgent: null,
           },
           runs: { total: 0, items: [], truncated: false },
@@ -255,6 +272,96 @@ describe("daemon query API", () => {
           400,
         );
       }
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  test("task pages accept repeated milestone filters through the Unix socket", async () => {
+    const harness = await startDaemon();
+    try {
+      const command = (args: string[]) => harness.client.execute(args);
+      const projectId = (
+        await command(["project:create", "Filter milestones"])
+      ).stdout[0]!.replace("Project created: ", "");
+      const taskIds = await Promise.all(
+        ["First task", "Second task", "Unassigned task"].map(async (title) =>
+          (
+            await command([
+              "task:create",
+              "--project",
+              projectId,
+              "--title",
+              title,
+            ])
+          ).stdout[0]!.replace("Task created: ", ""),
+        ),
+      );
+      const milestoneIds = [];
+      for (const title of ["First milestone", "Second milestone"])
+        milestoneIds.push(
+          (
+            await command([
+              "milestone:create",
+              "--project",
+              projectId,
+              "--title",
+              title,
+            ])
+          ).stdout[0]!.replace("Milestone created: ", ""),
+        );
+      for (let index = 0; index < 2; index += 1) {
+        const requirementId = (
+          await command([
+            "requirement:create",
+            "--project",
+            projectId,
+            "--key",
+            `R${index + 1}`,
+            "--title",
+            `Requirement ${index + 1}`,
+            "--description",
+            "Acceptance",
+            "--milestone",
+            milestoneIds[index]!,
+          ])
+        ).stdout[0]!.replace("Requirement created: ", "");
+        expect(
+          (
+            await command([
+              "task:link-requirement",
+              "--project",
+              projectId,
+              "--task",
+              taskIds[index]!,
+              "--requirement",
+              requirementId,
+            ])
+          ).exitCode,
+        ).toBe(0);
+      }
+      const path = `/api/projects/${projectId}?taskView=paged&status=all`;
+      const query = async (milestones: string) =>
+        (await harness.get(`${path}&${milestones}`)).body.project as {
+          tasks: { items: { taskId: string }[] };
+          taskPage: { filters: { milestoneIds?: string[] } };
+        };
+      const both = await query(
+        `milestone=${milestoneIds[0]}&milestone=${milestoneIds[1]}`,
+      );
+      expect(both.tasks.items.map((task) => task.taskId).sort()).toEqual(
+        taskIds.slice(0, 2).sort(),
+      );
+      expect(both.taskPage.filters.milestoneIds).toEqual(milestoneIds);
+      const withUnassigned = await query(
+        `milestone=${milestoneIds[0]}&milestone=unassigned`,
+      );
+      expect(
+        withUnassigned.tasks.items.map((task) => task.taskId).sort(),
+      ).toEqual([taskIds[0], taskIds[2]].sort());
+      expect((await harness.get(`${path}&milestone=bad%20id`)).status).toBe(
+        400,
+      );
     } finally {
       await harness.stop();
     }
@@ -429,6 +536,295 @@ describe("daemon query API", () => {
     }
   });
 
+  test("runtime status reports identity and subsystem state through the socket", async () => {
+    const harness = await startDaemon();
+    try {
+      const health = await harness.client.health();
+      const { status, body } = await harness.get("/api/status");
+      expect(status).toBe(200);
+      expect(body.queryApiVersion).toBe(queryApiVersion);
+      const runtime = body.status as Record<string, unknown>;
+      expect(runtime).toMatchObject({
+        protocolVersion: 1,
+        status: "ok",
+        productVersion: expect.any(String),
+        storage: { project: "available" },
+      });
+      expect(typeof runtime.startedAt).toBe("string");
+      expect(typeof runtime.uptimeSeconds).toBe("number");
+      // Fail-soft: a known revision is a Git SHA, otherwise null.
+      expect(
+        runtime.sourceRevision === null ||
+          typeof runtime.sourceRevision === "string",
+      ).toBe(true);
+      if (typeof runtime.sourceRevision === "string")
+        expect(runtime.sourceRevision).toMatch(/^[0-9a-f]{40}$/);
+      // Both subsystems republish exactly what /health reports, plus the
+      // status-only live knowledge probe (nothing connected at startup here).
+      expect(runtime.knowledge).toEqual({
+        ...health.knowledge,
+        live: "not_checked",
+      });
+      expect(runtime.queue).toEqual(health.queue);
+
+      // Behaves like every other read-only route.
+      expect((await harness.get("/api/status/extra")).status).toBe(404);
+      expect(
+        (await harness.raw("/api/status", { method: "POST" })).status,
+      ).toBe(405);
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  test("runtime status caches the live knowledge probe within its TTL", async () => {
+    const probes: { config: unknown; deadlineMs: number }[] = [];
+    let nowMs = 1_000_000;
+    const harness = await startDaemon({
+      agentKnowledgeConfiguration: knowledgeConfiguration,
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
+      agentKnowledgeProbeNow: () => nowMs,
+      agentKnowledgeProbeTtlMs: 60_000,
+      probeAgentKnowledge: async (config, deadlineMs) => {
+        probes.push({ config, deadlineMs });
+      },
+    });
+    try {
+      const first = await harness.get("/api/status");
+      expect(first.status).toBe(200);
+      expect(first.body.status).toMatchObject({
+        knowledge: { provider: "surrealdb", startup: "connected", live: "connected" },
+      });
+      // The probe receives the validated connection config and the bounded
+      // deadline, distinct from the startup-observed state.
+      expect(probes).toEqual([
+        { config: knowledgeConfiguration.connection, deadlineMs: 1_500 },
+      ]);
+      // Within the TTL the cached outcome is reused: no new probe.
+      nowMs += 30_000;
+      const second = await harness.get("/api/status");
+      expect(second.body.status).toMatchObject({
+        knowledge: { provider: "surrealdb", startup: "connected", live: "connected" },
+      });
+      expect(probes).toHaveLength(1);
+      // Past the TTL the next request probes again.
+      nowMs += 40_000;
+      const third = await harness.get("/api/status");
+      expect(third.body.status).toMatchObject({
+        knowledge: { provider: "surrealdb", startup: "connected", live: "connected" },
+      });
+      expect(probes).toHaveLength(2);
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  test("runtime status reports the live probe as unavailable when the store stops answering", async () => {
+    const harness = await startDaemon({
+      agentKnowledgeConfiguration: knowledgeConfiguration,
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
+      agentKnowledgeProbeTimeoutMs: 250,
+      // Emulates the connector contract: implementations settle within the
+      // given deadline (the real connector closes its throwaway connection).
+      probeAgentKnowledge: async (_config, deadlineMs) => {
+        await Bun.sleep(deadlineMs);
+        throw new Error("Agent knowledge probe timed out");
+      },
+    });
+    try {
+      const started = Date.now();
+      const { status, body } = await harness.get("/api/status");
+      expect(status).toBe(200);
+      expect(body.status).toMatchObject({
+        knowledge: { provider: "surrealdb", startup: "connected", live: "unavailable" },
+      });
+      // The probe deadline bounds the delay: startup state still reported
+      // "connected" while the live probe tells the truth.
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  test("runtime status reports the live probe as unavailable when the store rejects", async () => {
+    const harness = await startDaemon({
+      agentKnowledgeConfiguration: knowledgeConfiguration,
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
+      probeAgentKnowledge: async () => {
+        throw new Error("store exploded");
+      },
+    });
+    try {
+      const { status, body } = await harness.get("/api/status");
+      expect(status).toBe(200);
+      expect(body.status).toMatchObject({
+        knowledge: { provider: "surrealdb", startup: "connected", live: "unavailable" },
+      });
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  test("runtime status live probe observes recovery within the probe TTL", async () => {
+    let healthy = false;
+    let probeCalls = 0;
+    let nowMs = 1_000_000;
+    const harness = await startDaemon({
+      agentKnowledgeConfiguration: knowledgeConfiguration,
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
+      agentKnowledgeProbeNow: () => nowMs,
+      agentKnowledgeProbeTtlMs: 1_000,
+      probeAgentKnowledge: async () => {
+        probeCalls += 1;
+        if (!healthy) throw new Error("store unreachable");
+      },
+    });
+    try {
+      const first = await harness.get("/api/status");
+      expect(first.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "unavailable" },
+      });
+      expect(probeCalls).toBe(1);
+      healthy = true;
+      // The failed outcome is cached too: within the TTL a request reports it
+      // without re-probing, so recovery is not observed instantly.
+      const cached = await harness.get("/api/status");
+      expect(cached.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "unavailable" },
+      });
+      expect(probeCalls).toBe(1);
+      // Past the TTL the next request probes on a fresh connection and
+      // observes recovery.
+      nowMs += 2_000;
+      const second = await harness.get("/api/status");
+      expect(second.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "connected" },
+      });
+      expect(probeCalls).toBe(2);
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  test("runtime status live probe observes degradation within the probe TTL", async () => {
+    let healthy = true;
+    let probeCalls = 0;
+    let nowMs = 1_000_000;
+    const harness = await startDaemon({
+      agentKnowledgeConfiguration: knowledgeConfiguration,
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
+      agentKnowledgeProbeNow: () => nowMs,
+      agentKnowledgeProbeTtlMs: 1_000,
+      probeAgentKnowledge: async () => {
+        probeCalls += 1;
+        if (!healthy) throw new Error("store unreachable");
+      },
+    });
+    try {
+      const first = await harness.get("/api/status");
+      expect(first.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "connected" },
+      });
+      expect(probeCalls).toBe(1);
+      healthy = false;
+      // The connected outcome is cached too: within the TTL a request still
+      // reports it without re-probing, so degradation is not observed
+      // instantly.
+      const cached = await harness.get("/api/status");
+      expect(cached.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "connected" },
+      });
+      expect(probeCalls).toBe(1);
+      // Past the TTL the next request probes on a fresh connection and
+      // observes the store no longer answering.
+      nowMs += 2_000;
+      const second = await harness.get("/api/status");
+      expect(second.body.status).toMatchObject({
+        knowledge: { startup: "connected", live: "unavailable" },
+      });
+      expect(probeCalls).toBe(2);
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  test("concurrent runtime status requests share a single bounded live probe", async () => {
+    let probeCalls = 0;
+    const harness = await startDaemon({
+      agentKnowledgeConfiguration: knowledgeConfiguration,
+      connectAgentKnowledge: async () => ({
+        store: {} as AgentKnowledgeStore,
+        close: async () => {},
+      }),
+      agentKnowledgeProbeTimeoutMs: 250,
+      probeAgentKnowledge: async (_config, deadlineMs) => {
+        probeCalls += 1;
+        await Bun.sleep(deadlineMs);
+        throw new Error("Agent knowledge probe timed out");
+      },
+    });
+    try {
+      const started = Date.now();
+      const results = await Promise.all([
+        harness.get("/api/status"),
+        harness.get("/api/status"),
+        harness.get("/api/status"),
+      ]);
+      for (const result of results) {
+        expect(result.status).toBe(200);
+        expect(result.body.status).toMatchObject({
+          knowledge: { startup: "connected", live: "unavailable" },
+        });
+      }
+      // Single-flight: the concurrent requests share one probe; all stay
+      // bounded by its deadline.
+      expect(probeCalls).toBe(1);
+      expect(Date.now() - started).toBeLessThan(2_500);
+    } finally {
+      await harness.stop();
+    }
+  });
+
+  test("source revision is captured at startup, not re-read per request", async () => {
+    // A checkout can move (checkout/pull) while the daemon keeps running the
+    // code it loaded; the status must keep reporting the startup revision.
+    let revisionReads = 0;
+    const harness = await startDaemon({
+      readSourceRevision: () => {
+        revisionReads += 1;
+        return "a".repeat(40);
+      },
+    });
+    try {
+      const first = await harness.get("/api/status");
+      const second = await harness.get("/api/status");
+      expect(
+        (first.body.status as Record<string, unknown>).sourceRevision,
+      ).toBe("a".repeat(40));
+      expect(
+        (second.body.status as Record<string, unknown>).sourceRevision,
+      ).toBe("a".repeat(40));
+      expect(revisionReads).toBe(1);
+    } finally {
+      await harness.stop();
+    }
+  });
+
   test("reflects state created through the command protocol", async () => {
     const harness = await startDaemon();
     try {
@@ -464,6 +860,7 @@ describe("daemon query API", () => {
         title: "Ship the thing",
         recordedStatus: "pending",
         operationalStatus: "not_started",
+        terminal: false,
         divergesFromRecordedStatus: false,
         priority: 5,
       });

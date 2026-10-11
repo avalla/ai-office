@@ -442,8 +442,18 @@ export class ManagePipelineRuns {
     const task = await this.tasks.findById(snapshot.taskId);
     if (task === null || task.snapshot().projectId !== snapshot.projectId)
       throw new TaskNotFoundError(snapshot.taskId);
-    if (snapshot.status === "completed") task.complete(this.clock.now());
-    else task.cancel(this.clock.now());
+    if (snapshot.status === "completed") {
+      // The pipeline cannot finish work whose prerequisites are still in review.
+      if (this.taskDependencies !== undefined)
+        await assertTaskPrerequisitesComplete(
+          snapshot.projectId,
+          snapshot.taskId,
+          this.tasks,
+          this.taskDependencies,
+          "completion",
+        );
+      task.complete(this.clock.now());
+    } else task.cancel(this.clock.now());
     await this.tasks.save(task);
   }
 

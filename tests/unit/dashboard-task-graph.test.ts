@@ -17,10 +17,18 @@ import {
   searchTasks,
   defaultGraphFilters,
   filterGraph,
+  graphStatusOption,
+  hiddenCompletedPrerequisiteCounts,
+  graphEdgeKey,
+  graphNodeDetail,
   layoutGraph,
   lineage,
   relationshipEdgeKind,
   taskKey,
+  toggleMilestoneFilter,
+  withGraphStatusOption,
+  activeStatusOption,
+  unassignedMilestoneNeighbours,
 } from "../../apps/dashboard/src/lib/task-graph.ts";
 
 function node(
@@ -35,6 +43,7 @@ function node(
     operationalStatus: "not_started",
     assignedAgent: null,
     milestoneIds: [],
+    milestoneGap: "no_requirement",
     unmetPrerequisiteIds: [],
     ready: true,
     waiting: false,
@@ -55,16 +64,23 @@ const graph: TaskGraph = {
     node("done", {
       recordedStatus: "completed",
       operationalStatus: "completed",
+      terminal: true,
       ready: false,
     }),
-    node("a", { milestoneIds: ["m1"] }),
+    node("a", { milestoneIds: ["m1"], milestoneGap: null }),
     node("b", {
       ready: false,
       waiting: true,
       unmetPrerequisiteIds: ["a"],
       milestoneIds: ["m1"],
+      milestoneGap: null,
     }),
-    node("c", { ready: false, waiting: true, unmetPrerequisiteIds: ["a"] }),
+    node("c", {
+      ready: false,
+      waiting: true,
+      unmetPrerequisiteIds: ["a"],
+      milestoneGap: "requirement_without_milestone",
+    }),
     node("d", {
       ready: false,
       waiting: true,
@@ -107,49 +123,75 @@ describe("dashboard task graph", () => {
   test("classifies direct links and transitive lineage from existing edges", () => {
     const selected = "b";
     const tree = lineage(graph.edges, selected);
-    expect(
-      relationshipEdgeKind(
-        { taskId: "b", dependsOnTaskId: "a" },
-        selected,
-        tree,
-      ),
-    ).toBe("direct");
-    expect(
-      relationshipEdgeKind(
-        { taskId: "d", dependsOnTaskId: "b" },
-        selected,
-        tree,
-      ),
-    ).toBe("direct");
-    expect(
-      relationshipEdgeKind(
-        { taskId: "a", dependsOnTaskId: "done" },
-        selected,
-        tree,
-      ),
-    ).toBe("transitive");
-    expect(
-      relationshipEdgeKind(
-        { taskId: "d", dependsOnTaskId: "c" },
-        selected,
-        tree,
-      ),
-    ).toBeNull();
-    // This edge reaches a downstream task without passing through b.
-    expect(
-      relationshipEdgeKind(
-        { taskId: "d", dependsOnTaskId: "a" },
-        selected,
-        tree,
-      ),
-    ).toBeNull();
+    expect(relationshipEdgeKind({ taskId: "b", dependsOnTaskId: "a" }, selected, tree)).toBe("direct");
+    expect(relationshipEdgeKind({ taskId: "d", dependsOnTaskId: "b" }, selected, tree)).toBe("direct");
+    expect(relationshipEdgeKind({ taskId: "a", dependsOnTaskId: "done" }, selected, tree)).toBe("transitive");
+    expect(relationshipEdgeKind({ taskId: "d", dependsOnTaskId: "c" }, selected, tree)).toBeNull();
+    expect(relationshipEdgeKind({ taskId: "d", dependsOnTaskId: "a" }, selected, tree)).toBeNull();
   });
+  test("changes presentation only at the two zoom thresholds", () => {
+    expect(graphNodeDetail(0.05)).toBe("compact");
+    expect(graphNodeDetail(0.399)).toBe("compact");
+    expect(graphNodeDetail(0.4)).toBe("medium");
+    expect(graphNodeDetail(0.849)).toBe("medium");
+    expect(graphNodeDetail(0.85)).toBe("full");
+    expect(graphNodeDetail(1.75)).toBe("full");
+  });
+
   test("hides completed work by default but keeps counts exact", () => {
     const visible = filterGraph(graph, defaultGraphFilters);
     expect(ids(visible.tasks)).toEqual(["a", "b", "c", "d", "lone"]);
     expect(visible.hiddenTaskCount).toBe(1);
     // An edge to a hidden prerequisite is not drawn.
     expect(visible.edges).toHaveLength(4);
+  });
+
+  test("counts only direct completed prerequisites hidden by the current view", () => {
+    const mixedGraph: TaskGraph = {
+      ...graph,
+      tasks: [
+        ...graph.tasks,
+        node("done2", {
+          recordedStatus: "completed",
+          operationalStatus: "completed",
+          ready: false,
+        }),
+        node("target", {
+          ready: false,
+          waiting: true,
+          unmetPrerequisiteIds: ["a"],
+        }),
+      ],
+      edges: [
+        ...graph.edges,
+        { taskId: "target", dependsOnTaskId: "a" },
+        { taskId: "target", dependsOnTaskId: "done" },
+        { taskId: "target", dependsOnTaskId: "done2" },
+      ],
+    };
+    const counts = (filters = defaultGraphFilters, keep = new Set<string>()) =>
+      hiddenCompletedPrerequisiteCounts(
+        mixedGraph,
+        filterGraph(mixedGraph, filters, { keep }),
+      );
+
+    expect(counts().get("target")).toBe(2);
+    expect(counts().get("a")).toBe(1);
+    expect(counts(defaultGraphFilters, new Set(["done"])).get("target")).toBe(
+      1,
+    );
+    expect(counts(all).get("target")).toBeUndefined();
+    expect(counts({ ...all, quick: "waiting" }).get("target")).toBe(2);
+    const isolated = filterGraph(mixedGraph, defaultGraphFilters, {
+      only: new Set(["target", "done"]),
+    });
+    expect(
+      hiddenCompletedPrerequisiteCounts(mixedGraph, isolated).get("target"),
+    ).toBe(1);
+    expect(
+      hiddenCompletedPrerequisiteCounts(mixedGraph, isolated).has("a"),
+    ).toBe(false);
+    expect(isolated.tasks).toHaveLength(2);
   });
 
   test("keeps cancelled prerequisites visible while they block open work", () => {
@@ -205,7 +247,7 @@ describe("dashboard task graph", () => {
       ids(
         filterGraph(blockedGraph, {
           ...defaultGraphFilters,
-          milestone: "m1",
+          milestones: ["m1"],
         }).tasks,
       ),
     ).toEqual([
@@ -241,12 +283,11 @@ describe("dashboard task graph", () => {
     expect(
       ids(filterGraph(graph, { ...all, status: "completed" }).tasks),
     ).toEqual(["done"]);
-    expect(ids(filterGraph(graph, { ...all, milestone: "m1" }).tasks)).toEqual([
-      "a",
-      "b",
-    ]);
     expect(
-      ids(filterGraph(graph, { ...all, milestone: "none" }).tasks),
+      ids(filterGraph(graph, { ...all, milestones: ["m1"] }).tasks),
+    ).toEqual(["a", "b"]);
+    expect(
+      ids(filterGraph(graph, { ...all, milestones: ["none"] }).tasks),
     ).toEqual(["done", "c", "d", "lone"]);
     expect(ids(filterGraph(graph, { ...all, quick: "ready" }).tasks)).toEqual([
       "a",
@@ -264,6 +305,44 @@ describe("dashboard task graph", () => {
     expect(
       ids(filterGraph(graph, { ...all, search: " TITLE C" }).tasks),
     ).toEqual(["c"]);
+  });
+
+  test("multiple milestone categories match any selected category", () => {
+    const multi: TaskGraph = {
+      ...graph,
+      tasks: graph.tasks.map((task) =>
+        task.taskId === "b"
+          ? { ...task, milestoneIds: ["m1", "m2"] }
+          : task.taskId === "c"
+            ? { ...task, milestoneIds: ["m2"], milestoneGap: null }
+            : task,
+      ),
+    };
+    expect(
+      ids(filterGraph(multi, { ...all, milestones: ["m1", "m2"] }).tasks),
+    ).toEqual(["a", "b", "c"]);
+    expect(
+      ids(filterGraph(multi, { ...all, milestones: ["m1", "none"] }).tasks),
+    ).toEqual(["done", "a", "b", "d", "lone"]);
+    expect(
+      ids(filterGraph(multi, { ...all, milestones: ["none"] }).tasks),
+    ).toEqual(["done", "d", "lone"]);
+    expect(toggleMilestoneFilter(["m2"], "m1")).toEqual(["m1", "m2"]);
+    expect(toggleMilestoneFilter(["m1", "m2"], "m1")).toEqual(["m2"]);
+  });
+
+  test("explicit All statuses includes completed tasks", () => {
+    expect(graphStatusOption(defaultGraphFilters)).toBe(activeStatusOption);
+    expect(ids(filterGraph(graph, defaultGraphFilters).tasks)).not.toContain(
+      "done",
+    );
+    const allStatuses = withGraphStatusOption(defaultGraphFilters, "");
+    expect(graphStatusOption(allStatuses)).toBe("");
+    expect(allStatuses.hideCompleted).toBe(false);
+    expect(ids(filterGraph(graph, allStatuses).tasks)).toContain("done");
+    const active = withGraphStatusOption(allStatuses, activeStatusOption);
+    expect(graphStatusOption(active)).toBe(activeStatusOption);
+    expect(ids(filterGraph(graph, active).tasks)).not.toContain("done");
   });
 
   test("an operational shortcut is not hidden by 'hide completed'", () => {
@@ -374,12 +453,21 @@ describe("dashboard task graph", () => {
         node("x", {
           operationalStatus: "failed",
           recordedStatus: "failed",
+          terminal: true,
           ready: false,
           waiting: false,
           unmetPrerequisiteIds: ["a"],
         }),
       ),
     ).toBe("Failed");
+    expect(
+      nodeStateLabel(
+        node("retry", {
+          operationalStatus: "failed",
+          ready: false,
+        }),
+      ),
+    ).toBe("Not startable");
     expect(
       nodeStateLabel(
         node("y", {
@@ -402,13 +490,15 @@ describe("dashboard task graph", () => {
         unmetPrerequisiteIds: ["a"],
       }),
     ];
-    expect([...unmetEdgeKeys(tasks)].sort()).toEqual([
-      "a>b",
-      "a>c",
-      "a>z",
-      "b>d",
-      "c>d",
-    ]);
+    expect(unmetEdgeKeys(tasks)).toEqual(
+      new Set([
+        graphEdgeKey("a", "b"),
+        graphEdgeKey("a", "c"),
+        graphEdgeKey("a", "z"),
+        graphEdgeKey("b", "d"),
+        graphEdgeKey("c", "d"),
+      ]),
+    );
   });
 
   test("computes the transitive lineage over the whole graph", () => {
@@ -424,8 +514,12 @@ describe("dashboard task graph", () => {
   test("reuses direct and transitive relationships across fact-only refreshes", () => {
     const memo = createGraphRelationshipMemo();
     const first = memo(graph.edges, "b");
+    const firstNeighborhood = first.neighborhood("two_hops");
     const refreshedEdges = graph.edges.map((edge) => ({ ...edge }));
     expect(memo(refreshedEdges, "b")).toBe(first);
+    expect(memo(refreshedEdges, "b").neighborhood("two_hops")).toBe(
+      firstNeighborhood,
+    );
     expect(memo(refreshedEdges, "d")).toMatchObject({
       prerequisites: ["b", "c"],
       dependents: [],
@@ -458,6 +552,93 @@ describe("dashboard task graph", () => {
     const visible = filterGraph(graph, defaultGraphFilters, { only: related });
     expect(ids(visible.tasks)).toEqual(["done", "a", "b", "d"]);
     expect(visible.edges).toHaveLength(3);
+  });
+
+  test("neighborhood depths include upstream and downstream branches", () => {
+    const relationships = createGraphRelationshipMemo();
+    const scoped = (
+      mode: "direct" | "one_hop" | "two_hops" | "full_lineage",
+    ) => {
+      const neighborhood = relationships(graph.edges, "b").neighborhood(mode);
+      return filterGraph(graph, defaultGraphFilters, {
+        only: neighborhood.taskIds,
+        ...(neighborhood.edgeKeys === undefined
+          ? {}
+          : { onlyEdges: neighborhood.edgeKeys }),
+      });
+    };
+    expect(ids(scoped("direct").tasks)).toEqual(["a", "b", "d"]);
+    expect(ids(scoped("one_hop").tasks)).toEqual(["a", "b", "d"]);
+    expect(ids(scoped("two_hops").tasks)).toEqual(["done", "a", "b", "d"]);
+    expect(ids(scoped("full_lineage").tasks)).toEqual(["done", "a", "b", "d"]);
+    expect(scoped("full_lineage").edges).toHaveLength(3);
+    expect(
+      relationships(graph.edges, "lone").neighborhood("two_hops").taskIds,
+    ).toEqual(new Set(["lone"]));
+    expect(
+      relationships(graph.edges, "a").neighborhood("two_hops").taskIds,
+    ).toEqual(new Set(["a", "done", "b", "c", "d"]));
+  });
+
+  test("direct draws incident edges while one hop includes neighbor edges", () => {
+    const triangle: TaskGraph = {
+      ...graph,
+      tasks: [node("focus"), node("before"), node("after")],
+      edges: [
+        { taskId: "focus", dependsOnTaskId: "before" },
+        { taskId: "after", dependsOnTaskId: "focus" },
+        { taskId: "after", dependsOnTaskId: "before" },
+      ],
+    };
+    const relationships = createGraphRelationshipMemo();
+    const scoped = (mode: "direct" | "one_hop") => {
+      const neighborhood = relationships(triangle.edges, "focus").neighborhood(
+        mode,
+      );
+      return filterGraph(triangle, defaultGraphFilters, {
+        only: neighborhood.taskIds,
+        ...(neighborhood.edgeKeys === undefined
+          ? {}
+          : { onlyEdges: neighborhood.edgeKeys }),
+      });
+    };
+    expect(ids(scoped("direct").tasks)).toEqual(["focus", "before", "after"]);
+    expect(scoped("direct").edges).toEqual(triangle.edges.slice(0, 2));
+    expect(scoped("one_hop").edges).toEqual(triangle.edges);
+  });
+
+  test("edge identities remain distinct when task IDs contain the old delimiter", () => {
+    const collision: TaskGraph = {
+      ...graph,
+      tasks: [node("a"), node("b>c"), node("a>b"), node("c")],
+      edges: [
+        { taskId: "b>c", dependsOnTaskId: "a" },
+        { taskId: "c", dependsOnTaskId: "a>b" },
+        { taskId: "a>b", dependsOnTaskId: "a" },
+        { taskId: "a", dependsOnTaskId: "c" },
+      ],
+    };
+    expect(graphEdgeKey("a", "b>c")).not.toBe(graphEdgeKey("a>b", "c"));
+    const relationships = createGraphRelationshipMemo();
+    const direct = relationships(collision.edges, "a").neighborhood("direct");
+    const oneHop = relationships(collision.edges, "a").neighborhood("one_hop");
+    const scoped = (scope: typeof direct) =>
+      filterGraph(collision, defaultGraphFilters, {
+        only: scope.taskIds,
+        ...(scope.edgeKeys === undefined ? {} : { onlyEdges: scope.edgeKeys }),
+      });
+    expect(scoped(direct).edges).toEqual([
+      collision.edges[0],
+      collision.edges[2],
+      collision.edges[3],
+    ]);
+    expect(scoped(oneHop).edges).toEqual(collision.edges);
+    expect(
+      unmetEdgeKeys([
+        node("b>c", { unmetPrerequisiteIds: ["a"] }),
+        node("c", { unmetPrerequisiteIds: ["a>b"] }),
+      ]).size,
+    ).toBe(2);
   });
 
   test("lays prerequisites before their dependents in both directions", () => {
@@ -592,5 +773,49 @@ describe("dashboard task graph", () => {
         decideFraming({ ...jump, pendingKey: "t:a", selectedKey: "t:b" }),
       ).toBe("frame");
     });
+  });
+});
+
+describe("unassignedMilestoneNeighbours", () => {
+  test("lists open tasks without a milestone that touch the filtered milestone", () => {
+    // c depends on a; d depends on b. `done` is terminal and `lone` is isolated.
+    expect(
+      unassignedMilestoneNeighbours(graph, ["m1"]).map((task) => [
+        task.taskId,
+        task.milestoneGap,
+      ]),
+    ).toEqual([
+      ["c", "requirement_without_milestone"],
+      ["d", "no_requirement"],
+    ]);
+  });
+
+  test("stays quiet without a concrete milestone filter", () => {
+    expect(unassignedMilestoneNeighbours(graph, [])).toEqual([]);
+    expect(unassignedMilestoneNeighbours(graph, ["none"])).toEqual([]);
+    expect(unassignedMilestoneNeighbours(graph, ["m1", "none"])).toEqual([]);
+  });
+
+  test("trusts the read model's reason and does not infer one from milestone ids", () => {
+    // A node reporting no gap is never listed, whatever its milestone ids say.
+    const trusted: TaskGraph = {
+      ...graph,
+      tasks: graph.tasks.map((task) =>
+        task.taskId === "c" ? { ...task, milestoneGap: null } : task,
+      ),
+    };
+    expect(ids(unassignedMilestoneNeighbours(trusted, ["m1"]))).toEqual(["d"]);
+  });
+
+  test("ignores neighbours that already belong to a milestone", () => {
+    const assigned: TaskGraph = {
+      ...graph,
+      tasks: graph.tasks.map((task) =>
+        task.taskId === "c" || task.taskId === "d"
+          ? { ...task, milestoneIds: ["m2"], milestoneGap: null }
+          : task,
+      ),
+    };
+    expect(unassignedMilestoneNeighbours(assigned, ["m1"])).toEqual([]);
   });
 });

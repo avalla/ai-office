@@ -86,7 +86,7 @@ Commands:
   task:transitions --project <id> --task <id> [--json]   # read-only preflight
   task:dependency:add --project <id> --task <id> --depends-on <task-id> [--json]
   task:dependency:remove --project <id> --task <id> --depends-on <task-id> [--json]
-  task:readiness --project <id> --task <id> [--json]  # incomplete hard prerequisites block admission
+  task:readiness --project <id> --task <id> [--json]  # completed or review-submitted prerequisites admit work; completing needs all completed
   task:start --project <id> --task <id>
   task:submit-review --project <id> --task <id>
   task:complete --project <id> --task <id>
@@ -118,10 +118,11 @@ Commands:
   milestone:create --project <id> --title <title> [--description <description>]
   milestone:update --project <id> --milestone <id> (--title <title> | --description <text>)
   milestone:set-status --project <id> --milestone <id> --status <planned|active|completed|cancelled|archived>
-  requirement:create --project <id> --key <key> --title <title> --description <description> [--milestone <id>]
+  requirement:create --project <id> --key <key> --title <title> --description <description> [--milestone <id>]  # without --milestone the requirement's tasks appear under no milestone
   requirement:list --project <id> [--json]  # lists exact requirement IDs for linking
   requirement:validate --project <id> --requirement <id> --model <provider:model> [--json]  # advisory, metered LLM analysis; does not change status
   requirement:update --project <id> --requirement <id> [--title <title>] [--description <text>]  # proposed requirements only; key, milestone and status are immutable here
+  requirement:assign-milestone --project <id> --requirement <id> --milestone <id>  # proposed requirements without a milestone only; assigns once, never moves
   requirement:set-status --project <id> --requirement <id> --status <status>
   adr:create --project <id> --title <title> --context <text> --decision <text> --consequences <text>
   adr:set-status --project <id> --adr <id> --status <status>
@@ -137,6 +138,7 @@ Commands:
   memory:references --project <id> [--json]
   memory:deprecate --type <role|pattern|lesson> --id <id> [--version <n>]  # version required for roles and patterns
   knowledge:search --project <id> --query <literal-text> [--limit <1..5>] [--agent <id>]  # matches record text, not titles; --agent excludes imported legacy records
+  knowledge:task --project <id> --task <task-id> [--limit <1..5>]  # read-only task-linked memories and decisions for handoff/resume enrichment; the state field distinguishes an unusable store from no hits
   knowledge:plan --project <id> <source> (--kind memory --text <text> | --kind decision --title <title> --text <text>)
     <source> is exactly one of:
       --run <completed-run-id>                                        # worker AgentRun; same as --source agent-run --run <id>
@@ -145,6 +147,8 @@ Commands:
                                                                       # evidence: requirement (not rejected), adr (accepted), review (approved), task, handover; all in this project
   knowledge:admit --project <id> <source> (--kind memory --text <text> | --kind decision --title <title> --text <text>) --approve <plan-hash> --actor <reviewer>  # operator-confirmed: --actor must equal --confirmed-by
   knowledge:trace --project <id> --kind <memory|decision> --id <knowledge-id>  # reports the admission source, its evidence, and the admission audit reference
+  delivery:setup:show --project <id> [--run <id>] [--task <id>]  # read-only resolved task-delivery setup: built-in defaults < project < run < task; both selectors may combine
+  delivery:setup:set --project <id> [--run <id> | --task <id>] --key <key> --value <json> [--actor <name>]  # upsert one setup key; --value null deletes it
   resource:create --project <id> --type <type> --provider <fake|filesystem> --name <name> [--external-ref <absolute-root>] [--configuration <json>]
   resource:list --project <id>
   resource:disable --project <id> --resource <id>

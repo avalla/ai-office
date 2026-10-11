@@ -3,7 +3,11 @@ import {
   type KnowledgeAdmissionKind,
   type KnowledgeAdmissionSourceInput,
 } from "@ai-office/application/agent-knowledge/manage-knowledge-admission.ts";
-import { knowledgeRetrievalLimits } from "@ai-office/application/ports/agent-knowledge-store.port.ts";
+import {
+  isKnowledgeIdentifier,
+  knowledgeRetrievalLimits,
+  type SearchKnowledgeHit,
+} from "@ai-office/application/ports/agent-knowledge-store.port.ts";
 import {
   CliUsageError,
   parseArguments,
@@ -16,6 +20,25 @@ function kind(value: string): KnowledgeAdmissionKind {
   if (value !== "memory" && value !== "decision")
     throw new CliUsageError("Knowledge kind must be memory or decision");
   return value;
+}
+
+/** Bounded prefix reported as the hit excerpt; the full text stays in the store. */
+function excerpt(text: string): string {
+  const characters = [...text];
+  return characters.length <= knowledgeRetrievalLimits.excerptCharacters
+    ? text
+    : `${characters.slice(0, knowledgeRetrievalLimits.excerptCharacters).join("")}…`;
+}
+
+function taskHitOutput(hit: SearchKnowledgeHit) {
+  return {
+    id: hit.id,
+    kind: hit.kind,
+    title: hit.title,
+    excerpt: excerpt(hit.text),
+    createdAt: hit.createdAt.toISOString(),
+    runId: hit.runId,
+  };
 }
 
 const sourceOptions = {
@@ -150,6 +173,56 @@ export async function handleKnowledgeCommand(
                 ? hit.provenance.kind
                 : "agent_run",
         })),
+      }),
+    );
+    return 0;
+  }
+  if (command === "knowledge:task") {
+    const parsed = parseArguments(args, new Set(["project", "task", "limit"]));
+    if (parsed.positionals.length > 0)
+      throw new CliUsageError(
+        "knowledge:task only accepts named options",
+      );
+    // Usage is caller context, so it is validated before any store state:
+    // a non-connected store is reported in the output, not as a refusal.
+    const projectId = requiredOption(parsed, "project");
+    const taskId = requiredOption(parsed, "task");
+    if (!isKnowledgeIdentifier(taskId))
+      throw new CliUsageError("Knowledge task id is invalid");
+    const limit = parsed.options.get("limit");
+    const maxLimit = knowledgeRetrievalLimits.maxResults;
+    if (
+      limit !== undefined &&
+      (!/^[1-9]\d*$/u.test(limit) || Number(limit) > maxLimit)
+    )
+      throw new CliUsageError(`Knowledge task limit must be 1 to ${maxLimit}`);
+    const knowledge = context.agentKnowledge ?? { state: "disabled" as const };
+    if (knowledge.state !== "connected") {
+      // The state field is the contract that lets a caller tell "the store
+      // is not usable" apart from "the store is usable and returned no
+      // hits"; misconfigured and unavailable carry only the typed code.
+      context.io.stdout(
+        JSON.stringify({
+          schemaVersion: 1,
+          state: knowledge.state,
+          ...(knowledge.state === "disabled"
+            ? {}
+            : { error: knowledge.error.message }),
+          hits: [],
+        }),
+      );
+      return 0;
+    }
+    const hits = await service.taskKnowledge({
+      projectId,
+      taskId,
+      ...(limit === undefined ? {} : { limit: Number(limit) }),
+    });
+    context.io.stdout(
+      JSON.stringify({
+        schemaVersion: 1,
+        state: "connected",
+        hits: hits.map(taskHitOutput),
       }),
     );
     return 0;

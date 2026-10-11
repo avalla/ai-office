@@ -12,12 +12,43 @@ import type {
   TaskGraphEdge,
   TaskGraphNode,
   TaskGraphSummary,
+  TaskMilestoneGap,
   TaskOperationalState,
 } from "./operational-read-models.ts";
+
+/**
+ * Milestones are derived from task→requirement→milestone links, so a task
+ * outside every milestone has either no requirement or only requirements
+ * recorded without one.
+ */
+function milestoneGap(
+  task: TaskOperationalState,
+  links: TaskGraphLinkFacts,
+): TaskMilestoneGap | null {
+  // A link to a milestone that the separate milestone read could not resolve
+  // still means the task belongs to one; never tell the user it belongs to none.
+  if (
+    (task.milestones ?? []).length > 0 ||
+    links.milestoneLinkedTaskIds.has(task.taskId)
+  )
+    return null;
+  return links.requirementLinkedTaskIds.has(task.taskId)
+    ? "requirement_without_milestone"
+    : "no_requirement";
+}
+
+/** Task→requirement link facts read in the same snapshot as the tasks. */
+export interface TaskGraphLinkFacts {
+  /** Tasks linked to at least one requirement, whatever its milestone. */
+  requirementLinkedTaskIds: ReadonlySet<string>;
+  /** Tasks linked to a requirement that has a milestone. */
+  milestoneLinkedTaskIds: ReadonlySet<string>;
+}
 
 export function projectTaskGraphNodes(
   tasks: readonly TaskOperationalState[],
   edges: readonly TaskGraphEdge[],
+  links: TaskGraphLinkFacts,
 ): TaskGraphNode[] {
   const statuses = new Map(
     tasks.map((task) => [task.taskId, task.recordedStatus]),
@@ -41,9 +72,9 @@ export function projectTaskGraphNodes(
         .map((blocker) => blocker.taskId)
         .sort(),
     );
-  // A dependent is unblocked by completing X when X is its only unmet
-  // prerequisite and its own status would then allow work. A prerequisite that
-  // is already terminal can never complete, so it unblocks nothing.
+  // A dependent is unblocked when X reaches review or completion as its only
+  // unmet prerequisite and its own status would then allow work. A terminal
+  // prerequisite can never move into review or completion, so it unblocks nothing.
   const unblocks = new Map<string, string[]>();
   for (const task of tasks) {
     const unmet = unmetById.get(task.taskId) ?? [];
@@ -69,11 +100,12 @@ export function projectTaskGraphNodes(
         operationalStatus: task.operationalStatus,
         assignedAgent: task.assignedAgent,
         milestoneIds: (task.milestones ?? []).map((m) => m.milestoneId).sort(),
+        milestoneGap: milestoneGap(task, links),
         unmetPrerequisiteIds: unmet,
         // The admission rule of ManageTaskDependencies.readiness, not a copy.
         ready: isTaskRunnable(task.recordedStatus) && unmet.length === 0,
-        terminal: isTerminalTaskStatus(task.recordedStatus),
-        waiting: !isTerminalTaskStatus(task.recordedStatus) && unmet.length > 0,
+        terminal: task.terminal,
+        waiting: !task.terminal && unmet.length > 0,
         needsAttention: task.attentionReasons.length > 0,
         completionUnblocks: (unblocks.get(task.taskId) ?? []).sort(),
       };
@@ -93,9 +125,7 @@ export function projectLongestDependencyChain(
   edges: readonly TaskGraphEdge[],
 ): string[] {
   const unfinished = new Set(
-    nodes
-      .filter((node) => !isTerminalTaskStatus(node.recordedStatus))
-      .map((node) => node.taskId),
+    nodes.filter((node) => !node.terminal).map((node) => node.taskId),
   );
   const dependents = new Map<string, string[]>();
   const waitingOn = new Map<string, number>();

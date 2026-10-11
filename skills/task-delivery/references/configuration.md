@@ -24,6 +24,7 @@ they are stricter.
 | Key                       | Meaning                                                                                       | Default when absent                                                                         |
 | ------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `integration_branch`      | Branch that task branches start from and merge into                                           | The remote's default branch                                                                 |
+| `knowledgePolicy`         | Knowledge retrieval policy for handoff and resume enrichment                                  | `auto`                                                                                      |
 | `verification.full`       | Command that must pass before handoff, at QA, and after merge                                 | The check command the repository documents; otherwise ask                                   |
 | `verification.targeted`   | Command template for a narrow test run while iterating                                        | The repository's test runner on the changed area                                            |
 | `git.worktree_required`   | `true` when each task must use an isolated workspace                                          | `false`                                                                                     |
@@ -34,11 +35,21 @@ they are stricter.
 | `task_lifecycle.review`   | Command that marks a task as in review, run when its pull request is open                     | None: the project's documented way, otherwise report                                        |
 | `task_lifecycle.complete` | Command that marks a task as done, used only after stage 11                                   | None: the project's documented way, otherwise report                                        |
 
+`knowledgePolicy` is a resolved input to knowledge retrieval: where nothing
+resolves it yet, the `auto` default above is descriptive only — applying the
+default and persisting the setup are owned by the configuration task.
+
+Five further keys steer the delivery itself: `checkpointFrequency`,
+`handoffMode`, `resumeDetail`, `knowledgePolicy`, and `contextThreshold`.
+They may sit in this file as a static fallback, and they are documented with
+the Runtime setup below.
+
 ## Types
 
 `integration_branch`, `verification.*`, `external_review.command`,
 `task_lifecycle.start`, `task_lifecycle.review`, and `task_lifecycle.complete`
-are non-empty strings.
+are non-empty strings. `knowledgePolicy` is one of the words `auto`,
+`required`, or `disabled`, written unquoted.
 `git.*` and `task_lifecycle.enabled` are booleans written unquoted (`true` or
 `false`). `verification`, `git`, `external_review`, and `task_lifecycle` are
 mappings; no other key is allowed at any level. To drop the configuration,
@@ -74,6 +85,80 @@ own diff and nothing else.
 
 In the `task_lifecycle` commands, `{task}` stands for the identifier of the
 task in the system that tracks it. Replace it before running the command.
+
+## Knowledge retrieval policy
+
+`knowledgePolicy` decides how a handoff or a resume uses read-only,
+task-linked knowledge from the project's knowledge store:
+
+- `disabled`: no retrieval and no knowledge section in the handoff.
+  References already recorded in a checkpoint stay listed as-is.
+- `auto` (the default): attempt `knowledge:task` for the task. When the
+  reported state is not connected, continue without knowledge and record a
+  one-line evidence note naming the state.
+- `required`: knowledge retrieval is mandatory; when the store is not
+  connected, the handoff or resume gate blocks with the typed error recorded
+  as evidence. Only the authorizer may lower the policy to proceed.
+
+Knowledge stays advisory under every value; no value makes retrieved
+knowledge a gate input, and no value writes anything back.
+
+## Runtime setup
+
+Five keys steer the delivery: `checkpointFrequency`, `handoffMode`,
+`resumeDetail`, `knowledgePolicy`, and `contextThreshold`. They resolve in
+this order:
+
+1. **Runtime setup**, when the project has a Runtime that answers: the
+   project stores its own defaults, with optional overrides per run and per
+   task. Read them with `delivery:setup:show`; a run or task scope adds
+   `--run <id>` or `--task <id>`, and both together resolve both overrides,
+   merged over the project defaults in the order project, then run, then
+   task — the narrowest scope wins. Write one key with
+   `delivery:setup:set --key <key> --value <json>`; a write names a single
+   scope, and `--value null` deletes the key.
+2. **This file**, as a static fallback for a project without a Runtime. The
+   same five keys are accepted here under the same value contract; a key
+   present in both places is read from the Runtime when one answers.
+3. **The built-in defaults** below, when neither answers.
+
+A Runtime that was not contacted is reported as not checked, never as
+unreachable, and it is never required: without it, the file and the defaults
+carry the same contract. From a checkout,
+`bun scripts/skills/setup-resolution.ts [--project <id>] [--task <id>] [--run <id>]`
+runs this whole resolution and prints one JSON line,
+`{schemaVersion: 1, source, values}`, for scripts and tests; `--task` and
+`--run` may be passed together and resolve both overrides. A configuration
+that breaks its contract exits 1 with the typed message on stderr instead of
+guessing around it. Pass `--project` when the project id is known (the
+delivery flow usually knows it): without it, the office CLI discovers the
+binding from the current directory, and a directory the binding cannot reach —
+a task worktree, for example — resolves through the file or the defaults
+instead of pretending the Runtime was checked.
+
+### Setup keys
+
+| Key                   | Values                                             | Default      | Meaning                                                                                                                                         |
+| --------------------- | -------------------------------------------------- | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `checkpointFrequency` | `every-gate`, `stage-boundaries`, `handoff-only`   | `every-gate` | When the implementation context publishes a checkpoint: at every gate, only at stage boundaries, or only when a handoff is prepared             |
+| `handoffMode`         | `offer`, `gate`                                    | `offer`      | `offer` asks at each trigger and never blocks; `gate` makes the handoff question part of the workflow — never a gate of any review              |
+| `resumeDetail`        | `brief`, `standard`, `full`                        | `standard`   | How much stage evidence a resuming context re-reads from the checkpoint before continuing, as [checkpoints](checkpoints.md) describes            |
+| `knowledgePolicy`     | `auto`, `required`, `disabled`                     | `auto`       | The resolved value feeds the knowledge retrieval policy above; it is the only setup key the handoff and resume gates consume                     |
+| `contextThreshold`    | a number from 0 to 1                               | 0.25         | Offers a handoff when the remaining context is estimated below this fraction; applies only where the executor can measure its remaining context  |
+
+The words are unquoted strings; `contextThreshold` is the one numeric key,
+written as plain digits with an optional decimal fraction (`0.25`), never
+quoted.
+
+### Guided setup
+
+On the first invocation, when no Runtime setup and no configuration value
+answers a setup key, ask for it instead of guessing: one question per key,
+offering the default above, through the executor's own question mechanism.
+Persist every answer with `delivery:setup:set` when a Runtime answers, or
+record it in `.task-delivery.yaml` when none does; the resolution order then
+keeps it for every later run. Asking is never blocking: a declined question
+keeps the default and needs nothing.
 
 ## Rules
 

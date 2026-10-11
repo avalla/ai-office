@@ -330,6 +330,71 @@ limits:
         description: "Final wording",
       });
 
+      // A requirement recorded without a milestone is reported and repairable
+      // exactly once; a milestone that is set never moves.
+      const orphan = await run([
+        "requirement:create",
+        "--project",
+        projectId,
+        "--key",
+        "REQ-ORPHAN",
+        "--title",
+        "Orphan",
+        "--description",
+        "No milestone",
+      ]);
+      expect(orphan.exitCode).toBe(0);
+      expect(orphan.stderr.join("\n")).toContain("has no milestone");
+      expect(
+        (
+          await run([
+            "requirement:create",
+            "--project",
+            projectId,
+            "--key",
+            "REQ-OWNED",
+            "--title",
+            "Owned",
+            "--description",
+            "Has a milestone",
+            "--milestone",
+            milestoneId,
+          ])
+        ).stderr,
+      ).toEqual([]);
+      const orphanId = orphan.stdout[0]!.replace("Requirement created: ", "");
+      const listed = await run(["requirement:list", "--project", projectId]);
+      expect(
+        listed.stdout
+          .join("\n")
+          .split("\n")
+          .filter((line) => line.includes("(no milestone)")),
+      ).toEqual([expect.stringContaining("REQ-ORPHAN")]);
+      const assign = (requirement: string) =>
+        run([
+          "requirement:assign-milestone",
+          "--project",
+          projectId,
+          "--requirement",
+          requirement,
+          "--milestone",
+          milestoneId,
+        ]);
+      expect((await assign(orphanId)).stdout).toEqual([
+        "Requirement milestone assigned.",
+      ]);
+      const again = await assign(orphanId);
+      expect(again.exitCode).toBe(1);
+      expect(again.stderr.join("\n")).toContain("cannot be changed");
+      const moved = await assign(requirementId);
+      expect(moved.exitCode).toBe(1);
+      expect(moved.stderr.join("\n")).toContain("cannot be changed");
+      expect(
+        (await run(["requirement:list", "--project", projectId])).stdout.join(
+          "\n",
+        ),
+      ).not.toContain("(no milestone)");
+
       expect(
         (
           await run([

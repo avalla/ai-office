@@ -29,10 +29,16 @@ import {
   OperationalEventBusFullError,
   type OperationalEventBus,
 } from "@ai-office/application/events/operational-event-bus.ts";
+import type { RuntimeStatus } from "@ai-office/application/protocol/daemon-protocol.ts";
 
 export interface QueryApiOptions {
   queries: OperationalQueryService;
   events: OperationalEventBus;
+  /**
+   * Runtime status behind `GET /api/status`. Optional so a daemon can be
+   * constructed without it, but the production bootstrap always supplies one.
+   */
+  status?: () => Promise<RuntimeStatus>;
   /** Interval between SSE keep-alive comments. */
   heartbeatMs?: number;
 }
@@ -90,12 +96,14 @@ function routeSegments(pathname: string): RouteMatch {
 export class QueryApi {
   private readonly queries: OperationalQueryService;
   private readonly events: OperationalEventBus;
+  private readonly status: (() => Promise<RuntimeStatus>) | undefined;
   private readonly heartbeatMs: number;
   private readonly streams = new Set<StreamSubscription>();
 
   constructor(options: QueryApiOptions) {
     this.queries = options.queries;
     this.events = options.events;
+    this.status = options.status;
     // Deliberately shorter than the shortest server idle timeout Bun
     // applies by default, so a quiet stream is never mistaken for a dead
     // connection. On a local socket the cost is one comment line.
@@ -148,6 +156,12 @@ export class QueryApi {
     const [first, second, third] = segments;
 
     if (first === "events" && segments.length === 1) return this.streamEvents();
+
+    if (first === "status" && segments.length === 1) {
+      if (this.status === undefined)
+        return errorResponse("NOT_FOUND", "Unknown query route", 404);
+      return json({ status: await this.status() });
+    }
 
     if (first === "dashboard" && segments.length === 1)
       return json({
