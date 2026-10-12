@@ -113,6 +113,9 @@ function textList(value: unknown, path: string): readonly string[] {
  * the manifest identifier rule and are unique.
  */
 function taskKindList(value: unknown, path: string): readonly string[] {
+  // An empty list is the normalized form of an omitted field (the shipped
+  // default kinds), so a parsed contract must survive being parsed again.
+  if (Array.isArray(value) && value.length === 0) return Object.freeze([]);
   const kinds = textList(value, path);
   kinds.forEach((kind, index) => {
     if (
