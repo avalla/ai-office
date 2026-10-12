@@ -53,6 +53,21 @@ describe("project instruction contract and compiler", () => {
     expect(parsed.project.taskKinds).toEqual([]);
   });
 
+  test("project.taskKinds rejects values that cannot resolve against an office manifest", () => {
+    for (const taskKinds of [
+      ["Civil_Matter"],
+      ["matter", "matter"],
+      ["matter\n- injected"],
+      ["a".repeat(65)],
+    ])
+      expect(() =>
+        parseProjectInstructionContract({
+          ...projectInstructionContractValue,
+          project: { ...projectInstructionContractValue.project, taskKinds },
+        }),
+      ).toThrow(InvalidProjectInstructionContractError);
+  });
+
   test("project.taskKinds accepts a manifest-declared custom list and still rejects unexpected project fields", () => {
     const parsed = parseProjectInstructionContract({
       ...projectInstructionContractValue,

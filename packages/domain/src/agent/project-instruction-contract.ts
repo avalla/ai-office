@@ -1,3 +1,8 @@
+import {
+  officeIdentifierMaxLength,
+  officeIdentifierPattern,
+} from "../office/office-manifest.ts";
+
 export type AgentReasoningStyle = "architecture_first";
 export type AgentAutonomy = "guided" | "high";
 export type ChangeAuthority = "autonomous" | "approval_required";
@@ -101,6 +106,30 @@ function textList(value: unknown, path: string): readonly string[] {
   return Object.freeze(
     value.map((item, index) => text(item, `${path}[${index}]`)),
   );
+}
+
+/**
+ * Task kinds must be resolvable against an office manifest, so they follow
+ * the manifest identifier rule and are unique.
+ */
+function taskKindList(value: unknown, path: string): readonly string[] {
+  const kinds = textList(value, path);
+  kinds.forEach((kind, index) => {
+    if (
+      kind.length > officeIdentifierMaxLength ||
+      !officeIdentifierPattern.test(kind)
+    )
+      throw new InvalidProjectInstructionContractError(
+        `${path}[${index}]`,
+        "expected a lowercase kebab-case task kind identifier",
+      );
+  });
+  if (new Set(kinds).size !== kinds.length)
+    throw new InvalidProjectInstructionContractError(
+      path,
+      "task kinds must be unique",
+    );
+  return kinds;
 }
 
 function boolean(value: unknown, path: string): boolean {
@@ -228,7 +257,7 @@ export function parseProjectInstructionContract(
       taskKinds:
         project.taskKinds === undefined
           ? Object.freeze([])
-          : textList(project.taskKinds, "$.project.taskKinds"),
+          : taskKindList(project.taskKinds, "$.project.taskKinds"),
     }),
   });
 }

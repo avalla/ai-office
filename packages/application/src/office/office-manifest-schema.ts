@@ -1,5 +1,9 @@
 import * as z from "zod";
-import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
+import {
+  officeIdentifierMaxLength,
+  officeIdentifierPattern,
+  type OfficeManifest,
+} from "@ai-office/domain/office/office-manifest.ts";
 import { agentOperations } from "@ai-office/domain/project/project-profile.ts";
 import { InvalidOfficeManifestError } from "../errors.ts";
 
@@ -7,11 +11,8 @@ const identifierSchema = z
   .string()
   .trim()
   .min(1)
-  .max(64)
-  .regex(
-    /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/,
-    "must be a lowercase kebab-case identifier",
-  );
+  .max(officeIdentifierMaxLength)
+  .regex(officeIdentifierPattern, "must be a lowercase kebab-case identifier");
 
 const shortTextSchema = z.string().trim().min(1).max(240);
 const longTextSchema = z.string().trim().min(1).max(2_000);
