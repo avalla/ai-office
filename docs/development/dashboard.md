@@ -261,8 +261,9 @@ what can run now, what is blocked and why, and what reaching review or completio
   its blocker count, and its first milestone (`+N` for more). Arrows point from
   a prerequisite to the task that needs it. Dashed amber edges are unmet
   prerequisites (neither completed nor in review), satisfied ones (completed or
-  in review) recede, the longest chain is thick red, and a
-  selected task's lineage is thick blue;
+  in review) recede, and the longest chain is thick red. For a selected
+  task, direct links are thick blue while transitive lineage context is
+  thin blue at lower opacity; unrelated edges recede;
 - graph nodes reduce visible detail as the user zooms out: full task detail at
   high zoom, title/status/ready or blocker state at medium zoom, and a compact
   title/state card with a state stripe at low zoom. Node dimensions and the
@@ -295,6 +296,9 @@ the computed layout and leaves a viewport the user moved alone on live refresh.
 Search counts every match but ranks only the eight displayed candidates.
 The lineage adjacency index and direct task relationships are reused across
 selections and fact-only refreshes when dependency edges are unchanged.
+The selected-task panel gives direct prerequisite and dependent counts beside
+the total upstream and downstream lineage counts. Edge styling classifies
+existing dependencies only; it does not alter graph relationships.
 The canvas lays out only when visible tasks plus visible dependency edges total
 at most 300. Dagre runs synchronously; a dense graph can cost much more than a
 chain with the same task count. When the budget is exceeded, an announced canvas
