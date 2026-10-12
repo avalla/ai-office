@@ -5740,9 +5740,9 @@ routing or worker queue. Future Pro deployment work remains in M15/M9 tracks.
 
 ## officeTaskKinds opens to any manifest-declared kind (2026-10-11 addendum)
 
-**Status: implemented**, at the user's explicit request and design choice,
-resolving M16.5 open decision 1
-(`docs/development/m16-5-domain-pack-runtime-activation-scope.md`).
+**Status: implemented** as a standalone change, at the user's explicit
+request and design choice. It does not deliver or approve M16.5: the roadmap's
+M16.5 scope, acceptance criteria and status are unchanged by it.
 
 **Decision.** `packages/domain/src/office/office-manifest.ts`'s
 `OfficeTaskKind` was a closed union of exactly five literal strings
