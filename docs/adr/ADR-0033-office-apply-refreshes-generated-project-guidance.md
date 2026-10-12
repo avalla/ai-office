@@ -16,7 +16,7 @@ task kinds that the generated skill does not list.
 Constraints that any fix must respect:
 
 - ADR-0012: file writes follow `inspect -> plan -> approve exact hash -> apply
-  -> validate`; unmanaged files are never overwritten.
+-> validate`; unmanaged files are never overwritten.
 - AGENTS.md: the Runtime host owns state, the client owns relative local
   filesystem semantics, and the daemon must not infer a caller's working
   directory or write to a caller's repository on its own.
