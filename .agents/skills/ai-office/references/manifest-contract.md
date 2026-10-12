@@ -65,7 +65,7 @@ earlier stages and is enforced from stable runtime agent identities.
 `requiresApproval` and prevents the assigned stage agent from deciding the
 gate.
 
-Allowed task kinds are `feature`, `bugfix`, `maintenance`, `research`, and `release`. Each kind can occur in `defaultFor` at most once across all pipelines.
+Task kinds are manifest-defined identifiers: lowercase kebab-case, at most 64 characters, such as `matter` or `civil-matter`. The shipped defaults are `feature`, `bugfix`, `maintenance`, `research`, and `release`; use them unless the project's work needs its own kinds. Each kind can occur in `defaultFor` at most once across all pipelines.
 
 Allowed permission preferences are `read_files`, `modify_files`, `run_tests`, `run_shell`, `install_dependencies`, `create_branches`, `create_commits`, and `network_access`. They record user intent only. They never create capability grants or authorize an operation.
 

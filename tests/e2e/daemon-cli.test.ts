@@ -604,7 +604,7 @@ profiles:
         ]);
         expect(applied.code).toBe(0);
         expect(applied.stderr.join("\n")).toContain(
-          "Generated project guidance refreshed.",
+          "Generated project guidance reconciled",
         );
         expect(readFileSync(skill, "utf8")).toContain("zz-custom-kind");
       } finally {
@@ -629,7 +629,11 @@ profiles:
         ]);
         expect(applied.code).toBe(0);
         expect(readFileSync(skill, "utf8")).toBe(userOwned);
-        expect(applied.stderr.join("\n")).toContain("finished with warnings");
+        // With an agent client detected install warns; without one it
+        // reports that it wrote nothing. Either way the skill is preserved.
+        expect(applied.stderr.join("\n")).toMatch(
+          /finished with warnings|\(0 file\(s\) updated\)/,
+        );
         const shown = await invoke(["office:show", "--project", projectId]);
         expect(shown.stdout.join("\n")).toContain("zz-custom-kind");
       } finally {

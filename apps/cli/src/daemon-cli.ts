@@ -343,25 +343,20 @@ async function refreshGeneratedGuidance(input: {
       );
       return;
     }
-    // Install exit codes cannot tell a preserved user-owned file from a
-    // refreshed one, so the lifecycle status is the authority on drift.
-    const status = await input.client.execute([
-      "status",
-      inspection.rootPath,
-      "--json",
-    ]);
-    const drifted = (
-      JSON.parse(status.stdout[0] ?? "{}") as {
-        issues?: { code?: unknown }[];
-      }
-    ).issues?.some(
-      (issue) => issue.code === "shared_project_artifacts_drifted",
-    );
-    if (drifted === true || exitCode === 2)
+    // A preserved user-owned skill and an already-current one are
+    // indistinguishable by exit code, so the message states only what install
+    // actually wrote.
+    const written = (
+      JSON.parse(response.stdout[0] ?? "{}") as { changes?: unknown[] }
+    ).changes?.length;
+    if (exitCode === 2)
       input.io.stderr(
         "The manifest revision was applied, but the generated guidance refresh finished with warnings. Run ai-office status . for details.",
       );
-    else input.io.stderr("Generated project guidance refreshed.");
+    else
+      input.io.stderr(
+        `Generated project guidance reconciled (${written ?? 0} file(s) updated).`,
+      );
   } catch {
     input.io.stderr(
       `The manifest revision was applied, but refreshing the generated guidance failed. ${recovery}`,
