@@ -201,10 +201,18 @@ describe("pipeline run", () => {
       bindingRevision: 2,
       definitionRevision: 3,
       selectedPacks: [
-        { id: "org.ai-office.legal", version: "0.2.0", manifestDigest: `sha256:${"b".repeat(64)}` },
+        {
+          id: "org.ai-office.legal",
+          version: "0.2.0",
+          manifestDigest: `sha256:${"b".repeat(64)}`,
+        },
       ],
       resolvedPacks: [
-        { id: "org.ai-office.legal", version: "0.2.0", manifestDigest: `sha256:${"b".repeat(64)}` },
+        {
+          id: "org.ai-office.legal",
+          version: "0.2.0",
+          manifestDigest: `sha256:${"b".repeat(64)}`,
+        },
       ],
     };
     const run = PipelineRun.create({
@@ -230,6 +238,58 @@ describe("pipeline run", () => {
     expect(run.snapshot().configurationPin).toEqual(pin);
     const restored = PipelineRun.restore(run.snapshot());
     expect(restored.snapshot().configurationPin).toEqual(pin);
+  });
+
+  test("never shares the pin's arrays or tuples with callers, snapshots or restored runs (P2, PR #168)", () => {
+    const tuple = {
+      id: "org.ai-office.legal",
+      version: "0.2.0",
+      manifestDigest: `sha256:${"b".repeat(64)}`,
+    };
+    const pin = {
+      configurationDigest: `sha256:${"a".repeat(64)}`,
+      coreContractVersion: 1,
+      bindingRevision: 2,
+      definitionRevision: 3,
+      selectedPacks: [{ ...tuple }],
+      resolvedPacks: [{ ...tuple }],
+    };
+    const run = PipelineRun.create({
+      id: "pipeline-run",
+      projectId: "project",
+      taskId: "task",
+      manifestRevisionId: "manifest",
+      manifestRevision: 1,
+      definition: pipeline,
+      startedBy: "operator",
+      stageRunIds: ["implementation-run", "review-run"],
+      configurationPin: pin,
+      now: new Date("2026-08-28T00:00:00.000Z"),
+    });
+    // Mutating the caller's input afterwards must not reach the aggregate.
+    pin.selectedPacks[0]!.version = "9.9.9";
+    pin.resolvedPacks.push({ ...tuple, id: "intruder" });
+    // Nor may mutating a snapshot, which is also what `restore` receives.
+    const snapshot = run.snapshot();
+    const mutable = snapshot.configurationPin as unknown as {
+      selectedPacks: { version: string }[];
+      resolvedPacks: unknown[];
+    };
+    mutable.selectedPacks[0]!.version = "8.8.8";
+    const restored = PipelineRun.restore(snapshot);
+    mutable.resolvedPacks.length = 0;
+
+    expect(run.snapshot().configurationPin).toEqual({
+      configurationDigest: `sha256:${"a".repeat(64)}`,
+      coreContractVersion: 1,
+      bindingRevision: 2,
+      definitionRevision: 3,
+      selectedPacks: [tuple],
+      resolvedPacks: [tuple],
+    });
+    expect(restored.snapshot().configurationPin?.resolvedPacks).toEqual([
+      tuple,
+    ]);
   });
 
   test("rejects an empty configuration digest", () => {

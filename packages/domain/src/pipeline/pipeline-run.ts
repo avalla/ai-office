@@ -92,11 +92,28 @@ function required(value: string, name: string): string {
   return normalized;
 }
 
-function requiredConfigurationPin(
+function clonePackIdentities(
+  packs: readonly PipelineRunConfigurationPackIdentity[],
+): readonly PipelineRunConfigurationPackIdentity[] {
+  return packs.map((pack) => ({ ...pack }));
+}
+
+/** The pin is immutable history: never share its arrays or tuples. */
+function cloneConfigurationPin(
   value: PipelineRunConfigurationPin,
 ): PipelineRunConfigurationPin {
   return {
     ...value,
+    selectedPacks: clonePackIdentities(value.selectedPacks),
+    resolvedPacks: clonePackIdentities(value.resolvedPacks),
+  };
+}
+
+function requiredConfigurationPin(
+  value: PipelineRunConfigurationPin,
+): PipelineRunConfigurationPin {
+  return {
+    ...cloneConfigurationPin(value),
     configurationDigest: required(
       value.configurationDigest,
       "Configuration digest",
@@ -172,13 +189,18 @@ export class PipelineRun {
       updatedAt: input.now,
       ...(input.configurationPin === undefined
         ? {}
-        : { configurationPin: requiredConfigurationPin(input.configurationPin) }),
+        : {
+            configurationPin: requiredConfigurationPin(input.configurationPin),
+          }),
     });
   }
 
   static restore(props: PipelineRunProps): PipelineRun {
     return new PipelineRun({
       ...props,
+      ...(props.configurationPin === undefined
+        ? {}
+        : { configurationPin: cloneConfigurationPin(props.configurationPin) }),
       stages: props.stages.map(cloneStage),
       createdAt: new Date(props.createdAt),
       updatedAt: new Date(props.updatedAt),
@@ -360,6 +382,13 @@ export class PipelineRun {
     return {
       ...this.props,
       definition: structuredClone(this.props.definition),
+      ...(this.props.configurationPin === undefined
+        ? {}
+        : {
+            configurationPin: cloneConfigurationPin(
+              this.props.configurationPin,
+            ),
+          }),
       stages: this.props.stages.map(cloneStage),
       createdAt: new Date(this.props.createdAt),
       updatedAt: new Date(this.props.updatedAt),
