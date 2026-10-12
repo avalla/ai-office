@@ -21,6 +21,10 @@ import {
   compileProjectSkill,
   managedProjectSkillMarker,
 } from "@ai-office/application/agent-client/project-skill-compiler.ts";
+import {
+  officeIdentifierMaxLength,
+  officeIdentifierPattern,
+} from "@ai-office/domain/office/office-manifest.ts";
 import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
 import {
   LocalAgentClientFiles,
@@ -164,7 +168,6 @@ function legacyState(file: LocalInstructionFile): AgentClientFileState {
 }
 
 const taskKindsLinePattern = /^Classify tasks as (.+) and resolve/mu;
-const taskKindIdentifier = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
 const taskKindsPlaceholder =
   "Classify tasks as <project task kinds> and resolve";
 
@@ -177,7 +180,14 @@ function declaredTaskKinds(content: string): string[] | undefined {
   const list = taskKindsLinePattern.exec(content)?.[1];
   if (list === undefined) return undefined;
   const kinds = list.split(/,\s*(?:or\s+)?|\s+or\s+/u);
-  return kinds.every((kind) => taskKindIdentifier.test(kind))
+  // Same constraints as the manifest and instruction-contract parsers: a list
+  // they would reject cannot be a generated projection.
+  return new Set(kinds).size === kinds.length &&
+    kinds.every(
+      (kind) =>
+        kind.length <= officeIdentifierMaxLength &&
+        officeIdentifierPattern.test(kind),
+    )
     ? kinds
     : undefined;
 }

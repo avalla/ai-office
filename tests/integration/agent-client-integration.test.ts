@@ -639,6 +639,23 @@ describe("agent client integrations", () => {
     expect(edited).toMatchObject({ integrationStatus: "drifted" });
     expect(edited?.unverified).toBeUndefined();
 
+    // Lists the manifest and contract parsers reject cannot be generated.
+    for (const list of [
+      "matter, matter, or release",
+      `${"a".repeat(65)} or b`,
+    ]) {
+      writeFileSync(
+        skillPath,
+        generated.replace(
+          /^Classify tasks as .+ and resolve/mu,
+          `Classify tasks as ${list} and resolve`,
+        ),
+      );
+      expect(
+        (await integration.inspect("codex", root)).skillInstructions,
+      ).toMatchObject({ integrationStatus: "drifted" });
+    }
+
     // A removed line is drift too.
     writeFileSync(
       skillPath,
