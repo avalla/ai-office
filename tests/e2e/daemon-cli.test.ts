@@ -532,6 +532,139 @@ profiles:
     }
   });
 
+  describe("office:apply refreshes generated guidance (ADR-0033)", () => {
+    const skillPath = [".agents", "skills", "ai-office", "SKILL.md"];
+
+    async function boot(prefix: string) {
+      const projectRoot = mkdtempSync(join(tmpdir(), prefix));
+      temporaryDirectories.push(projectRoot);
+      writeFileSync(join(projectRoot, "README.md"), "# Refresh\n");
+      const socket = createTestUnixSocket();
+      temporaryDirectories.push(socket.root);
+      const daemon = await bootstrap({
+        projectRoot,
+        socketPath: socket.socketPath,
+      });
+      const controller = new AbortController();
+      const running = daemon.start(controller.signal);
+      await waitForDaemon(socket.socketPath);
+      const invoke = async (args: string[], workingDirectory = projectRoot) => {
+        const output = captureIo();
+        const code = await runRuntimeCli(args, {
+          projectRoot,
+          workingDirectory,
+          socketPath: socket.socketPath,
+          io: output.io,
+        });
+        return { code, ...output };
+      };
+      const stop = async () => {
+        controller.abort();
+        await running;
+      };
+      return { projectRoot, invoke, stop };
+    }
+
+    function manifestWithKind(kind: string): string {
+      const manifest = JSON.parse(
+        readFileSync(
+          new URL(
+            "../../.agents/skills/ai-office/assets/default-office-manifest.json",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      ) as { pipelines: { id: string; defaultFor: string[] }[] };
+      manifest.pipelines.find((p) => p.id === "release")!.defaultFor.push(kind);
+      return JSON.stringify(manifest);
+    }
+
+    async function installed(
+      invoke: (args: string[]) => Promise<{ code: number; stdout: string[] }>,
+    ): Promise<string> {
+      const result = await invoke(["install", ".", "--json"]);
+      expect([0, 2]).toContain(result.code);
+      return (JSON.parse(result.stdout[0]!) as { project: { id: string } })
+        .project.id;
+    }
+
+    test("regenerates the repository skill after a successful apply from the bound repository", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-sync-");
+      try {
+        const projectId = await installed(invoke);
+        const skill = join(projectRoot, ...skillPath);
+        expect(readFileSync(skill, "utf8")).not.toContain("zz-custom-kind");
+
+        const applied = await invoke([
+          "office:apply",
+          "--project",
+          projectId,
+          "--manifest",
+          manifestWithKind("zz-custom-kind"),
+        ]);
+        expect(applied.code).toBe(0);
+        expect(applied.stderr.join("\n")).toContain(
+          "Generated project guidance refreshed.",
+        );
+        expect(readFileSync(skill, "utf8")).toContain("zz-custom-kind");
+      } finally {
+        await stop();
+      }
+    });
+
+    test("keeps the committed revision and reports warnings when an unmanaged skill blocks the refresh", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-blk-");
+      try {
+        const projectId = await installed(invoke);
+        const skill = join(projectRoot, ...skillPath);
+        const userOwned = "# my own skill, not managed by AI Office\n";
+        writeFileSync(skill, userOwned);
+
+        const applied = await invoke([
+          "office:apply",
+          "--project",
+          projectId,
+          "--manifest",
+          manifestWithKind("zz-custom-kind"),
+        ]);
+        expect(applied.code).toBe(0);
+        expect(readFileSync(skill, "utf8")).toBe(userOwned);
+        expect(applied.stderr.join("\n")).toContain("finished with warnings");
+        const shown = await invoke(["office:show", "--project", projectId]);
+        expect(shown.stdout.join("\n")).toContain("zz-custom-kind");
+      } finally {
+        await stop();
+      }
+    });
+
+    test("does not touch any repository when the caller is outside the bound project", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-out-");
+      const elsewhere = mkdtempSync(join(tmpdir(), "ai-office-apply-cwd-"));
+      temporaryDirectories.push(elsewhere);
+      try {
+        const projectId = await installed(invoke);
+        const skill = join(projectRoot, ...skillPath);
+        const before = readFileSync(skill, "utf8");
+
+        const applied = await invoke(
+          [
+            "office:apply",
+            "--project",
+            projectId,
+            "--manifest",
+            manifestWithKind("zz-custom-kind"),
+          ],
+          elsewhere,
+        );
+        expect(applied.code).toBe(0);
+        expect(applied.stderr).toEqual([]);
+        expect(readFileSync(skill, "utf8")).toBe(before);
+      } finally {
+        await stop();
+      }
+    });
+  });
+
   test("persists and resolves task-delivery setup over the socket with project autodiscovery", async () => {
     const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-delivery-setup-cli-"));
     temporaryDirectories.push(projectRoot);

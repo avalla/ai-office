@@ -292,6 +292,68 @@ async function resolveDiscoveredProject(
   return status.project.id;
 }
 
+function optionValue(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  return index === -1 ? undefined : args[index + 1];
+}
+
+/**
+ * ADR-0033: `office:apply` only persists a manifest revision. When the caller
+ * runs inside the repository bound to the applied project, the client then
+ * reconciles the generated guidance through the existing `install` flow. The
+ * revision is already committed, so a failed refresh is reported on stderr and
+ * never changes the apply exit code.
+ */
+async function refreshGeneratedGuidance(input: {
+  client: RuntimeClient;
+  bindings: ProjectBindingReader;
+  workingDirectory: string;
+  appliedProjectId: string | undefined;
+  io: CliIo;
+}): Promise<void> {
+  const recovery =
+    "Run ai-office install . from the repository to refresh the generated guidance.";
+  try {
+    const inspection = await input.bindings.inspect(input.workingDirectory, {
+      ancestors: true,
+    });
+    if (inspection.status !== "valid" || inspection.binding === undefined)
+      return;
+    let boundProjectId: string;
+    try {
+      boundProjectId = await resolveDiscoveredProject(
+        input.client,
+        inspection.rootPath,
+      );
+    } catch (error) {
+      // A binding this Runtime does not know is not this project's repository.
+      if (error instanceof ProjectBindingError) return;
+      throw error;
+    }
+    if (boundProjectId !== input.appliedProjectId) return;
+    const response = await input.client.execute([
+      "install",
+      inspection.rootPath,
+      "--json",
+    ]);
+    const exitCode = response.exitCode ?? 1;
+    if (exitCode === 0)
+      input.io.stderr("Generated project guidance refreshed.");
+    else if (exitCode === 2)
+      input.io.stderr(
+        "The manifest revision was applied, but the generated guidance refresh finished with warnings. Run ai-office status . for details.",
+      );
+    else
+      input.io.stderr(
+        `The manifest revision was applied, but refreshing the generated guidance failed. ${recovery}`,
+      );
+  } catch {
+    input.io.stderr(
+      `The manifest revision was applied, but refreshing the generated guidance failed. ${recovery}`,
+    );
+  }
+}
+
 export async function runRuntimeCli(
   args: string[],
   options: RuntimeCliOptions,
@@ -499,7 +561,18 @@ export async function runRuntimeCli(
         for (const line of stdout) io.stdout(line);
         for (const line of response.stderr) io.stderr(line);
 
-        if (response.prompt === undefined) return response.exitCode ?? 1;
+        if (response.prompt === undefined) {
+          const exitCode = response.exitCode ?? 1;
+          if (exitCode === 0 && commandArguments[0] === "office:apply")
+            await refreshGeneratedGuidance({
+              client,
+              bindings,
+              workingDirectory,
+              appliedProjectId: optionValue(commandArguments, "--project"),
+              io,
+            });
+          return exitCode;
+        }
         previousPromptContext = promptContext(response.stdout);
         answer = await prompt(response.prompt.message);
       }

@@ -1,6 +1,6 @@
 # ADR-0033: Refresh generated project guidance after `office:apply`
 
-- Status: Proposed (owner direction: option 3, design pending approval)
+- Status: Accepted (owner approved option 2 on 2026-10-12)
 - Date: 2026-10-12
 - Relates to: ADR-0012
 
@@ -39,7 +39,7 @@ Constraints that any fix must respect:
 3. **Read-only stale hint.** `office:apply` reports that the skill is stale
    and names the command to run. Smallest change, no automatic refresh.
 
-## Decision (proposed)
+## Decision
 
 Adopt option 2. `office:apply` remains a state-only Runtime command. The CLI
 client chains the existing plan/approve/apply flow for the bound repository
@@ -56,7 +56,12 @@ client adapters unchanged.
   refresh, declined refresh, unmanaged-file preservation, and a project with
   several bound roots.
 
-## Open question for the owner
+## Implementation notes
 
-Confirm option 2, or choose option 1 (not recommended) or 3. Implementation
-starts only after this ADR is accepted.
+- The refresh runs only when the caller's working directory resolves to a valid
+  binding whose project equals the applied project; otherwise nothing is
+  touched and nothing is printed.
+- It reuses `install`, so its approval is the same as a manual install.
+  Outcomes are reported on stderr: refreshed (exit 0), finished with warnings
+  (exit 2, for example an unmanaged skill that is preserved), or failed.
+- The `office:apply` exit code is never changed by the refresh.
