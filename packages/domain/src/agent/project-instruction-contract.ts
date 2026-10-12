@@ -1,6 +1,7 @@
 import {
   officeIdentifierMaxLength,
   officeIdentifierPattern,
+  officeTaskKindsMaxCount,
 } from "../office/office-manifest.ts";
 
 export type AgentReasoningStyle = "architecture_first";
@@ -131,6 +132,11 @@ function taskKindList(value: unknown, path: string): readonly string[] {
     throw new InvalidProjectInstructionContractError(
       path,
       "task kinds must be unique",
+    );
+  if (kinds.length > officeTaskKindsMaxCount)
+    throw new InvalidProjectInstructionContractError(
+      path,
+      `at most ${officeTaskKindsMaxCount} task kinds are allowed`,
     );
   return kinds;
 }

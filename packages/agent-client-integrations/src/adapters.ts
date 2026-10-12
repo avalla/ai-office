@@ -24,6 +24,7 @@ import {
 import {
   officeIdentifierMaxLength,
   officeIdentifierPattern,
+  officeTaskKindsMaxCount,
 } from "@ai-office/domain/office/office-manifest.ts";
 import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
 import {
@@ -183,6 +184,7 @@ function declaredTaskKinds(content: string): string[] | undefined {
   // Same constraints as the manifest and instruction-contract parsers: a list
   // they would reject cannot be a generated projection.
   return new Set(kinds).size === kinds.length &&
+    kinds.length <= officeTaskKindsMaxCount &&
     kinds.every(
       (kind) =>
         kind.length <= officeIdentifierMaxLength &&

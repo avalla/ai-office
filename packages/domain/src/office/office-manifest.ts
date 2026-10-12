@@ -21,6 +21,8 @@ export type OfficeTaskKind = string;
 /** Shape of every manifest identifier, including task kinds. */
 export const officeIdentifierPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 export const officeIdentifierMaxLength = 64;
+/** A manifest holds at most 16 pipelines with at most 5 `defaultFor` kinds each. */
+export const officeTaskKindsMaxCount = 16 * 5;
 
 export interface OfficeManifestProvenance {
   host: string;

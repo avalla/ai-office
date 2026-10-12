@@ -176,7 +176,7 @@ Load `office:context`, preserve current-manifest decisions that the user did not
 
 ## Operate a task
 
-Classify the request as `feature`, `bugfix`, `maintenance`, `research`, or `release`. Resolve the configured workflow with:
+Classify the request as one of the task kinds this project's manifest declares (the `defaultFor` entries of its pipelines in `office:context`; the shipped defaults are `feature`, `bugfix`, `maintenance`, `research`, and `release`). Resolve the configured workflow with:
 
 ```text
     ai-office office:pipeline --project <projectId> --task-kind <kind>

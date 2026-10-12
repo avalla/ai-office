@@ -643,6 +643,7 @@ describe("agent client integrations", () => {
     for (const list of [
       "matter, matter, or release",
       `${"a".repeat(65)} or b`,
+      `${Array.from({ length: 81 }, (_, i) => `k${i}`).join(", ")}, or k81`,
     ]) {
       writeFileSync(
         skillPath,
@@ -664,6 +665,18 @@ describe("agent client integrations", () => {
     expect(
       (await integration.inspect("codex", root)).skillInstructions,
     ).toMatchObject({ integrationStatus: "drifted" });
+  });
+
+  test("a contract with more task kinds than any manifest can declare is rejected (M16.5)", () => {
+    expect(() =>
+      parseProjectInstructionContract({
+        ...projectInstructionContractValue,
+        project: {
+          ...projectInstructionContractValue.project,
+          taskKinds: Array.from({ length: 81 }, (_, i) => `k${i}`),
+        },
+      }),
+    ).toThrow(/at most 80 task kinds/);
   });
 
   test("a stale task-kind line is repaired by a contract-aware plan (M16.5)", async () => {
