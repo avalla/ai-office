@@ -227,11 +227,12 @@ describe.skipIf(connectionString === undefined)(
     }
 
     // The handler runs on the host SystemClock, while the suite schedules with
-    // a fixed epoch; keep the schedule-time lease valid for the handler tick.
+    // a fixed epoch; keep the schedule-time lease valid for the handler tick by
+    // deriving the expiry from the wall clock, never from a fixed date.
     async function extendTaskLease(taskId: string) {
       await db.client.query(
         "UPDATE core.task_lock SET expires_at = $2 WHERE task_id = $1",
-        [taskId, new Date("2027-01-01T00:00:00.000Z")],
+        [taskId, new Date(Date.now() + 24 * 60 * 60 * 1000)],
       );
     }
 
@@ -581,14 +582,13 @@ describe.skipIf(connectionString === undefined)(
         (await f.pipelines.findById(pipelineRunId, f.projectId))?.snapshot()
           .status,
       ).toBe("active");
+      expect((await f.runtime.findRun(runId))?.snapshot().status).toBe(
+        "completed",
+      );
       expect(
-        (await f.runtime.findRun(runId))?.snapshot().status,
-      ).toBe("completed");
-      expect(
-        await db.client.query(
-          "SELECT status FROM core.task WHERE id = $1",
-          [f.dependentId],
-        ),
+        await db.client.query("SELECT status FROM core.task WHERE id = $1", [
+          f.dependentId,
+        ]),
       ).toEqual([{ status: "running" }]);
       expect(
         await db.client.query(
@@ -611,10 +611,9 @@ describe.skipIf(connectionString === undefined)(
       });
       expect(completed.snapshot().status).toBe("completed");
       expect(
-        await db.client.query(
-          "SELECT status FROM core.task WHERE id = $1",
-          [f.dependentId],
-        ),
+        await db.client.query("SELECT status FROM core.task WHERE id = $1", [
+          f.dependentId,
+        ]),
       ).toEqual([{ status: "completed" }]);
     });
 
