@@ -45,16 +45,24 @@ import {
   type PostgresTestDatabase,
 } from "../helpers/postgres-test-db.ts";
 
-// RRD-03: hermetic end-to-end coverage of the `run:tick` path (schedule ->
-// admit -> execute -> completeStageFromAgentRun) against PostgreSQL
-// repositories, focused on the prerequisite-exit race at the dependency gate.
+// RRD-03: hermetic end-to-end coverage of the `run:tick` path against
+// PostgreSQL repositories, focused on the prerequisite-exit race at the
+// dependency gate.
 //
-// The requirement's "via Unix-socket daemon where applicable" does not apply
-// here: the daemon cannot host PostgreSQL because storage is still partial
-// (StorageProviderIncompleteError). This suite therefore composes the same
-// application services that packages/runtime-host/src/commands/run.ts wires
-// for `run:tick`, against a dedicated database that is migrated in beforeAll
-// and dropped in afterAll (see tests/helpers/postgres-test-db.ts).
+// Two layers are covered, and the names say which:
+// - The "run:tick command ..." tests dispatch `run:tick` through
+//   executeRuntimeCommand (the dispatcher the daemon routes to), so the real
+//   handler in packages/runtime-host/src/commands/run.ts runs: claim-refusal
+//   tolerance, execution-control reservation release, the
+//   STAGE_AWAITING_PREREQUISITES translation, exit code and JSON report.
+// - The remaining tests compose the application services the handler wires
+//   (schedule -> admit -> execute -> completeStageFromAgentRun) directly, to
+//   assert storage-level state and typed errors.
+// Not covered: the Unix-socket transport. The daemon cannot host PostgreSQL
+// because storage is still partial (StorageProviderIncompleteError), so the
+// handler is driven in-process with a PostgreSQL-backed ProjectStorage. The
+// suite uses a dedicated database migrated in beforeAll and dropped in
+// afterAll (see tests/helpers/postgres-test-db.ts).
 //
 // The race is the one guarded by supabase/migrations/20261008000300: a
 // prerequisite leaving waiting_review takes the project's graph-edit advisory
