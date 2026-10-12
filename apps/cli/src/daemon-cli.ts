@@ -337,16 +337,31 @@ async function refreshGeneratedGuidance(input: {
       "--json",
     ]);
     const exitCode = response.exitCode ?? 1;
-    if (exitCode === 0)
-      input.io.stderr("Generated project guidance refreshed.");
-    else if (exitCode === 2)
-      input.io.stderr(
-        "The manifest revision was applied, but the generated guidance refresh finished with warnings. Run ai-office status . for details.",
-      );
-    else
+    if (exitCode !== 0 && exitCode !== 2) {
       input.io.stderr(
         `The manifest revision was applied, but refreshing the generated guidance failed. ${recovery}`,
       );
+      return;
+    }
+    // Install exit codes cannot tell a preserved user-owned file from a
+    // refreshed one, so the lifecycle status is the authority on drift.
+    const status = await input.client.execute([
+      "status",
+      inspection.rootPath,
+      "--json",
+    ]);
+    const drifted = (
+      JSON.parse(status.stdout[0] ?? "{}") as {
+        issues?: { code?: unknown }[];
+      }
+    ).issues?.some(
+      (issue) => issue.code === "shared_project_artifacts_drifted",
+    );
+    if (drifted === true || exitCode === 2)
+      input.io.stderr(
+        "The manifest revision was applied, but the generated guidance refresh finished with warnings. Run ai-office status . for details.",
+      );
+    else input.io.stderr("Generated project guidance refreshed.");
   } catch {
     input.io.stderr(
       `The manifest revision was applied, but refreshing the generated guidance failed. ${recovery}`,

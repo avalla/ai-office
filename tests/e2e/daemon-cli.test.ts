@@ -659,6 +659,14 @@ profiles:
         expect(applied.code).toBe(0);
         expect(applied.stderr).toEqual([]);
         expect(readFileSync(skill, "utf8")).toBe(before);
+
+        // The contract-aware lifecycle status still reports the stale skill.
+        const status = await invoke(["status", ".", "--json"]);
+        expect(
+          (
+            JSON.parse(status.stdout[0]!) as { issues: { code: string }[] }
+          ).issues.map((issue) => issue.code),
+        ).toContain("shared_project_artifacts_drifted");
       } finally {
         await stop();
       }
