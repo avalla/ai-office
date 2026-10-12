@@ -648,9 +648,8 @@ before supporting deletion; do not bypass the guard as a cleanup shortcut.
 
 ## Native Agent Knowledge & CairnKeep Retirement
 
-Status: AK-01–AK-11 merged. AK-12–AK-14 are registered per
-[ADR-0032](../adr/ADR-0032-categorized-multi-domain-agent-knowledge.md) and
-not yet planned or implemented.
+Status: AK-01–AK-11 merged. AK-12 (knowledge record lifecycle) is a candidate,
+not yet planned or registered.
 This is a separate, sequential migration milestone; M7.11 describes the
 historical CairnKeep retrieval path. See
 [ADR-0025](../adr/ADR-0025-native-agent-knowledge-store.md).
@@ -668,9 +667,6 @@ historical CairnKeep retrieval path. See
 | AK-09 | Managed Agent Knowledge configuration and SurrealDB deployment support       | AK-03–AK-05; AK-08 for final docs |
 | AK-10 | Durable project knowledge policy in agent guidance; `knowledge:search`       | AK-05, AK-08                      |
 | AK-11 | Governed non-run knowledge admission provenance                              | AK-05, AK-10                      |
-| AK-12 | Governed knowledge record lifecycle (`supersedes`/`retires`)                 | AK-11 merged                      |
-| AK-13 | Pack-declared qualified knowledge categories on records and plans            | AK-11 merged                      |
-| AK-14 | Category-aware knowledge retrieval honoring pack guidance bounds             | AK-13 merged                      |
 
 AK-01–AK-10 each map to one reviewed PR. AK-09 was delivered as one operational
 task with four delivery slices below, tracked by one requirement and task.
@@ -693,46 +689,6 @@ idempotent import of one bounded CairnKeep named scope, preserving its scope,
 key and content digest without inventing run provenance. Imported records and
 historical run retrieval evidence remain readable; external CairnKeep data is
 never deleted by AI Office. See the same guide.
-
-### AK-12–AK-14 — Categorized multi-domain agent knowledge
-
-**Status:** registered per
-[ADR-0032](../adr/ADR-0032-categorized-multi-domain-agent-knowledge.md);
-not yet planned or implemented. ADR-0032 presents its decisions in the order
-categories → lifecycle → retrieval; the AK numbering instead preserves the
-AK-12 lifecycle candidate name from the AK-11 review, and either order of
-AK-12 and AK-13 is admissible because lifecycle eligibility does not require
-categories.
-
-- **AK-12 — Governed knowledge record lifecycle.** Memories and decisions gain
-  `supersedes` and `retires` through a governed Runtime command (reviewable
-  plan, exact hash, operator approval, audit), never as free store operations.
-  Supersession eligibility replaces the broken task-ID comparison: same scope,
-  plan-named IDs, and at least one of same task, same qualified category on
-  both records, or same typed provenance instance; absent categories are never
-  equal and two records without a task are not eligible. Retirement is unary
-  with an audit-recorded rationale. Retrieval excludes superseded and retired
-  records.
-- **AK-13 — Pack-declared qualified categories.** Records carry an optional
-  typed `category` qualified as `packId/categoryLocalId`, admitted only from
-  the categories declared by the project's bound packs (GP-15
-  `KnowledgeContribution.category`) plus a closed core set. The category is
-  bound into the plan hash; plans without a category keep their existing
-  schemaVersion and hash (v1 for `agent_run`, v2 for non-run provenance), and
-  categorized plans use a new schemaVersion. Immutable knowledge records are
-  data, not definitions: they never block a pack upgrade, while new plans
-  naming a removed category are refused.
-- **AK-14 — Category-aware retrieval.** `findKnowledge` gains an optional
-  qualified-category filter and honors pack `retrieval` guidance
-  (`maxResults`, `categories`) as additional bounds, never as a relaxation of
-  port limits.
-
-**Non-goals (ADR-0032):** pack-seed admission (deferred until the GP-15
-contract defines how an opaque seed materializes into admissible content, then
-its own ADR adds the `pack_seed` provenance); semantic or vector search
-(separate decision); global or cross-repository memory; storing the
-regenerable code graph in the knowledge store — the code index is a separate
-subsystem that ADR-0032 delimits but does not design.
 
 ### AK-11 — Governed non-run knowledge admission provenance
 
@@ -773,8 +729,7 @@ portable snapshot is accepted while it is still the current review.
 
 **Deferred, found in review:**
 
-- AK-12 (registered per ADR-0032): `supersedeDecision` compares task IDs to
-  keep supersession
+- AK-12 candidate: `supersedeDecision` compares task IDs to keep supersession
   within one task, and two non-run decisions both have none, so it would treat
   them as the same task. No command reaches it today; supersede, relate and
   deprecate must define their rule for records without a task.
@@ -2276,7 +2231,11 @@ A [scope-proposal draft](m16-5-domain-pack-runtime-activation-scope.md) lays
 out the planned-contents table above alongside the open owner decisions it
 depends on (opening the closed `officeTaskKinds` list, the GP-16 run-gate
 split, GP-14B's M11.6 Phase B dependency, and which ADR-0026 clauses to target
-first). It is a proposal only; none of its content is approved.
+first). It is a proposal, with one delivered exception: the pin-only first
+slice, in which a pipeline run records the resolved pack-configuration
+identity it started under (migration 0051, no change to pipeline, stage or
+role selection), was explicitly requested and is implemented. The rest of the
+proposal is not approved.
 
 ## M17 — Execution Observability & Heterogeneous Actors Foundation
 
