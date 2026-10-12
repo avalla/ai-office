@@ -62,6 +62,13 @@ CREATE TRIGGER pipeline_run_configuration_pack_prevent_update
 BEFORE UPDATE ON pipeline_run_configuration_pack
 BEGIN SELECT RAISE(ABORT, 'pipeline run configuration pack pin is immutable'); END;
 
+-- Direct deletion is refused while the pinned run exists. The declared
+-- ON DELETE CASCADE removes the tuples only after its parent run is gone, so
+-- deleting a run or its project is not blocked.
 CREATE TRIGGER pipeline_run_configuration_pack_prevent_delete
 BEFORE DELETE ON pipeline_run_configuration_pack
+WHEN EXISTS (
+  SELECT 1 FROM pipeline_run
+  WHERE project_id = OLD.project_id AND id = OLD.pipeline_run_id
+)
 BEGIN SELECT RAISE(ABORT, 'pipeline run configuration pack pin is append-only'); END;

@@ -409,7 +409,7 @@ export class ManagePipelineRuns {
    * pipeline, stage or role the run above selects.
    *
    * Must be called from inside `this.transactions.run(...)` (see `start`):
-   * it uses `readWithinActiveTransaction`, which reads through the same
+   * it uses `readPinWithinActiveTransaction`, which reads through the same
    * open transaction instead of opening its own, so the pin reflects the
    * binding/definition revisions exactly as of the run insertion that
    * follows -- no commit boundary in between for a concurrent pack-binding
@@ -420,7 +420,7 @@ export class ManagePipelineRuns {
   ): Promise<PipelineRunConfigurationPin | undefined> {
     if (this.configuration === undefined) return undefined;
     const configuration =
-      await this.configuration.readWithinActiveTransaction(projectId);
+      await this.configuration.readPinWithinActiveTransaction(projectId);
     if (configuration.selectedPacks.length === 0) return undefined;
     return configuration.pin;
   }

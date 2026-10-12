@@ -33,19 +33,21 @@ export class ReadProjectConfiguration {
   }
 
   /**
-   * Same authoritative, staleness-checked read as `read()`, but assumes the
-   * caller already holds an active transaction opened by the same
-   * `TransactionRunner`/connection as `this.ports.transactions` (for example
-   * another application service resolving a configuration pin inside its
+   * The staleness-checked configuration pin, for a caller that already holds
+   * an active transaction opened by the same `TransactionRunner` as
+   * `this.ports.transactions` (for example a service pinning a run inside its
    * own write transaction). Opening a second transaction here would throw
    * `TransactionAlreadyActiveError`, and reading outside that transaction
-   * would reopen the race this staleness check exists to close.
+   * would reopen the race the staleness check exists to close.
+   *
+   * Provider binding is skipped: the pin is provider-independent, and gating
+   * a run on registered providers is a separate, deferred decision (GP-16).
    */
-  async readWithinActiveTransaction(
+  async readPinWithinActiveTransaction(
     projectId: string,
   ): Promise<ResolvedProjectConfiguration> {
     const revisions = await this.readRevisions(projectId);
-    return this.resolve(projectId, revisions);
+    return this.resolve(projectId, revisions, { bindProviders: false });
   }
 
   private async readRevisions(projectId: string): Promise<{
@@ -75,6 +77,7 @@ export class ReadProjectConfiguration {
       binding: Awaited<ReturnType<ProjectPackBindingRepository["get"]>>;
       definitions: Awaited<ReturnType<ProjectDefinitionRepository["get"]>>;
     },
+    options: { readonly bindProviders?: boolean } = {},
   ): ResolvedProjectConfiguration {
     return resolveProjectConfiguration({
       projectId,
@@ -82,6 +85,9 @@ export class ReadProjectConfiguration {
       definitions: revisions.definitions,
       catalog: this.ports.catalog,
       coreContractVersion: this.ports.catalog.coreContractVersion,
+      ...(options.bindProviders === undefined
+        ? {}
+        : { bindProviders: options.bindProviders }),
       ...(this.ports.providers === undefined
         ? {}
         : { providers: this.ports.providers }),

@@ -16,6 +16,9 @@ import type { TransactionRunner } from "@ai-office/application/ports/transaction
 import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
 import {
   computeArtifactDigest,
+  computeManifestDigest,
+  contributionKinds,
+  parseDomainPackManifest,
 } from "../../packages/domain-pack-contracts/src/index.ts";
 import { InMemoryInstalledDomainPackCatalog } from "@ai-office/runtime-host/installed-domain-pack-catalog.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
@@ -131,7 +134,7 @@ async function harness() {
     storage.taskDependencies,
     configuration,
   );
-  return { storage, catalog, configuration, binding, manager };
+  return { database, storage, catalog, configuration, binding, manager };
 }
 
 type Harness = Awaited<ReturnType<typeof harness>>;
@@ -229,6 +232,106 @@ describe("pipeline run configuration pin (M16.5 Runtime activation, first slice)
       manifestRevision: 1,
       stages: [{ stageId: "build", roleId: "developer", status: "active" }],
     });
+  });
+
+  test("pinning is provider-independent: a restored binding whose required operation has no provider still starts and pins (GP-16 run gate stays deferred)", async () => {
+    const h = await harness();
+    const projectId = "no-provider-project";
+    const taskId = "no-provider-task";
+    await seedProject(h, projectId, taskId);
+    const encoder = new TextEncoder();
+    const draft = {
+      schemaVersion: 1,
+      id: "org.example.needs-provider",
+      version: "1.0.0",
+      manifestDigest: `sha256:${"0".repeat(64)}`,
+      coreContract: { minInclusive: 1, maxExclusive: 3 },
+      metadata: { name: "needs-provider", description: "Pin fixture" },
+      dependencies: [],
+      contributions: {
+        ...Object.fromEntries(contributionKinds.map((kind) => [kind, []])),
+        roles: [{ id: "operator", capabilities: ["merge"] }],
+        capabilities: [
+          {
+            id: "merge",
+            operations: [{ operation: "x.merge", mode: "mutation" }],
+          },
+        ],
+      },
+    };
+    const bytes = encoder.encode(
+      JSON.stringify({
+        ...draft,
+        manifestDigest: computeManifestDigest(
+          parseDomainPackManifest(encoder.encode(JSON.stringify(draft))),
+        ),
+      }),
+    );
+    const pack = h.catalog.register({
+      bytes,
+      artifactDigest: computeArtifactDigest(bytes),
+      provenance: { installerId: "pin-fixture", reference: "needs-provider" },
+    });
+    // State that never passed a provider preflight, as after a restore.
+    await h.storage.packBindings.replace(projectId, 0, [pack], now);
+    await expect(h.configuration.read(projectId)).rejects.toMatchObject({
+      code: "missing_required_capability_provider",
+    });
+
+    const run = await h.manager.start({
+      projectId,
+      taskId,
+      pipelineId: "delivery",
+      principal: localOperatorPrincipal,
+    });
+    expect(run.snapshot().configurationPin).toMatchObject({
+      selectedPacks: [pack],
+      bindingRevision: 1,
+    });
+  });
+
+  test("pinned pack tuples are append-only, yet deleting the run still cascades them (P2, PR #168)", async () => {
+    const h = await harness();
+    const projectId = "cascade-project";
+    const taskId = "cascade-task";
+    await seedProject(h, projectId, taskId);
+    const bytes = readFileSync(
+      new URL(
+        "../../packages/domain-pack-legal/manifest.json",
+        import.meta.url,
+      ),
+    );
+    const pack = h.catalog.register({
+      bytes,
+      artifactDigest: computeArtifactDigest(bytes),
+      provenance: { installerId: "pin-fixture", reference: "legal" },
+    });
+    await h.storage.packBindings.replace(projectId, 0, [pack], now);
+    await h.manager.start({
+      projectId,
+      taskId,
+      pipelineId: "delivery",
+      principal: localOperatorPrincipal,
+    });
+    const tuples = () =>
+      h.database
+        .query("SELECT count(*) AS n FROM pipeline_run_configuration_pack")
+        .get() as { n: number };
+    expect(tuples().n).toBeGreaterThan(0);
+
+    // Direct tuple deletion stays refused while the run exists.
+    expect(() =>
+      h.database.exec("DELETE FROM pipeline_run_configuration_pack"),
+    ).toThrow(/append-only/);
+
+    // Deleting the run cascades to its tuples.
+    h.database.exec("PRAGMA foreign_keys = ON");
+    // The stage job the start enqueued references the stage run.
+    h.database.exec("DELETE FROM job_outbox");
+    h.database.exec(
+      `DELETE FROM pipeline_run WHERE project_id = '${projectId}'`,
+    );
+    expect(tuples().n).toBe(0);
   });
 
   test("pins nothing when the project has no pack selection, exactly like before this change", async () => {
@@ -374,9 +477,7 @@ describe("pipeline run configuration pin (M16.5 Runtime activation, first slice)
     // The persisted pin must be the one authoritative throughout that one
     // transaction (the pre-rebind selection), never a value torn between a
     // stale pre-transaction read and a later, superseded insert.
-    expect(run.snapshot().configurationPin).toEqual(
-      beforeConcurrentRebind.pin,
-    );
+    expect(run.snapshot().configurationPin).toEqual(beforeConcurrentRebind.pin);
     const afterConcurrentRebind = await h.configuration.read(projectId);
     expect(afterConcurrentRebind.selectedPacks).toEqual([]);
     expect(afterConcurrentRebind.pin).not.toEqual(beforeConcurrentRebind.pin);
