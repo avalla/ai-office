@@ -5846,6 +5846,22 @@ an upgrade were corrected to expect the four new columns as `NULL` (an
 `ALTER TABLE ADD COLUMN`'s unavoidable, harmless effect on existing rows'
 `SELECT *` shape, not a rewrite of their content).
 
+**Pin consistency under concurrent rebinding.** The pin is resolved and the run
+inserted in one transaction. On SQLite that transaction is `BEGIN IMMEDIATE`,
+so a rebinding from another connection is refused (`SQLITE_BUSY` once its busy
+timeout lapses) and a rebinding on the same connection raises
+`TransactionAlreadyActiveError`, rather than landing between the read and the
+insert. PostgreSQL runs at READ COMMITTED, so a rebinding could commit after
+the pin read and leave an unpinned run on a project that already had a pack
+binding. Its `insert` therefore creates the binding head row if absent, takes
+it `FOR SHARE` (the row `replace` locks `FOR UPDATE`), and fails closed if the
+binding then has any pack. The pin-unsupported error now covers both cases.
+Deterministic interleaving tests (hooks between the pin read and the insert,
+no sleeps): `tests/integration/pipeline-run-configuration-pin.test.ts` (SQLite,
+cross-connection and same-connection) and
+`tests/integration/pipeline-run-configuration-pin-postgres.test.ts` (real
+PostgreSQL with two connections, when `AI_OFFICE_TEST_POSTGRES_URL` is set).
+
 **Non-goals, unchanged.** No `officeTaskKinds` opening, no GP-16 run gate, no
 GP-24, no GP-14B, no PostgreSQL parity for this pin (explicitly fails closed
 instead), no pipeline/stage/role selection from a pack.

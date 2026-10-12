@@ -12,7 +12,10 @@ import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/rea
 import { ManageProjectPackBinding } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
-import type { TransactionRunner } from "@ai-office/application/ports/transaction-runner.port.ts";
+import {
+  TransactionAlreadyActiveError,
+  type TransactionRunner,
+} from "@ai-office/application/ports/transaction-runner.port.ts";
 import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
 import {
   computeArtifactDigest,
@@ -24,6 +27,7 @@ import { InMemoryInstalledDomainPackCatalog } from "@ai-office/runtime-host/inst
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
 import { createSqliteProjectStorage } from "@ai-office/storage-sqlite/sqlite-project-storage.ts";
+import { HookedPipelineRunRepository } from "../helpers/hooked-pipeline-run-repository.ts";
 
 const now = new Date("2026-10-11T00:00:00.000Z");
 
@@ -489,5 +493,142 @@ describe("pipeline run configuration pin (M16.5 Runtime activation, first slice)
     expect(restored?.snapshot().configurationPin).toEqual(
       beforeConcurrentRebind.pin,
     );
+  });
+
+  async function bindLegalPack(h: Harness, projectId: string) {
+    const bytes = readFileSync(
+      new URL(
+        "../../packages/domain-pack-legal/manifest.json",
+        import.meta.url,
+      ),
+    );
+    const pack = h.catalog.register({
+      bytes,
+      artifactDigest: computeArtifactDigest(bytes),
+      provenance: { installerId: "pin-fixture", reference: "legal" },
+    });
+    const preview = await h.binding.preview(projectId, [pack]);
+    await h.binding.apply({
+      projectId,
+      desired: [pack],
+      expectedRevision: preview.current.configurationRevision,
+      actorId: "operator",
+    });
+    return h.configuration.read(projectId);
+  }
+
+  function hookedManager(
+    h: Harness,
+    hooks: ConstructorParameters<typeof HookedPipelineRunRepository>[1],
+  ): ManagePipelineRuns {
+    const ids = new SequenceIds();
+    const clock = new FixedClock();
+    return new ManagePipelineRuns(
+      h.storage.officeManifests,
+      new HookedPipelineRunRepository(h.storage.pipelines, hooks),
+      h.storage.tasks,
+      h.storage.runtime,
+      new RecordAuditEvent(h.storage.auditEvents, ids, clock),
+      ids,
+      clock,
+      h.storage.transactions,
+      h.storage.jobOutbox,
+      h.storage.taskDependencies,
+      h.configuration,
+    );
+  }
+
+  test("a rebinding from another connection between the pin read and the run insert is refused until the run start commits, and the committed pin never changes", async () => {
+    const h = await harness();
+    const projectId = "pin-interleave-connection-project";
+    const taskId = "pin-interleave-connection-task";
+    await seedProject(h, projectId, taskId);
+    const bound = await bindLegalPack(h, projectId);
+
+    // A second connection to the same project database, as another process
+    // would hold. With no busy timeout, its write attempt reports the lock
+    // the run start holds instead of waiting for it.
+    const other = openDatabase(h.database.filename);
+    databases.push(other);
+    other.exec("PRAGMA busy_timeout = 0");
+    const otherStorage = createSqliteProjectStorage(other);
+    let otherId = 0;
+    const otherBinding = new ManageProjectPackBinding({
+      projects: otherStorage.projects,
+      definitions: otherStorage.definitions,
+      bindings: otherStorage.packBindings,
+      catalog: h.catalog,
+      auditEvents: otherStorage.auditEvents,
+      transactions: otherStorage.transactions,
+      clock: new FixedClock(),
+      ids: { generate: () => `other-${(otherId += 1)}` },
+    });
+    const unbind = () =>
+      otherBinding.apply({
+        projectId,
+        desired: [],
+        expectedRevision: bound.pin.bindingRevision,
+        actorId: "concurrent-writer",
+      });
+
+    const attempts: unknown[] = [];
+    const record = async () => {
+      attempts.push(await unbind().catch((error: unknown) => error));
+    };
+    const run = await hookedManager(h, {
+      beforeInsert: record,
+      afterInsert: record,
+    }).start({
+      projectId,
+      taskId,
+      pipelineId: "delivery",
+      principal: localOperatorPrincipal,
+    });
+
+    expect(attempts).toHaveLength(2);
+    for (const attempt of attempts)
+      expect(attempt).toMatchObject({ code: "SQLITE_BUSY" });
+    expect(run.snapshot().configurationPin).toEqual(bound.pin);
+
+    // After the commit the rebinding goes through, and the run keeps the pin
+    // that was authoritative when it was inserted.
+    await unbind();
+    expect((await h.configuration.read(projectId)).selectedPacks).toEqual([]);
+    const restored = await h.storage.pipelines.findById(
+      run.snapshot().id,
+      projectId,
+    );
+    expect(restored?.snapshot().configurationPin).toEqual(bound.pin);
+  });
+
+  test("a rebinding on the same connection during the run start is refused rather than joining its transaction", async () => {
+    const h = await harness();
+    const projectId = "pin-interleave-inprocess-project";
+    const taskId = "pin-interleave-inprocess-task";
+    await seedProject(h, projectId, taskId);
+    const bound = await bindLegalPack(h, projectId);
+
+    let attempt: unknown;
+    const run = await hookedManager(h, {
+      beforeInsert: async () => {
+        attempt = await h.binding
+          .apply({
+            projectId,
+            desired: [],
+            expectedRevision: bound.pin.bindingRevision,
+            actorId: "concurrent-writer",
+          })
+          .catch((error: unknown) => error);
+      },
+    }).start({
+      projectId,
+      taskId,
+      pipelineId: "delivery",
+      principal: localOperatorPrincipal,
+    });
+
+    expect(attempt).toBeInstanceOf(TransactionAlreadyActiveError);
+    expect(run.snapshot().configurationPin).toEqual(bound.pin);
+    expect((await h.configuration.read(projectId)).pin).toEqual(bound.pin);
   });
 });

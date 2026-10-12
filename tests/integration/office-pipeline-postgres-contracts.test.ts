@@ -164,9 +164,9 @@ describe.skipIf(connectionString === undefined)(
     test("fails closed on insert when a run carries a pack-configuration pin (M16.5 first slice, not yet supported here)", async () => {
       const fixture = await createFixture();
       const now = new Date("2026-09-22T00:00:00.000Z");
-      const projectId = "pin-unsupported-project";
-      const taskId = "pin-unsupported-task";
-      const manifestId = "pin-unsupported-manifest";
+      const projectId = "pipeline-project-pin-unsupported";
+      const taskId = "pipeline-project-pin-unsupported-task";
+      const manifestId = "pipeline-project-pin-unsupported-manifest";
       const definition = {
         id: "delivery",
         name: "Delivery",
@@ -226,14 +226,14 @@ describe.skipIf(connectionString === undefined)(
           appliedAt: now,
         });
         const run = PipelineRun.create({
-          id: "pin-unsupported-run",
+          id: "pipeline-project-pin-unsupported-run",
           projectId,
           taskId,
           manifestRevisionId: manifestId,
           manifestRevision: 1,
           definition,
           startedBy: "operator",
-          stageRunIds: ["pin-unsupported-stage"],
+          stageRunIds: ["pipeline-project-pin-unsupported-stage"],
           configurationPin: {
             configurationDigest: `sha256:${"e".repeat(64)}`,
             coreContractVersion: 1,
