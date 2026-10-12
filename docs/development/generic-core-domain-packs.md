@@ -5790,3 +5790,13 @@ shape validation (kebab-case) still applies.
 kind end to end against a real SQLite-backed project, that the legacy
 software kinds keep routing exactly as before, and that an undeclared kind
 still fails closed with `OfficePipelineNotFoundError`.
+
+**Generated guidance refresh.** The task kinds in the generated repository
+skill are derived from the authoritative manifest, like the project mission,
+constraints and workflow already are (ADR-0012). `office:apply` persists a
+manifest revision only; it does not rewrite caller-local generated files. A
+project onboarded with a different manifest than the one it was installed
+with must rerun `install` (or the client integration commands) to refresh the
+skill. Reconciling generated artifacts as part of `office:apply` would make
+the Runtime write caller-local files and is an architectural decision outside
+this change.
