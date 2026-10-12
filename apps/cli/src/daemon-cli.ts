@@ -343,19 +343,24 @@ async function refreshGeneratedGuidance(input: {
       );
       return;
     }
-    // A preserved user-owned skill and an already-current one are
-    // indistinguishable by exit code, so the message states only what install
-    // actually wrote.
-    const written = (
-      JSON.parse(response.stdout[0] ?? "{}") as { changes?: unknown[] }
-    ).changes?.length;
-    if (exitCode === 2)
+    const installed = JSON.parse(response.stdout[0] ?? "{}") as {
+      changes?: unknown[];
+      clients?: { configuration?: string }[];
+    };
+    // `clientIssues` hides unmanaged configurations of undetected clients, so
+    // exit 0 does not prove a user-owned skill was refreshed: it is preserved
+    // and still lacks the applied task kinds.
+    const preserved =
+      installed.clients?.some(
+        (client) => client.configuration === "unmanaged",
+      ) ?? false;
+    if (exitCode === 2 || preserved)
       input.io.stderr(
-        "The manifest revision was applied, but the generated guidance refresh finished with warnings. Run ai-office status . for details.",
+        `The manifest revision was applied, but the generated guidance refresh finished with warnings${preserved ? ": a user-owned AI Office file was preserved and may still list the previous task kinds" : ""}. Run ai-office status . for details.`,
       );
     else
       input.io.stderr(
-        `Generated project guidance reconciled (${written ?? 0} file(s) updated).`,
+        `Generated project guidance reconciled (${installed.changes?.length ?? 0} file(s) updated).`,
       );
   } catch {
     input.io.stderr(

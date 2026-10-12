@@ -602,6 +602,87 @@ describe("agent client integrations", () => {
     });
   });
 
+  test("contractless inspection flags a hand-edited task-kind line and marks exact kinds unverified (M16.5)", async () => {
+    const root = temporaryRoot("ai-office-client-skill-kind-drift-");
+    const integration = service();
+    const plan = await integration.plan({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    await integration.apply({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: plan.planHash,
+    });
+    const skillPath = join(root, codexProjectSkillPath);
+    const generated = readFileSync(skillPath, "utf8");
+
+    // A correctly generated list is only partially verified without a manifest.
+    expect(
+      (await integration.inspect("codex", root)).skillInstructions,
+    ).toMatchObject({
+      integrationStatus: "integrated",
+      unverified: ["task_kinds"],
+    });
+
+    // Hand-edited prose in place of the generated identifier list is drift.
+    writeFileSync(
+      skillPath,
+      generated.replace(
+        /^Classify tasks as .+ and resolve/mu,
+        "Classify tasks as whatever you like and resolve",
+      ),
+    );
+    const edited = (await integration.inspect("codex", root)).skillInstructions;
+    expect(edited).toMatchObject({ integrationStatus: "drifted" });
+    expect(edited?.unverified).toBeUndefined();
+
+    // A removed line is drift too.
+    writeFileSync(
+      skillPath,
+      generated.replace(/^Classify tasks as .+ and resolve/mu, "Resolve"),
+    );
+    expect(
+      (await integration.inspect("codex", root)).skillInstructions,
+    ).toMatchObject({ integrationStatus: "drifted" });
+  });
+
+  test("a stale task-kind line is repaired by a contract-aware plan (M16.5)", async () => {
+    const root = temporaryRoot("ai-office-client-skill-kind-stale-");
+    const integration = service();
+    const plan = await integration.plan({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+    });
+    await integration.apply({
+      clientId: "codex",
+      rootPath: root,
+      contract: projectInstructionContract,
+      approvedPlanHash: plan.planHash,
+    });
+    const legalContract = parseProjectInstructionContract({
+      ...projectInstructionContractValue,
+      project: {
+        ...projectInstructionContractValue.project,
+        taskKinds: ["matter"],
+      },
+    });
+    const stale = await integration.plan({
+      clientId: "codex",
+      rootPath: root,
+      contract: legalContract,
+    });
+    expect(stale.changes).toContainEqual(
+      expect.objectContaining({
+        kind: "update",
+        relativePath: codexProjectSkillPath,
+      }),
+    );
+  });
+
   test("preserves a user-owned Claude skill during install and uninstall", async () => {
     const root = temporaryRoot("ai-office-client-claude-user-skill-");
     const userSkill =

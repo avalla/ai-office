@@ -629,11 +629,12 @@ profiles:
         ]);
         expect(applied.code).toBe(0);
         expect(readFileSync(skill, "utf8")).toBe(userOwned);
-        // With an agent client detected install warns; without one it
-        // reports that it wrote nothing. Either way the skill is preserved.
-        expect(applied.stderr.join("\n")).toMatch(
-          /finished with warnings|\(0 file\(s\) updated\)/,
-        );
+        // Detected or not, a preserved user-owned skill must never be reported
+        // as a successful reconciliation.
+        const stderr = applied.stderr.join("\n");
+        expect(stderr).toContain("finished with warnings");
+        expect(stderr).toContain("user-owned AI Office file was preserved");
+        expect(stderr).not.toContain("Generated project guidance reconciled");
         const shown = await invoke(["office:show", "--project", projectId]);
         expect(shown.stdout.join("\n")).toContain("zz-custom-kind");
       } finally {
@@ -678,7 +679,9 @@ profiles:
   });
 
   test("persists and resolves task-delivery setup over the socket with project autodiscovery", async () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-delivery-setup-cli-"));
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-delivery-setup-cli-"),
+    );
     temporaryDirectories.push(projectRoot);
     writeFileSync(join(projectRoot, "README.md"), "# Setup\n");
     const socket = createTestUnixSocket();
@@ -828,7 +831,15 @@ profiles:
 
     expect(
       await runRuntimeCli(
-        ["delivery:setup:set", "--project", "p", "--key", "handoffMode", "--value", '"gate"'],
+        [
+          "delivery:setup:set",
+          "--project",
+          "p",
+          "--key",
+          "handoffMode",
+          "--value",
+          '"gate"',
+        ],
         {
           projectRoot,
           runtimePaths,

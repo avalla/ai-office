@@ -163,20 +163,36 @@ function legacyState(file: LocalInstructionFile): AgentClientFileState {
     : fileState(file, "absent", "missing");
 }
 
-const taskKindsLinePattern = /^Classify tasks as .+ and resolve/mu;
+const taskKindsLinePattern = /^Classify tasks as (.+) and resolve/mu;
+const taskKindIdentifier = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u;
+const taskKindsPlaceholder =
+  "Classify tasks as <project task kinds> and resolve";
+
+/**
+ * Parse the rendered list ("a", "a or b", "a, b, or c"). Returns undefined
+ * when the line is absent or is not a well-formed list of manifest task-kind
+ * identifiers, i.e. it was hand-edited or is not the generated rendering.
+ */
+function declaredTaskKinds(content: string): string[] | undefined {
+  const list = taskKindsLinePattern.exec(content)?.[1];
+  if (list === undefined) return undefined;
+  const kinds = list.split(/,\s*(?:or\s+)?|\s+or\s+/u);
+  return kinds.every((kind) => taskKindIdentifier.test(kind))
+    ? kinds
+    : undefined;
+}
 
 /**
  * The project skill's "Classify tasks as ..." line is manifest-dependent
- * (M16.5): `validate` has no project contract to recompute it from, so it
- * is normalized out of both sides before comparing against the
- * zero-argument (default-kinds) rendering, to avoid reporting a
- * correctly `apply`-d project-specific skill as drifted.
+ * (M16.5). The contractless `inspect`/`validate` path has no authoritative
+ * manifest to recompute it from, so the exact kinds cannot be verified
+ * there: everything else is compared exactly, the line is only checked to be
+ * a well-formed generated list, and the state says the task kinds were not
+ * verified. Contract-aware paths (`plan`, lifecycle `status`) compare the
+ * exact line against the manifest-derived rendering.
  */
 function normalizedProjectSkill(content: string): string {
-  return content.replace(
-    taskKindsLinePattern,
-    "Classify tasks as <project task kinds> and resolve",
-  );
+  return content.replace(taskKindsLinePattern, taskKindsPlaceholder);
 }
 
 function projectSkillState(file: LocalInstructionFile): AgentClientFileState {
@@ -188,11 +204,16 @@ function projectSkillState(file: LocalInstructionFile): AgentClientFileState {
     file.content === undefined
       ? undefined
       : normalizedProjectSkill(file.content);
-  return fileState(
+  const wellFormed =
+    file.content !== undefined && declaredTaskKinds(file.content) !== undefined;
+  const state = fileState(
     file,
     "ai_office_owned",
-    equivalentText(actual, expected) ? "integrated" : "drifted",
+    wellFormed && equivalentText(actual, expected) ? "integrated" : "drifted",
   );
+  return state.integrationStatus === "integrated"
+    ? { ...state, unverified: ["task_kinds"] }
+    : state;
 }
 
 interface ClaudeBridgeAnalysis {
