@@ -50,6 +50,7 @@ import {
   nodeSize,
   otherDependentIds,
   quickFilters,
+  relationshipEdgeKind,
   searchTasks,
   taskKey,
   toggleMilestoneFilter,
@@ -628,25 +629,17 @@ function TaskGraphCanvas({
   ]);
 
   const edges = useMemo<Edge[]>(() => {
-    const lineageScope =
-      selectedTask !== null && selectedLineage !== null
-        ? {
-            up: new Set([selectedTask.taskId, ...selectedLineage.upstream]),
-            down: new Set([selectedTask.taskId, ...selectedLineage.downstream]),
-          }
-        : null;
+
     if (tooLarge) return [];
     return visible.edges.map((edge) => {
       const edgeKey = graphEdgeKey(edge.dependsOnTaskId, edge.taskId);
       const unmet = unmetPairs.has(edgeKey);
-      const onLineage =
-        lineageScope !== null &&
-        ((lineageScope.up.has(edge.taskId) &&
-          lineageScope.up.has(edge.dependsOnTaskId)) ||
-          (lineageScope.down.has(edge.taskId) &&
-            lineageScope.down.has(edge.dependsOnTaskId)));
+      const relationship =
+        selectedTask === null || selectedLineage === null
+          ? null
+          : relationshipEdgeKind(edge, selectedTask.taskId, selectedLineage);
       const onChain = chainEdges.has(edgeKey);
-      const stroke = onLineage
+      const stroke = relationship !== null
         ? colour.lineage
         : onChain
           ? colour.chain
@@ -661,11 +654,26 @@ function TaskGraphCanvas({
         markerEnd: { type: MarkerType.ArrowClosed, color: stroke },
         style: {
           stroke,
-          strokeWidth: onLineage || onChain ? 3 : 1.5,
+          strokeWidth:
+            relationship === "direct"
+              ? 4
+              : relationship === "transitive"
+                ? 1.5
+                : onChain
+                  ? 3
+                  : 1.5,
           // Every unmet prerequisite stays dashed, even for a terminal task.
           strokeDasharray: unmet ? "6 4" : "none",
           opacity:
-            lineageScope !== null && !onLineage ? 0.12 : unmet ? 1 : 0.55,
+            relationship === "direct"
+              ? 1
+              : relationship === "transitive"
+                ? 0.45
+                : related !== null
+                  ? 0.12
+                  : unmet
+                    ? 1
+                    : 0.55,
         },
       };
     });
@@ -673,6 +681,7 @@ function TaskGraphCanvas({
     chainEdges,
     selectedLineage,
     selectedTask,
+    related,
     tooLarge,
     unmetPairs,
     visible.edges,
@@ -1612,8 +1621,10 @@ export function TaskPanel({
           </p>
         )}
         <p className="text-xs text-subtle tabular-nums">
-          {tree.upstream.size} upstream · {tree.downstream.size} downstream
-          (transitive)
+          {prerequisites.length} direct prerequisites · {dependents.length} direct dependents
+        </p>
+        <p className="text-xs text-subtle tabular-nums">
+          {tree.upstream.size} upstream · {tree.downstream.size} downstream total
         </p>
         <div className="flex flex-wrap gap-2">
           <Button asChild size="sm">
@@ -1848,8 +1859,9 @@ export function Legend() {
         </li>
         <li>{swatch(colour.chain, false, true)} thick red: longest chain</li>
         <li>
-          {swatch(colour.lineage, false, true)} thick blue: selected lineage
+          {swatch(colour.lineage, false, true)} thick blue: direct link to selected task
         </li>
+        <li>{swatch(colour.lineage)} thin blue: transitive lineage context</li>
         <li>Arrows point from a prerequisite to the task that needs it.</li>
         <li>Milestones appear as a label on each task.</li>
       </ul>
