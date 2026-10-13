@@ -1,6 +1,6 @@
 # ADR-0033: Refresh generated project guidance after `office:apply`
 
-- Status: Accepted (owner approved option 2 on 2026-10-12)
+- Status: Accepted (owner approved option 2 on 2026-10-12; approval model amended on 2026-10-13)
 - Date: 2026-10-12
 - Relates to: ADR-0012
 
@@ -28,23 +28,32 @@ Constraints that any fix must respect:
 1. **Daemon rewrites files inside `office:apply`.** Rejected. It bypasses the
    approved-hash flow, makes the Runtime write into client-owned paths, and
    couples a state transition to a filesystem side effect.
-2. **Client follows `office:apply` with the existing install plan/apply flow
+2. **Client follows `office:apply` with the existing `install` flow
    (recommended).** After the Runtime confirms the new revision, the CLI
-   (which owns local paths) runs `inspect -> plan` for the bound root. If the
-   plan only touches AI Office-managed artifacts it is presented with its
-   exact hash and applied on the usual approval; with `--yes`-style
-   non-interactive approval the hash is still bound. No new write path, no
-   daemon filesystem access. A failed or declined refresh leaves the revision
-   committed and reports the artifacts as drifted.
+   (which owns local paths) asks for approval and then runs `install` for the
+   bound root. No new write path, no daemon filesystem access. A failed or
+   declined refresh leaves the revision committed and reports the artifacts as
+   drifted.
 3. **Read-only stale hint.** `office:apply` reports that the skill is stale
    and names the command to run. Smallest change, no automatic refresh.
 
 ## Decision
 
 Adopt option 2. `office:apply` remains a state-only Runtime command. The CLI
-client chains the existing plan/approve/apply flow for the bound repository
-root after a successful apply, reusing `ManageSharedProjectArtifacts` and the
-client adapters unchanged.
+client chains the existing `install` flow for the bound repository root after
+a successful apply and an explicit approval, reusing `ManageSharedProjectArtifacts`
+and the client adapters unchanged.
+
+**Amendment (2026-10-13, owner decision).** The first draft bound the approval
+to an exact plan hash. `install` plans and applies internally and exposes no
+plan or hash, and adding one would be a new public Runtime contract. The owner
+chose to keep the existing contract: the approval is an explicit decision to
+run `ai-office install .` for the bound repository (an interactive `[y/N]`
+answer, or `--refresh-guidance`). It is not bound to a plan hash, so a
+concurrent change between approval and apply is not re-approved, and `install`
+may reconcile other AI Office-managed artifacts (for example `AI-OFFICE.md`),
+never user-owned files. Hash-bound approval for this refresh remains a possible
+follow-up that needs its own contract decision.
 
 ## Consequences
 
