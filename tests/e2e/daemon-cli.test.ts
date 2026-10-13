@@ -642,6 +642,28 @@ profiles:
       }
     });
 
+    test("does not warn when only a sibling instruction file is user-owned and the skill is refreshed", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-sib-");
+      try {
+        const projectId = await installed(invoke);
+        writeFileSync(join(projectRoot, "AI-OFFICE.md"), "# my own notes\n");
+        const applied = await invoke([
+          "office:apply",
+          "--project",
+          projectId,
+          "--manifest",
+          manifestWithKind("zz-custom-kind"),
+        ]);
+        expect(applied.code).toBe(0);
+        expect(readFileSync(join(projectRoot, ...skillPath), "utf8")).toContain(
+          "zz-custom-kind",
+        );
+        expect(applied.stderr.join("\n")).not.toContain("preserved");
+      } finally {
+        await stop();
+      }
+    });
+
     test("does not touch any repository when the caller is outside the bound project", async () => {
       const { projectRoot, invoke, stop } = await boot("ai-office-apply-out-");
       const elsewhere = mkdtempSync(join(tmpdir(), "ai-office-apply-cwd-"));

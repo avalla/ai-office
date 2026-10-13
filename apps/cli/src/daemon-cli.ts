@@ -1,5 +1,8 @@
 import { createInterface, type Interface } from "node:readline/promises";
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { managedProjectSkillMarker } from "@ai-office/application/agent-client/project-skill-compiler.ts";
+import { codexProjectSkillPath } from "@ai-office/agent-client-integrations/adapters.ts";
 import { isLocalVersionInvocation } from "@ai-office/command-support/version.ts";
 import { runVersionCli } from "./version-cli.ts";
 import { resolveCallerLocalPaths } from "@ai-office/command-support/caller-local-paths.ts";
@@ -345,15 +348,20 @@ async function refreshGeneratedGuidance(input: {
     }
     const installed = JSON.parse(response.stdout[0] ?? "{}") as {
       changes?: unknown[];
-      clients?: { configuration?: string }[];
     };
-    // `clientIssues` hides unmanaged configurations of undetected clients, so
-    // exit 0 does not prove a user-owned skill was refreshed: it is preserved
-    // and still lacks the applied task kinds.
-    const preserved =
-      installed.clients?.some(
-        (client) => client.configuration === "unmanaged",
-      ) ?? false;
+    // Exit 0 does not prove a user-owned skill was refreshed (`clientIssues`
+    // hides unmanaged configurations of undetected clients), and a client
+    // reported as unmanaged may still own a managed skill. Inspect the skill
+    // files themselves: a skill without the managed marker was preserved.
+    const skillFile = join(inspection.rootPath, codexProjectSkillPath);
+    let preserved = false;
+    try {
+      preserved =
+        existsSync(skillFile) &&
+        !readFileSync(skillFile, "utf8").includes(managedProjectSkillMarker);
+    } catch {
+      preserved = false;
+    }
     if (exitCode === 2 || preserved)
       input.io.stderr(
         `The manifest revision was applied, but the generated guidance refresh finished with warnings${preserved ? ": a user-owned AI Office file was preserved and may still list the previous task kinds" : ""}. Run ai-office status . for details.`,
