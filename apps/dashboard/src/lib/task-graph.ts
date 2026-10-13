@@ -172,6 +172,61 @@ function graphNeighborhoodFromIndex(
   return { taskIds, edgeKeys };
 }
 
+export const reducedPreviewTaskLimit = 40;
+
+/** A bounded, explicitly edge-free navigation view for an oversized graph. */
+export function reducedOperationalPreview(
+  visible: VisibleGraph,
+  selectedTaskId: string | null,
+): VisibleGraph {
+  const limit = reducedPreviewTaskLimit;
+  const rank = (task: TaskGraphNode) =>
+    task.needsAttention
+      ? 0
+      : task.ready
+        ? 1
+        : task.operationalStatus === "in_progress"
+          ? 2
+          : task.waiting
+            ? 3
+            : task.terminal
+              ? 5
+              : 4;
+  const compare = (a: TaskGraphNode, b: TaskGraphNode) =>
+    rank(a) - rank(b) ||
+    b.priority - a.priority ||
+    a.taskId.localeCompare(b.taskId);
+  const top: TaskGraphNode[] = [];
+  // Keep only the best few nodes; never sort the whole project on the UI thread.
+  for (const task of visible.tasks) {
+    if (top.length === limit && compare(task, top[top.length - 1]!) >= 0)
+      continue;
+    const index = top.findIndex((current) => compare(task, current) < 0);
+    top.splice(index === -1 ? top.length : index, 0, task);
+    if (top.length > limit) top.pop();
+  }
+  const selected =
+    selectedTaskId === null
+      ? undefined
+      : visible.tasks.find((task) => task.taskId === selectedTaskId);
+  if (
+    selected !== undefined &&
+    !top.some((task) => task.taskId === selectedTaskId)
+  ) {
+    if (top.length === limit) top.pop();
+    // Kept whatever its rank, but placed where the ranking puts it, so the
+    // announced order ("ready and needs-attention first") stays true.
+    const index = top.findIndex((current) => compare(selected, current) < 0);
+    top.splice(index === -1 ? top.length : index, 0, selected);
+  }
+  return {
+    tasks: top,
+    edges: [],
+    hiddenTaskCount:
+      visible.hiddenTaskCount + visible.tasks.length - top.length,
+  };
+}
+
 export function filterGraph(
   graph: TaskGraph,
   filters: GraphFilters,
