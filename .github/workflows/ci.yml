@@ -90,7 +90,8 @@ jobs:
             tests/integration/storage-bootstrap-postgres.test.ts \
             tests/integration/pack-manifest-nul-policy.test.ts \
             tests/integration/legacy-development-profile-postgres.test.ts \
-            tests/integration/pack-capability-contracts.test.ts
+            tests/integration/pack-capability-contracts.test.ts \
+            tests/integration/run-tick-postgres-e2e.test.ts
 
   queue-e2e:
     name: Redis queue E2E
