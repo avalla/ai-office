@@ -2415,82 +2415,64 @@ boundary; later tasks must implement it without silently changing existing
 project semantics. This roadmap direction does not itself select an
 implementation or authorize work on M11-M18.
 
-## Adaptive Agent Learning — Proposed future milestone (number TBD)
+## M20 — Adaptive Agent Learning (proposed)
 
-Status: **proposal only** (2026-10-12). No implementation, training run,
-fine-tuning availability commitment, or authoritative Runtime milestone/task
-creation is implied by this roadmap entry. Scope and priority need owner approval.
+Status: **proposed** (registered 2026-10-13). Runtime milestone
+`56d58da2-129f-46a6-92fd-f17bbeda4272` (status `planned`) with requirements
+AL-01–AL-05 and five linked tasks. Governed by
+[ADR-0034](../adr/ADR-0034-adaptive-agent-learning-experience-governance.md)
+(proposed). Full slice definitions, incremental plan, Runtime IDs and open
+questions live in
+[adaptive-agent-learning.md](adaptive-agent-learning.md); this section
+summarizes. No implementation, training run, fine-tuning availability
+commitment, or governance change is authorized by this entry.
 
 Goal: make AI Office improve future agent outcomes from **verified** execution
 experience, without confusing advisory knowledge, executable governance, and
 model weights. Learning is provider-neutral and domain-neutral, supporting
 software, legal, research, and mixed-domain offices with isolation boundaries.
 
-### Four distinct learning surfaces
+Four learning surfaces, strictly separated: L1 knowledge retrieval through the
+optional SurrealDB-backed `AgentKnowledgeStore` (exists, advisory);
+L2 procedural skills and instructions (exists, versioned and reviewed);
+L3 experience evaluation and optimization (does not exist); L4 model
+adaptation via curated SFT/preference datasets and LoRA on compatible
+open-weight models (does not exist). LoRA and fine-tuning never replace the
+knowledge store, and training availability is capability-detected per provider
+and model — never assumed for frontier Claude or OpenAI models.
 
-1. **Knowledge (L1)**: scoped facts, decisions, provenance, expiry and
-   versioning through the optional SurrealDB-backed AgentKnowledgeStore.
-   This remains advisory and never replaces ProjectStorage authority.
-2. **Procedures (L2)**: candidate skills, instructions and playbooks,
-   versioned and explicitly reviewed before adoption.
-3. **Optimization (L3)**: evals, ranked experiences, model/strategy routing
-   and outcome-based improvements, always behind governance and benchmarks.
-4. **Model adaptation (L4)**: optional curated SFT/preference datasets,
-   LoRA for compatible open-weight models, and managed fine-tuning only for
-   specific provider/model offerings that actually support it. No assumption
-   that frontier Claude or OpenAI models accept LoRA or fine-tuning.
+Delivery slices (Runtime requirements AL-01–AL-05, dependency chain
+AL-01 → AL-02 → AL-03 → AL-04 → AL-05):
 
-### Proposed delivery slices (AL-01–AL-05)
+- **AL-01 — Experience Store & Provenance.** Immutable, provenance-rich
+  experience records with project/tenant/domain scopes, run/task linkage,
+  artifact references, evaluation evidence, supersession, redaction and
+  retention rules.
+- **AL-02 — Experience Evaluation & Admission.** Typed evaluators, tracked
+  uncertainty, quarantine of unverified lessons, explicit reviewed admission.
+- **AL-03 — Training Dataset Curation.** Datasets from admitted experiences
+  only, with de-duplication, sanitization, lineage, versioned splits and
+  leakage-resistant holdouts; no cross-project sharing by default.
+- **AL-04 — Pluggable Fine-Tuning & LoRA Backends.** Provider-neutral
+  `FineTuningBackend` port, open-weight LoRA first, reproducible jobs,
+  budgets, artifact hashing and rollback.
+- **AL-05 — Benchmark, Model Registry & Safe Rollout.** Comparative
+  benchmarks on held-out historical tasks (correctness, missed defects,
+  recovery, latency, total tokens and **cost per successful task**),
+  registry with owner-approved promotion and instant rollback. Benchmark and
+  dataset quality criteria must exist before any training starts.
 
-- **AL-01 — Experience Store and contracts.** Immutable, provenance-rich
-  experience records: project/tenant/domain scopes, run/task linkage,
-  input/output artifact references, versioned evaluation evidence, timestamps,
-  confidence, supersession, redaction and retention rules. Do not turn
-  telemetry or a merged PR into an automatically trusted lesson.
-- **AL-02 — Experience Evaluator.** Evaluate tests, independent reviews,
-  human decisions and actual task outcomes; track uncertainty and conflicting
-  evidence; reject unverified lessons; preserve audit trail and explicit
-  reviewed admission. Support domain-specific evaluators via generic ports.
-- **AL-03 — Dataset curation/export.** Export only authorized, approved,
-  de-duplicated and sanitized examples for SFT/preference datasets, with
-  licenses/consent, lineage, versioned splits and leakage-resistant holdouts.
-  No cross-project training data sharing by default.
-- **AL-04 — Pluggable adaptation backends.** Provider-neutral interfaces for
-  open-weight LoRA training and supported managed fine-tuning services;
-  reproducible jobs, budgets, model/adapter registry and rollback. Availability
-  is capability-detected, not assumed for OpenAI/Anthropic frontier models.
-  Training is optional; RAG and skill retrieval continue working without it.
-- **AL-05 — Evaluation and rollout.** Compare baseline vs RAG+skills vs
-  specialist adaptation on held-out historical tasks. Measure correctness,
-  missed defects, recovery, latency, total tokens and **cost per successful
-  task**, not just scores. Require owner-approved promotion and instant
-  rollback, with no automatic changes to authorization or approval policy.
+Hard boundaries: training and retrieval cannot modify approvals, capability
+grants, task authority, audit history or policy gates; learned content is
+untrusted until admitted; tenant/project isolation, secret scanning and
+example retraction are requirements, not optional hardening. Learning scopes
+are Project, Domain and Global with explicit verified promotion; Global is
+never a covert tenant-data-sharing channel.
 
-### Learning scopes and hard boundaries
-
-- **Project**: project-specific knowledge and solutions.
-- **Domain**: generalized, reviewed reusable practices across explicitly
-  authorized projects of the same domain.
-- **Global**: generic strategies promoted only following redaction, rights
-  checks and explicit governance; never a covert tenant-data-sharing channel.
-
-Training and retrieval cannot modify approvals, capability grants, task
-authority, audit history or policy gates. Learned content is untrusted until
-its admission criteria are satisfied. Data protection, secret scanning,
-tenant/project isolation, and ability to retract or supersede examples are
-requirements, not optional hardening.
-
-### Sequence, dependencies and initial experiment
-
-First approve an ADR defining trust boundaries, authoritative owners,
-experience schema, evaluator semantics and opt-in sharing. Implement
-AL-01/AL-02 and benchmark the existing retrieval/skills path before deciding
-whether AL-03/AL-04 warrant engineering effort. A narrow pilot could evaluate
-PostgreSQL concurrency-review triage or structured task handoffs, using held-out
-historical cases rather than training and testing on the same PRs.
-
-Expected integration points: AgentKnowledgeStore/ADR-0030 and ADR-0031,
-Runtime execution and audit, M19 handoff/continuity, and future Domain Packs.
-These are integration boundaries, **not** a claim that M19 or M16.5 depends on
-this proposal. No new code, model training or provider commitment is authorized
-by this section.
+Integration boundaries — not dependency claims: `AgentKnowledgeStore`
+(ADR-0025/0030/0032), Runtime execution and audit, model routing (ADR-0019),
+Domain Packs (ADR-0026), and the Runtime milestone M19 — Execution
+Continuity & Handoff (`active`). The roadmap has no dedicated M19 section
+yet; that gap is recorded here rather than silently documenting another
+milestone. No new code, model training or provider commitment is authorized
+by this entry.
