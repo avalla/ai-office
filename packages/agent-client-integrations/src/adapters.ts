@@ -129,6 +129,14 @@ function isProjectSkillManaged(file: LocalInstructionFile): boolean {
   return hasManagedSkillMarker(file, managedProjectSkillMarker);
 }
 
+/** The adapter's own ownership rule for the shared project skill, by content. */
+export function isManagedProjectSkillContent(content: string): boolean {
+  return hasManagedSkillMarker(
+    { content } as LocalInstructionFile,
+    managedProjectSkillMarker,
+  );
+}
+
 function isClaudeSkillManaged(file: LocalInstructionFile): boolean {
   return hasManagedSkillMarker(file, claudeSkillMarker);
 }

@@ -5795,9 +5795,10 @@ still fails closed with `OfficePipelineNotFoundError`.
 skill are derived from the authoritative manifest, like the project mission,
 constraints and workflow already are (ADR-0012). `office:apply` still persists a
 manifest revision only, as a Runtime command. When it succeeds and the caller
-runs inside the repository bound to the applied project, the CLI client then
-reconciles the generated artifacts through the existing `install` flow
-(ADR-0033). A blocked or failed refresh never undoes the revision; it is
+runs inside the repository bound to the applied project, the CLI client offers
+to reconcile the generated artifacts through the existing `install` flow
+(ADR-0033); the refresh runs only after approval, either an interactive answer
+or `--refresh-guidance`, and otherwise the files stay untouched. A blocked or failed refresh never undoes the revision; it is
 reported on stderr and `ai-office install .` repairs it. Callers that use the
 Runtime directly, or run from outside the bound repository, still refresh with
 `install` or the client integration commands.

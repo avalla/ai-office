@@ -1,8 +1,10 @@
 import { createInterface, type Interface } from "node:readline/promises";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { managedProjectSkillMarker } from "@ai-office/application/agent-client/project-skill-compiler.ts";
-import { codexProjectSkillPath } from "@ai-office/agent-client-integrations/adapters.ts";
+import {
+  codexProjectSkillPath,
+  isManagedProjectSkillContent,
+} from "@ai-office/agent-client-integrations/adapters.ts";
 import { isLocalVersionInvocation } from "@ai-office/command-support/version.ts";
 import { runVersionCli } from "./version-cli.ts";
 import { resolveCallerLocalPaths } from "@ai-office/command-support/caller-local-paths.ts";
@@ -313,6 +315,11 @@ async function refreshGeneratedGuidance(input: {
   workingDirectory: string;
   appliedProjectId: string | undefined;
   io: CliIo;
+  /** Explicit non-interactive approval (`--refresh-guidance`). */
+  approved: boolean;
+  /** True when a person can answer: a test prompt or a terminal. */
+  interactive: boolean;
+  prompt: (message: string) => Promise<string>;
 }): Promise<void> {
   const recovery =
     "Run ai-office install . from the repository to refresh the generated guidance.";
@@ -334,6 +341,24 @@ async function refreshGeneratedGuidance(input: {
       throw error;
     }
     if (boundProjectId !== input.appliedProjectId) return;
+    // ADR-0033: the refresh rewrites repository files, so it needs approval:
+    // the explicit flag, or an interactive answer. Without either the
+    // revision stays committed and the files stay untouched.
+    let approved = input.approved;
+    if (!approved && input.interactive)
+      approved = /^y(es)?$/iu.test(
+        (
+          await input.prompt(
+            "Refresh the generated project guidance in this repository now (runs ai-office install .)? [y/N] ",
+          )
+        ).trim(),
+      );
+    if (!approved) {
+      input.io.stderr(
+        `The manifest revision was applied; the generated guidance was not refreshed. ${recovery} Or rerun office:apply with --refresh-guidance.`,
+      );
+      return;
+    }
     const response = await input.client.execute([
       "install",
       inspection.rootPath,
@@ -358,7 +383,7 @@ async function refreshGeneratedGuidance(input: {
     try {
       preserved =
         existsSync(skillFile) &&
-        !readFileSync(skillFile, "utf8").includes(managedProjectSkillMarker);
+        !isManagedProjectSkillContent(readFileSync(skillFile, "utf8"));
     } catch {
       preserved = false;
     }
@@ -557,7 +582,17 @@ export async function runRuntimeCli(
       return projectStatusExitCode(status.health);
     }
 
-    const prepared = await resolvedArguments(args, workingDirectory, bindings);
+    // `--refresh-guidance` is a client-only approval (ADR-0033); the Runtime
+    // never sees it.
+    const refreshApproved =
+      args[0] === "office:apply" && args.includes("--refresh-guidance");
+    const prepared = await resolvedArguments(
+      refreshApproved
+        ? args.filter((argument) => argument !== "--refresh-guidance")
+        : args,
+      workingDirectory,
+      bindings,
+    );
     const commandArguments =
       prepared.discoveredRoot === undefined
         ? prepared.args
@@ -593,6 +628,11 @@ export async function runRuntimeCli(
               workingDirectory,
               appliedProjectId: optionValue(commandArguments, "--project"),
               io,
+              approved: refreshApproved,
+              interactive:
+                io.prompt !== undefined ||
+                (process.stdin.isTTY === true && process.stdout.isTTY === true),
+              prompt,
             });
           return exitCode;
         }

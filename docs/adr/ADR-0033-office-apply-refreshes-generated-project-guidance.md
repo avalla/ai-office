@@ -61,7 +61,13 @@ client adapters unchanged.
 - The refresh runs only when the caller's working directory resolves to a valid
   binding whose project equals the applied project; otherwise nothing is
   touched and nothing is printed.
-- It reuses `install`, so its approval is the same as a manual install.
-  Outcomes are reported on stderr: refreshed (exit 0), finished with warnings
-  (exit 2, for example an unmanaged skill that is preserved), or failed.
+- The refresh rewrites repository files, so it requires approval before it
+  runs: an interactive `[y/N]` answer, or the client-only
+  `--refresh-guidance` flag for non-interactive callers (never sent to the
+  Runtime). Without approval the revision stays committed, the files stay
+  untouched, and the recovery command is printed. Once approved it reuses
+  `install`, which plans and applies for the bound root exactly like a manual
+  install. Outcomes are reported on stderr: reconciled (exit 0), finished with
+  warnings (exit 2, or a user-owned skill that is preserved, decided from the
+  skill file with the adapter's own ownership predicate), or failed.
 - The `office:apply` exit code is never changed by the refresh.

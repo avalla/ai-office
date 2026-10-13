@@ -548,8 +548,12 @@ profiles:
       const controller = new AbortController();
       const running = daemon.start(controller.signal);
       await waitForDaemon(socket.socketPath);
-      const invoke = async (args: string[], workingDirectory = projectRoot) => {
-        const output = captureIo();
+      const invoke = async (
+        args: string[],
+        workingDirectory = projectRoot,
+        answers: string[] = [],
+      ) => {
+        const output = captureIo(answers);
         const code = await runRuntimeCli(args, {
           projectRoot,
           workingDirectory,
@@ -601,6 +605,7 @@ profiles:
           projectId,
           "--manifest",
           manifestWithKind("zz-custom-kind"),
+          "--refresh-guidance",
         ]);
         expect(applied.code).toBe(0);
         expect(applied.stderr.join("\n")).toContain(
@@ -626,6 +631,7 @@ profiles:
           projectId,
           "--manifest",
           manifestWithKind("zz-custom-kind"),
+          "--refresh-guidance",
         ]);
         expect(applied.code).toBe(0);
         expect(readFileSync(skill, "utf8")).toBe(userOwned);
@@ -653,12 +659,79 @@ profiles:
           projectId,
           "--manifest",
           manifestWithKind("zz-custom-kind"),
+          "--refresh-guidance",
         ]);
         expect(applied.code).toBe(0);
         expect(readFileSync(join(projectRoot, ...skillPath), "utf8")).toContain(
           "zz-custom-kind",
         );
         expect(applied.stderr.join("\n")).not.toContain("preserved");
+      } finally {
+        await stop();
+      }
+    });
+
+    test("leaves the files untouched when the refresh is not approved", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-no-");
+      try {
+        const projectId = await installed(invoke);
+        const skill = join(projectRoot, ...skillPath);
+        const before = readFileSync(skill, "utf8");
+        const args = [
+          "office:apply",
+          "--project",
+          projectId,
+          "--manifest",
+          manifestWithKind("zz-custom-kind"),
+        ];
+
+        const declined = await invoke(args, projectRoot, ["n"]);
+        expect(declined.code).toBe(0);
+        expect(declined.prompts.join("\n")).toContain("Refresh the generated");
+        expect(declined.stderr.join("\n")).toContain("was not refreshed");
+        expect(readFileSync(skill, "utf8")).toBe(before);
+
+        const status = await invoke(["status", ".", "--json"]);
+        expect(
+          (
+            JSON.parse(status.stdout[0]!) as { issues: { code: string }[] }
+          ).issues.map((issue) => issue.code),
+        ).toContain("shared_project_artifacts_drifted");
+
+        const accepted = await invoke(
+          [
+            ...args.slice(0, 3),
+            "--manifest",
+            manifestWithKind("zz-custom-kind-2"),
+          ],
+          projectRoot,
+          ["y"],
+        );
+        expect(accepted.code).toBe(0);
+        expect(accepted.stderr.join("\n")).toContain("reconciled");
+        expect(readFileSync(skill, "utf8")).toContain("zz-custom-kind-2");
+      } finally {
+        await stop();
+      }
+    });
+
+    test("treats a skill with relocated marker text as preserved, like the adapter", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-mk-");
+      try {
+        const projectId = await installed(invoke);
+        const skill = join(projectRoot, ...skillPath);
+        writeFileSync(skill, `my notes first\n${readFileSync(skill, "utf8")}`);
+        const applied = await invoke([
+          "office:apply",
+          "--project",
+          projectId,
+          "--manifest",
+          manifestWithKind("zz-custom-kind"),
+          "--refresh-guidance",
+        ]);
+        expect(applied.code).toBe(0);
+        expect(applied.stderr.join("\n")).toContain("was preserved");
+        expect(applied.stderr.join("\n")).not.toContain("reconciled");
       } finally {
         await stop();
       }
