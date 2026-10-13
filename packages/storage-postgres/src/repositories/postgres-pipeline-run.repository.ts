@@ -1,4 +1,7 @@
-import type { PipelineRunRepository } from "@ai-office/application/ports/pipeline-run-repository.port.ts";
+import {
+  PipelineRunConfigurationPinUnsupportedError,
+  type PipelineRunRepository,
+} from "@ai-office/application/ports/pipeline-run-repository.port.ts";
 import {
   PipelineRun,
   type PipelineOverrideRecord,
@@ -111,18 +114,12 @@ function override(row: OverrideRow): PipelineOverrideRecord {
  * run's pack-configuration pin (no column or table exists for it here,
  * unlike SQLite). Rather than silently drop the pin, `insert` fails closed,
  * both for a run that carries a pin and for a run whose project has a
- * nonempty pack binding when the insert commits.
+ * nonempty pack binding when the insert commits. The application-level base
+ * class lets the Runtime render it without importing this package.
  */
-export class PostgresPipelineRunConfigurationPinUnsupportedError extends Error {
+export class PostgresPipelineRunConfigurationPinUnsupportedError extends PipelineRunConfigurationPinUnsupportedError {
   constructor(pipelineRunId: string, reason: "pin" | "bound_packs" = "pin") {
-    super(
-      reason === "pin"
-        ? `PipelineRun ${pipelineRunId} has a configuration pin, which the ` +
-            "PostgreSQL PipelineRunRepository does not yet support persisting"
-        : `PipelineRun ${pipelineRunId} belongs to a project with a pack ` +
-            "binding, whose configuration pin the PostgreSQL " +
-            "PipelineRunRepository does not yet support persisting",
-    );
+    super(pipelineRunId, reason);
     this.name = "PostgresPipelineRunConfigurationPinUnsupportedError";
   }
 }

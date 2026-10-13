@@ -167,6 +167,7 @@ import type { ProjectStorage } from "@ai-office/application/ports/project-storag
 import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import { DomainPackCatalogError } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import { StaleProjectPackBindingError } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
+import { PipelineRunConfigurationPinUnsupportedError } from "@ai-office/application/ports/pipeline-run-repository.port.ts";
 import {
   ProjectDefinitionConflictError,
   ProjectDefinitionPayloadShapeError,
@@ -438,6 +439,9 @@ function formatKnownError(error: unknown): string | null {
   // operator repairs the row in the database, so the procedure is named too.
   if (error instanceof ProjectDefinitionPayloadShapeError)
     return `${error.message}. Classify the row with the query in supabase/README.md and repair it as that section describes.`;
+  // Names only the run id; the guidance is the operator's two ways forward.
+  if (error instanceof PipelineRunConfigurationPinUnsupportedError)
+    return `${error.message}. PostgreSQL project storage cannot store pipeline run configuration pins yet, so a project with bound packs cannot start a pipeline run there. Use SQLite project storage for this project, or unbind its packs with project:pack:apply --packs '[]' before starting the run.`;
   if (
     error instanceof CliUsageError ||
     error instanceof DomainPackCatalogError ||
