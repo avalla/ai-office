@@ -2414,3 +2414,65 @@ architectural choice is ready, an ADR. The accepted M16 ADR records the pack
 boundary; later tasks must implement it without silently changing existing
 project semantics. This roadmap direction does not itself select an
 implementation or authorize work on M11-M18.
+
+## M20 — Adaptive Agent Learning (proposed)
+
+Status: **proposed** (registered 2026-10-13). Runtime milestone
+`56d58da2-129f-46a6-92fd-f17bbeda4272` (status `planned`) with requirements
+AL-01–AL-05 and five linked tasks. Governed by
+[ADR-0034](../adr/ADR-0034-adaptive-agent-learning-experience-governance.md)
+(proposed). Full slice definitions, incremental plan, Runtime IDs and open
+questions live in
+[adaptive-agent-learning.md](adaptive-agent-learning.md); this section
+summarizes. No implementation, training run, fine-tuning availability
+commitment, or governance change is authorized by this entry.
+
+Goal: make AI Office improve future agent outcomes from **verified** execution
+experience, without confusing advisory knowledge, executable governance, and
+model weights. Learning is provider-neutral and domain-neutral, supporting
+software, legal, research, and mixed-domain offices with isolation boundaries.
+
+Four learning surfaces, strictly separated: L1 knowledge retrieval through the
+optional SurrealDB-backed `AgentKnowledgeStore` (exists, advisory);
+L2 procedural skills and instructions (exists, versioned and reviewed);
+L3 experience evaluation and optimization (does not exist); L4 model
+adaptation via curated SFT/preference datasets and LoRA on compatible
+open-weight models (does not exist). LoRA and fine-tuning never replace the
+knowledge store, and training availability is capability-detected per provider
+and model — never assumed for frontier Claude or OpenAI models.
+
+Delivery slices (Runtime requirements AL-01–AL-05, dependency chain
+AL-01 → AL-02 → AL-03 → AL-04 → AL-05):
+
+- **AL-01 — Experience Store & Provenance.** Immutable, provenance-rich
+  experience records with project/tenant/domain scopes, run/task linkage,
+  artifact references, evaluation evidence, supersession, redaction and
+  retention rules.
+- **AL-02 — Experience Evaluation & Admission.** Typed evaluators, tracked
+  uncertainty, quarantine of unverified lessons, explicit reviewed admission.
+- **AL-03 — Training Dataset Curation.** Datasets from admitted experiences
+  only, with de-duplication, sanitization, lineage, versioned splits and
+  leakage-resistant holdouts; no cross-project sharing by default.
+- **AL-04 — Pluggable Fine-Tuning & LoRA Backends.** Provider-neutral
+  `FineTuningBackend` port, open-weight LoRA first, reproducible jobs,
+  budgets, artifact hashing and rollback.
+- **AL-05 — Benchmark, Model Registry & Safe Rollout.** Comparative
+  benchmarks on held-out historical tasks (correctness, missed defects,
+  recovery, latency, total tokens and **cost per successful task**),
+  registry with owner-approved promotion and instant rollback. Benchmark and
+  dataset quality criteria must exist before any training starts.
+
+Hard boundaries: training and retrieval cannot modify approvals, capability
+grants, task authority, audit history or policy gates; learned content is
+untrusted until admitted; tenant/project isolation, secret scanning and
+example retraction are requirements, not optional hardening. Learning scopes
+are Project, Domain and Global with explicit verified promotion; Global is
+never a covert tenant-data-sharing channel.
+
+Integration boundaries — not dependency claims: `AgentKnowledgeStore`
+(ADR-0025/0030/0032), Runtime execution and audit, model routing (ADR-0019),
+Domain Packs (ADR-0026), and the Runtime milestone M19 — Execution
+Continuity & Handoff (`active`). The roadmap has no dedicated M19 section
+yet; that gap is recorded here rather than silently documenting another
+milestone. No new code, model training or provider commitment is authorized
+by this entry.

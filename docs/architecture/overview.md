@@ -544,6 +544,13 @@ the same trusted scope, used to find existing records before a new plan. The
 agent-facing [durable project knowledge policy](../development/agent-knowledge.md#durable-project-knowledge-policy-ak-10)
 decides what may be proposed; it adds no write path.
 
+The proposed M20 — Adaptive Agent Learning milestone treats this store as
+the L1 knowledge surface and adds L3 experience evaluation plus optional L4
+fine-tuning behind separate governance; learning never makes this store
+authoritative. See
+[ADR-0034](../adr/ADR-0034-adaptive-agent-learning-experience-governance.md)
+and the [M20 plan](../development/adaptive-agent-learning.md).
+
 ## Operational read models
 
 Operational state is computed once, in the application layer, and published as

@@ -508,3 +508,14 @@ return them. Historical run retrieval provenance remains readable through
 `run:show`. Neither the Runtime nor AK-08 deletes the external CairnKeep store.
 Unimported scopes must be retained and reviewed separately outside AI Office.
 See the [historical project memory record](project-memory.md).
+
+## Future direction
+
+The proposed M20 — Adaptive Agent Learning milestone builds on this store
+without changing its contract: L3 experience evaluation admits verified
+records into retrieval, L2 skills and optional L4 fine-tuning, and LoRA or
+fine-tuning never replace the knowledge store. The knowledge store stays
+advisory and non-authoritative under any learning outcome. See
+[ADR-0034](../adr/ADR-0034-adaptive-agent-learning-experience-governance.md),
+the [M20 plan](adaptive-agent-learning.md) and the
+[roadmap M20 section](roadmap.md#m20--adaptive-agent-learning-proposed).
