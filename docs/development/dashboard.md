@@ -302,7 +302,11 @@ existing dependencies only; it does not alter graph relationships.
 The canvas lays out only when visible tasks plus visible dependency edges total
 at most 300. Dagre runs synchronously; a dense graph can cost much more than a
 chain with the same task count. When the budget is exceeded, an announced canvas
-message asks the user to narrow the view. Canvas-only controls are disabled.
+message offers a reduced task preview. It shows up to 40 matching tasks, with
+needs-attention and ready work first, and always includes a selected task. The
+preview omits dependency arrows and says so; closing it returns to the
+over-budget message. The user can also narrow the view with ordinary filters.
+Canvas-only controls are disabled while the over-budget message is shown.
 The whole-project summary counts remain exact. Search can locate any task;
 ready, attention, and longest dependency chain lists are available in pages of
 25 rather than thousands of DOM nodes at once. Lists for a selected task also
