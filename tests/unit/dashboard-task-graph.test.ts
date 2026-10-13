@@ -21,6 +21,8 @@ import {
   hiddenCompletedPrerequisiteCounts,
   graphEdgeKey,
   graphNodeDetail,
+  reducedOperationalPreview,
+  reducedPreviewTaskLimit,
   layoutGraph,
   lineage,
   relationshipEdgeKind,
@@ -138,6 +140,51 @@ describe("dashboard task graph", () => {
     expect(graphNodeDetail(1.75)).toBe("full");
   });
 
+  test("oversized graphs get a bounded operational preview without implied edges", () => {
+    const tasks = Array.from({ length: 350 }, (_, index) =>
+      node(`task-${String(index).padStart(3, "0")}`, {
+        ready: index < 300,
+        needsAttention: index === 340,
+        priority: index === 341 ? 10 : 0,
+      }),
+    );
+    const edges = tasks.slice(1).map((task, index) => ({
+      taskId: task.taskId,
+      dependsOnTaskId: tasks[index]!.taskId,
+    }));
+    const full = { tasks, edges, hiddenTaskCount: 0 };
+    expect(exceedsLayoutLimit(full.tasks.length, full.edges.length)).toBe(true);
+
+    const preview = reducedOperationalPreview(full, "task-349");
+    expect(preview.tasks).toHaveLength(reducedPreviewTaskLimit);
+    expect(preview.edges).toEqual([]);
+    expect(preview.hiddenTaskCount).toBe(350 - reducedPreviewTaskLimit);
+    expect(preview.tasks.map((task) => task.taskId)).toContain("task-349");
+    expect(preview.tasks.map((task) => task.taskId)).toContain("task-340");
+    // The force-kept selection joins the ranked order; it does not jump the
+    // queue ahead of the needs-attention and higher-priority ready tasks.
+    const previewIds = preview.tasks.map((task) => task.taskId);
+    expect(previewIds[0]).toBe("task-340");
+    expect(previewIds.indexOf("task-349")).toBeGreaterThan(
+      previewIds.indexOf("task-341"),
+    );
+    expect(exceedsLayoutLimit(preview.tasks.length, preview.edges.length)).toBe(
+      false,
+    );
+
+    const withoutReady = reducedOperationalPreview(
+      {
+        ...full,
+        tasks: tasks.map((task) => ({
+          ...task,
+          ready: false,
+          needsAttention: false,
+        })),
+      },
+      null,
+    );
+    expect(withoutReady.tasks).toHaveLength(reducedPreviewTaskLimit);
+  });
   test("hides completed work by default but keeps counts exact", () => {
     const visible = filterGraph(graph, defaultGraphFilters);
     expect(ids(visible.tasks)).toEqual(["a", "b", "c", "d", "lone"]);
@@ -192,6 +239,177 @@ describe("dashboard task graph", () => {
       hiddenCompletedPrerequisiteCounts(mixedGraph, isolated).has("a"),
     ).toBe(false);
     expect(isolated.tasks).toHaveLength(2);
+  });
+
+  test("flags a completed prerequisite the reduced preview drops even though the filtered view still includes it", () => {
+    // Regression for PR #167 (GV-UX-07): with "All statuses" selected, a
+    // completed prerequisite stays in the filtered graph but can still be
+    // bumped out of the capped preview by 300+ competing tasks. The hidden
+    // cue must be computed against what the preview actually renders, not
+    // against the larger filtered graph it was carved out of.
+    const completedId = "task-completed";
+    const dependentId = "task-dependent";
+    const tasks: TaskGraphNode[] = [
+      node(completedId, {
+        recordedStatus: "completed",
+        operationalStatus: "completed",
+        terminal: true,
+        ready: false,
+      }),
+      node(dependentId, {
+        ready: false,
+        waiting: true,
+        needsAttention: true,
+      }),
+      ...Array.from({ length: 348 }, (_, index) =>
+        node(`filler-${String(index).padStart(3, "0")}`, { ready: true }),
+      ),
+    ];
+    const bigGraph: TaskGraph = {
+      ...graph,
+      tasks,
+      edges: [{ taskId: dependentId, dependsOnTaskId: completedId }],
+    };
+
+    const matching = filterGraph(bigGraph, all);
+    expect(ids(matching.tasks)).toContain(completedId);
+    expect(
+      exceedsLayoutLimit(matching.tasks.length, matching.edges.length),
+    ).toBe(true);
+
+    const preview = reducedOperationalPreview(matching, null);
+    expect(preview.tasks.map((t) => t.taskId)).toContain(dependentId);
+    expect(preview.tasks.map((t) => t.taskId)).not.toContain(completedId);
+
+    // The buggy wiring (counting against the full filtered graph) sees the
+    // prerequisite as still "visible" and misses the gap entirely.
+    expect(
+      hiddenCompletedPrerequisiteCounts(bigGraph, matching).get(dependentId),
+    ).toBeUndefined();
+    // The fixed wiring counts against the preview's actual node set.
+    expect(
+      hiddenCompletedPrerequisiteCounts(bigGraph, preview).get(dependentId),
+    ).toBe(1);
+  });
+
+  describe("hidden prerequisite cues in the reduced preview", () => {
+    const done = (id: string) =>
+      node(id, {
+        recordedStatus: "completed",
+        operationalStatus: "completed",
+        terminal: true,
+        ready: false,
+      });
+    // 3 completed prerequisites feed one dependent each; 380 ready fillers
+    // push every completed task and the dependents' ranking around.
+    function oversized(): TaskGraph {
+      const tasks: TaskGraphNode[] = [
+        done("p-1"),
+        done("p-2"),
+        done("p-3"),
+        node("dep-1", { ready: false, waiting: true, needsAttention: true }),
+        node("dep-2", { ready: false, waiting: true }),
+        node("dep-3", { ready: false, waiting: true, needsAttention: true }),
+        ...Array.from({ length: 380 }, (_, i) =>
+          node(`fill-${String(i).padStart(3, "0")}`, { ready: true }),
+        ),
+      ];
+      return {
+        ...graph,
+        tasks,
+        edges: [1, 2, 3].map((n) => ({
+          taskId: `dep-${n}`,
+          dependsOnTaskId: `p-${n}`,
+        })),
+      };
+    }
+    // Mirrors the dashboard wiring: filter -> preview -> count against visible.
+    function view(
+      g: TaskGraph,
+      filters: typeof all,
+      selectedId: string | null,
+    ) {
+      const matching = filterGraph(
+        g,
+        filters,
+        selectedId === null ? {} : { keep: new Set([selectedId]) },
+      );
+      const preview = reducedOperationalPreview(matching, selectedId);
+      return {
+        matching,
+        preview,
+        hidden: hiddenCompletedPrerequisiteCounts(g, preview),
+      };
+    }
+
+    test("counts only prerequisites missing from the capped preview", () => {
+      const g = oversized();
+      const { matching, preview, hidden } = view(g, all, null);
+      expect(matching.tasks).toHaveLength(386);
+      expect(preview.tasks).toHaveLength(reducedPreviewTaskLimit);
+      const shown = new Set(ids(preview.tasks));
+      for (const n of [1, 2, 3]) {
+        expect(shown.has(`p-${n}`)).toBe(false);
+      }
+      // dep-2 is not needs-attention and ranks below the ready fillers.
+      expect(shown.has("dep-1")).toBe(true);
+      expect(shown.has("dep-3")).toBe(true);
+      expect(shown.has("dep-2")).toBe(false);
+      expect(hidden.get("dep-1")).toBe(1);
+      expect(hidden.get("dep-3")).toBe(1);
+      // A dependent outside the preview has no cue to carry.
+      expect(hidden.has("dep-2")).toBe(false);
+      // Counts never exceed what the preview represents.
+      for (const id of hidden.keys()) expect(shown.has(id)).toBe(true);
+      // Global counts stay exact.
+      expect(preview.hiddenTaskCount).toBe(386 - reducedPreviewTaskLimit);
+      expect(g.summary).toEqual(graph.summary);
+      expect(g.tasks).toHaveLength(386);
+    });
+
+    test("a selected completed prerequisite is kept, so it is not counted hidden", () => {
+      const { preview, hidden } = view(oversized(), all, "p-1");
+      expect(ids(preview.tasks)).toContain("p-1");
+      expect(preview.tasks).toHaveLength(reducedPreviewTaskLimit);
+      expect(hidden.has("dep-1")).toBe(false);
+      expect(hidden.get("dep-3")).toBe(1);
+    });
+
+    test("a selected dependent outside the top ranks keeps its cue", () => {
+      const { preview, hidden } = view(oversized(), all, "dep-2");
+      expect(ids(preview.tasks)).toContain("dep-2");
+      expect(preview.tasks).toHaveLength(reducedPreviewTaskLimit);
+      expect(hidden.get("dep-2")).toBe(1);
+    });
+
+    test("active filters shape the preview before hidden prerequisites are counted", () => {
+      const g = oversized();
+      // Status filter keeps only waiting dependents; graph is no longer
+      // oversized, but the preview wiring must still stay consistent.
+      const waiting = view(g, { ...all, status: "not_started" }, null);
+      expect(ids(waiting.matching.tasks)).not.toContain("p-1");
+      const shown = new Set(ids(waiting.preview.tasks));
+      for (const id of waiting.hidden.keys()) expect(shown.has(id)).toBe(true);
+      expect(waiting.hidden.get("dep-1")).toBe(1);
+      // Hide-completed default drops the prerequisites from the filtered
+      // graph itself; the cue still counts them, within the preview only.
+      const hideDone = view(g, defaultGraphFilters, null);
+      expect(ids(hideDone.matching.tasks)).not.toContain("p-1");
+      expect(hideDone.hidden.get("dep-1")).toBe(1);
+      expect(hideDone.hidden.get("dep-3")).toBe(1);
+      expect(hideDone.hidden.has("dep-2")).toBe(false);
+    });
+
+    test("a completed prerequisite that is represented is not counted", () => {
+      const g = oversized();
+      const tasks = g.tasks.map((t) =>
+        t.taskId === "p-1" ? { ...t, needsAttention: true } : t,
+      );
+      const { preview, hidden } = view({ ...g, tasks }, all, null);
+      expect(ids(preview.tasks)).toContain("p-1");
+      expect(hidden.has("dep-1")).toBe(false);
+      expect(hidden.get("dep-3")).toBe(1);
+    });
   });
 
   test("keeps cancelled prerequisites visible while they block open work", () => {
