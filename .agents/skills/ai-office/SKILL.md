@@ -160,15 +160,15 @@ do not substitute `bun update -g` for the source-linked workflow.
 6. Start from [assets/default-office-manifest.json](assets/default-office-manifest.json), adapt it to the project and current host, and serialize the complete proposal as JSON in the host working state. Do not expose it to the daemon before validation. A user-requested draft file is optional and derived, not authority.
 7. Run `ai-office office:validate --manifest <json>` with that exact serialized proposal and correct validation failures.
 8. Present a concise summary of mission, roles, default routing, approval gates, and permission preferences. Explicitly explain that permission preferences do not grant capabilities.
-9. Obtain user confirmation before applying the proposed configuration.
+9. Obtain user confirmation before applying the proposed configuration. In the same confirmation, disclose that refreshing the generated repository guidance runs `ai-office install .` for this repository, which can also update other AI Office-managed files (for example `AI-OFFICE.md`; an existing `CLAUDE.md` gets the managed bridge block appended while its own content is preserved), and ask whether to approve that refresh.
 10. Apply only when the proposed manifest materially differs from the baseline
-    or current manifest. Run:
+    or current manifest. Run, adding `--refresh-guidance` only if the user approved the refresh:
 
     ```text
-    ai-office office:apply --project <projectId> --manifest <json>
+    ai-office office:apply --project <projectId> --manifest <json> [--refresh-guidance]
     ```
 
-11. If the apply changed task kinds or other manifest-derived guidance, the generated repository skill is refreshed by `ai-office install .`. Tell the user that refresh runs `install` for this repository, which can also update other AI Office-managed files (for example `AI-OFFICE.md`, and an existing `CLAUDE.md` gets the managed bridge block appended while its own content is preserved). With their approval rerun the apply from the repository with `--refresh-guidance`, or run `ai-office install .` afterwards; without it the revision stays applied and the skill stays stale.
+11. Never rerun `office:apply` to refresh guidance: every apply persists a new manifest revision. If the refresh was not approved at apply time, or you need to repair it later, run `ai-office install .` after the user approves it.
 12. Return the applied revision and any capability or executor setup still needed.
 
 ## Revise the office
