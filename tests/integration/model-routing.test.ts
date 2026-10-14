@@ -418,6 +418,7 @@ test("upgrading keeps pre-routing runs explicitly unrecorded and executable with
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
   ]);
   expect(migrate(f.db, migrations).applied).toEqual([]);
   const repository = new SqliteAgentRuntimeRepository(f.db);

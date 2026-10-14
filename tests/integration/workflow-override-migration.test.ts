@@ -149,7 +149,7 @@ describe("GP-13 workflow override migration", () => {
     const { database } = temporaryDatabase("ai-office-gp13-fresh-");
     try {
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0050_task_delivery_setup.sql",
+        "0051_pipeline_run_configuration_pin.sql",
       );
       expect(migrate(database, migrations).applied).toEqual([]);
       seedProject(database);
@@ -244,6 +244,7 @@ describe("GP-13 workflow override migration", () => {
         "0048_review_ready_task_dependencies.sql",
         "0049_task_completion_requires_completed_prerequisites.sql",
         "0050_task_delivery_setup.sql",
+        "0051_pipeline_run_configuration_pin.sql",
       ]);
 
       expect(tables.map(rows)).toEqual(before);

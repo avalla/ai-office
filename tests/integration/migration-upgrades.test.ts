@@ -135,6 +135,7 @@ describe("migration upgrades", () => {
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
       ]);
       expect(
         database.query("SELECT * FROM role WHERE id='role'").get(),
@@ -144,7 +145,22 @@ describe("migration upgrades", () => {
           database
             .query(`SELECT * FROM ${table} WHERE project_id='legacy'`)
             .all(),
-        ).toEqual(beforeRows[index]);
+        ).toEqual(
+          // 0051 adds four nullable pack-configuration-pin columns to
+          // pipeline_run; a pre-existing row gains them as NULL, which is
+          // not a rewrite of its classified definition content.
+          table === "pipeline_run"
+            ? (beforeRows[index] as Record<string, unknown>[]).map(
+                (row) => ({
+                  ...row,
+                  configuration_digest: null,
+                  core_contract_version: null,
+                  binding_revision: null,
+                  definition_revision: null,
+                }),
+              )
+            : beforeRows[index],
+        );
       expect(
         database
           .query(
@@ -259,6 +275,7 @@ describe("migration upgrades", () => {
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
       ]);
       expect(
         database
@@ -267,7 +284,15 @@ describe("migration upgrades", () => {
       ).toEqual(office);
       expect(
         database.query("SELECT * FROM pipeline_run WHERE id='pipeline'").get(),
-      ).toEqual(pipeline);
+      ).toEqual({
+        // 0051 adds four nullable pack-configuration-pin columns; the
+        // pre-existing row gains them as NULL, not a rewrite of its pin.
+        ...(pipeline as Record<string, unknown>),
+        configuration_digest: null,
+        core_contract_version: null,
+        binding_revision: null,
+        definition_revision: null,
+      });
       expect(
         database.query("SELECT * FROM agent_run WHERE id='agent-run'").get(),
       ).toEqual(agentRun);
@@ -450,7 +475,7 @@ describe("migration upgrades", () => {
         .run(definition, timestamp, timestamp);
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0050_task_delivery_setup.sql",
+        "0051_pipeline_run_configuration_pin.sql",
       );
       const stored = database
         .query<{ manifest_json: string }, []>(
@@ -535,7 +560,7 @@ describe("migration upgrades", () => {
         );
 
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0050_task_delivery_setup.sql",
+        "0051_pipeline_run_configuration_pin.sql",
       );
       expect(
         database
@@ -652,6 +677,7 @@ describe("migration upgrades", () => {
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
     ]);
     insertEvent.run(
       "updated",
@@ -753,6 +779,7 @@ describe("migration upgrades", () => {
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
     ]);
     expect(
       database
@@ -839,6 +866,7 @@ describe("migration upgrades", () => {
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
     ]);
     expect(
       database
@@ -1005,6 +1033,7 @@ describe("migration upgrades", () => {
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
     ]);
     expect(
       database
@@ -1075,6 +1104,7 @@ describe("migration upgrades", () => {
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
     ]);
     database
       .prepare(
@@ -1419,6 +1449,7 @@ describe("migration upgrades", () => {
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
     ]);
     expect(
       upgraded
@@ -1491,6 +1522,7 @@ describe("migration upgrades", () => {
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
     ]);
     expect(
       database
@@ -1534,6 +1566,7 @@ describe("migration upgrades", () => {
 
       expect(migrate(database, migrations).applied).toEqual([
         "0050_task_delivery_setup.sql",
+        "0051_pipeline_run_configuration_pin.sql",
       ]);
       // The setup store is empty for existing projects; defaults come from
       // the application, not from backfilled rows.

@@ -107,7 +107,7 @@ describe("M19-T4 task-delivery setup migration", () => {
     const { database } = temporaryDatabase("ai-office-setup-fresh-");
     try {
       expect(migrate(database, migrations).applied.at(-1)).toBe(
-        "0050_task_delivery_setup.sql",
+        "0051_pipeline_run_configuration_pin.sql",
       );
       expect(migrate(database, migrations).applied).toEqual([]);
       seedProject(database);
@@ -145,6 +145,7 @@ describe("M19-T4 task-delivery setup migration", () => {
 
       expect(migrate(database, migrations).applied).toEqual([
         "0050_task_delivery_setup.sql",
+        "0051_pipeline_run_configuration_pin.sql",
       ]);
       expect(database.query("SELECT * FROM task WHERE id='task'").get()).toEqual(
         taskBefore,

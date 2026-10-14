@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "id": "org.ai-office.legal",
-  "version": "0.1.0",
-  "manifestDigest": "sha256:36a827845fbf9125b71e81c524708527a20806f96e1972433ed8692a52c16f85",
+  "version": "0.2.0",
+  "manifestDigest": "sha256:d089d7654c9c4dfcf752e23d14460e83ac983bd6e352a8b59c0de76a0ad46ff1",
   "coreContract": {
     "minInclusive": 1,
     "maxExclusive": 2
   },
   "metadata": {
     "name": "Legal reference",
-    "description": "Declarative matter workflow fixture; it does not offer legal services or run a Runtime pipeline."
+    "description": "Declarative matter workflow fixture covering a generic review plus civil, criminal and labor practice areas; it does not offer legal services or run a Runtime pipeline."
   },
   "dependencies": [],
   "contributions": {
@@ -36,11 +36,28 @@
       {
         "id": "approver",
         "title": "Human approver"
+      },
+      {
+        "id": "deadline-clerk",
+        "title": "Procedural deadline clerk"
+      },
+      {
+        "id": "conciliator",
+        "title": "Conciliation officer"
       }
     ],
     "taskTypes": [
       {
         "id": "matter"
+      },
+      {
+        "id": "civil-matter"
+      },
+      {
+        "id": "criminal-matter"
+      },
+      {
+        "id": "labor-matter"
       }
     ],
     "workflows": [
@@ -66,6 +83,129 @@
             "role": "drafter",
             "title": "Draft",
             "objective": "Prepare a draft for review"
+          },
+          {
+            "id": "citation-review",
+            "role": "reviewer",
+            "title": "Citation review",
+            "objective": "Check cited support for the draft"
+          },
+          {
+            "id": "human-approval",
+            "role": "approver",
+            "title": "Human approval",
+            "objective": "Decide whether the reviewed draft is approved"
+          }
+        ]
+      },
+      {
+        "id": "civil-matter-workflow",
+        "title": "Civil matter review",
+        "taskType": "civil-matter",
+        "stages": [
+          {
+            "id": "intake",
+            "role": "intake-clerk",
+            "title": "Intake",
+            "objective": "Record the civil matter request"
+          },
+          {
+            "id": "research",
+            "role": "researcher",
+            "title": "Research",
+            "objective": "Collect sources and citations for the civil matter"
+          },
+          {
+            "id": "draft",
+            "role": "drafter",
+            "title": "Draft",
+            "objective": "Prepare a civil pleading draft for review"
+          },
+          {
+            "id": "citation-review",
+            "role": "reviewer",
+            "title": "Citation review",
+            "objective": "Check cited support for the draft"
+          },
+          {
+            "id": "filing-approval",
+            "role": "approver",
+            "title": "Filing approval",
+            "objective": "Decide whether the reviewed draft may be filed with the court"
+          }
+        ]
+      },
+      {
+        "id": "criminal-matter-workflow",
+        "title": "Criminal matter review",
+        "taskType": "criminal-matter",
+        "stages": [
+          {
+            "id": "intake",
+            "role": "intake-clerk",
+            "title": "Intake",
+            "objective": "Record the criminal matter request"
+          },
+          {
+            "id": "deadline-check",
+            "role": "deadline-clerk",
+            "title": "Deadline check",
+            "objective": "Verify statutory and procedural deadlines before substantive work begins"
+          },
+          {
+            "id": "research",
+            "role": "researcher",
+            "title": "Research",
+            "objective": "Collect sources and citations for the criminal matter"
+          },
+          {
+            "id": "draft",
+            "role": "drafter",
+            "title": "Draft",
+            "objective": "Prepare a criminal defense or filing draft for review"
+          },
+          {
+            "id": "citation-review",
+            "role": "reviewer",
+            "title": "Citation review",
+            "objective": "Check cited support for the draft"
+          },
+          {
+            "id": "human-approval",
+            "role": "approver",
+            "title": "Human approval",
+            "objective": "Decide whether the reviewed draft is approved"
+          }
+        ]
+      },
+      {
+        "id": "labor-matter-workflow",
+        "title": "Labor matter review",
+        "taskType": "labor-matter",
+        "stages": [
+          {
+            "id": "intake",
+            "role": "intake-clerk",
+            "title": "Intake",
+            "objective": "Record the labor matter request"
+          },
+          {
+            "id": "conciliation",
+            "role": "conciliator",
+            "title": "Conciliation",
+            "objective": "Record the mandatory conciliation attempt and its outcome before drafting"
+          },
+          {
+            "id": "research",
+            "role": "researcher",
+            "title": "Research",
+            "objective": "Collect sources and citations for the labor matter"
+          },
+          {
+            "id": "draft",
+            "role": "drafter",
+            "title": "Draft",
+            "objective": "Prepare a labor matter draft for review"
           },
           {
             "id": "citation-review",
@@ -108,6 +248,14 @@
       {
         "id": "approval-agent",
         "role": "approver"
+      },
+      {
+        "id": "deadline-agent",
+        "role": "deadline-clerk"
+      },
+      {
+        "id": "conciliation-agent",
+        "role": "conciliator"
       }
     ],
     "artifactTypes": [
@@ -189,6 +337,60 @@
             "requiresApproval": true,
             "requiresIndependentApproval": true,
             "requiresDifferentAgentFrom": ["draft", "citation-review"]
+          }
+        ]
+      },
+      {
+        "id": "civil-matter-governance",
+        "title": "Civil matter governance",
+        "workflow": "civil-matter-workflow",
+        "enforcement": "enforced",
+        "stages": [
+          {
+            "stage": "citation-review",
+            "requiresApproval": true,
+            "requiresDifferentAgentFrom": ["draft"]
+          },
+          {
+            "stage": "filing-approval",
+            "requiresApproval": true,
+            "requiresIndependentApproval": true,
+            "requiresDifferentAgentFrom": ["draft", "citation-review"]
+          }
+        ]
+      },
+      {
+        "id": "criminal-matter-governance",
+        "title": "Criminal matter governance",
+        "workflow": "criminal-matter-workflow",
+        "enforcement": "enforced",
+        "stages": [
+          {
+            "stage": "deadline-check",
+            "requiresApproval": true
+          },
+          {
+            "stage": "human-approval",
+            "requiresApproval": true,
+            "requiresIndependentApproval": true,
+            "requiresDifferentAgentFrom": ["draft", "deadline-check"]
+          }
+        ]
+      },
+      {
+        "id": "labor-matter-governance",
+        "title": "Labor matter governance",
+        "workflow": "labor-matter-workflow",
+        "enforcement": "enforced",
+        "stages": [
+          {
+            "stage": "conciliation",
+            "requiresApproval": true
+          },
+          {
+            "stage": "human-approval",
+            "requiresApproval": true,
+            "requiresDifferentAgentFrom": ["draft"]
           }
         ]
       }

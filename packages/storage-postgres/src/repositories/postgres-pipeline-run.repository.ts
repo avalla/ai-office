@@ -1,4 +1,7 @@
-import type { PipelineRunRepository } from "@ai-office/application/ports/pipeline-run-repository.port.ts";
+import {
+  PipelineRunConfigurationPinUnsupportedError,
+  type PipelineRunRepository,
+} from "@ai-office/application/ports/pipeline-run-repository.port.ts";
 import {
   PipelineRun,
   type PipelineOverrideRecord,
@@ -106,6 +109,21 @@ function override(row: OverrideRow): PipelineOverrideRecord {
   };
 }
 
+/**
+ * M16.5 Runtime activation, first slice: PostgreSQL does not yet persist a
+ * run's pack-configuration pin (no column or table exists for it here,
+ * unlike SQLite). Rather than silently drop the pin, `insert` fails closed,
+ * both for a run that carries a pin and for a run whose project has a
+ * nonempty pack binding when the insert commits. The application-level base
+ * class lets the Runtime render it without importing this package.
+ */
+export class PostgresPipelineRunConfigurationPinUnsupportedError extends PipelineRunConfigurationPinUnsupportedError {
+  constructor(pipelineRunId: string, reason: "pin" | "bound_packs" = "pin") {
+    super(pipelineRunId, reason);
+    this.name = "PostgresPipelineRunConfigurationPinUnsupportedError";
+  }
+}
+
 export class PostgresPipelineRunRepository implements PipelineRunRepository {
   private readonly tenantId: string;
 
@@ -118,7 +136,38 @@ export class PostgresPipelineRunRepository implements PipelineRunRepository {
 
   async insert(run: PipelineRun): Promise<void> {
     const value = run.snapshot();
+    if (value.configurationPin !== undefined)
+      throw new PostgresPipelineRunConfigurationPinUnsupportedError(value.id);
     await this.database.runInTransaction(async () => {
+      // An unpinned run is only representable while the project's binding is
+      // empty. Under READ COMMITTED the caller's earlier pin read can be
+      // superseded by a rebinding that commits before this insert, so recheck
+      // here under a share lock on the binding head: `replace` takes that row
+      // FOR UPDATE, so a rebinding either committed before the lock (and is
+      // visible to the check below) or waits for this transaction to end.
+      // The head is created first, exactly as `replace` does, so a project's
+      // first binding cannot slip past an absent row.
+      await this.database.query(
+        `INSERT INTO core.project_pack_binding(project_id, tenant_id)
+         SELECT id, tenant_id FROM core.project WHERE id = $1 AND tenant_id = $2
+         ON CONFLICT(project_id) DO NOTHING`,
+        [value.projectId, this.tenantId],
+      );
+      await this.database.query(
+        `SELECT configuration_revision FROM core.project_pack_binding
+         WHERE project_id = $1 AND tenant_id = $2 FOR SHARE`,
+        [value.projectId, this.tenantId],
+      );
+      const [bound] = await this.database.query<{ pack_id: string }>(
+        `SELECT pack_id FROM core.project_pack_binding_pack
+         WHERE project_id = $1 AND tenant_id = $2 LIMIT 1`,
+        [value.projectId, this.tenantId],
+      );
+      if (bound !== undefined)
+        throw new PostgresPipelineRunConfigurationPinUnsupportedError(
+          value.id,
+          "bound_packs",
+        );
       const inserted = await this.database.query<{ id: string }>(
         `
           INSERT INTO core.pipeline_run(

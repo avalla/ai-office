@@ -41,7 +41,7 @@ afterEach(() => {
 function nextVersion(): Uint8Array {
   const draft = {
     ...manifest,
-    version: "0.2.0",
+    version: "0.3.0",
     contributions: {
       ...manifest.contributions,
       roles: manifest.contributions.roles.map((role) =>
@@ -164,13 +164,21 @@ describe("GP-17 legal reference pack", () => {
     const before = await h.configuration.read("legal");
     expect(before.selectedPacks).toEqual([v1]);
     expect(before.roles.map((role) => role.roleId).sort()).toEqual(
-      ["approver", "drafter", "intake-clerk", "researcher", "reviewer"].map(
-        (id) => `pack:org.ai-office.legal/roles/${id}`,
-      ),
+      [
+        "approver",
+        "conciliator",
+        "deadline-clerk",
+        "drafter",
+        "intake-clerk",
+        "researcher",
+        "reviewer",
+      ].map((id) => `pack:org.ai-office.legal/roles/${id}`),
     );
     expect(before.agents.map((agent) => agent.agentId).sort()).toEqual(
       [
         "approval-agent",
+        "conciliation-agent",
+        "deadline-agent",
         "draft-agent",
         "intake-agent",
         "research-agent",
@@ -179,18 +187,39 @@ describe("GP-17 legal reference pack", () => {
     );
     expect(before.effectiveDefinitions.prompts).toEqual([]);
     expect(
-      before.effectiveDefinitions.taskTypes.map((item) => item.localId),
-    ).toEqual(["matter"]);
-    expect(before.workflows[0]?.stages.map((stage) => stage.id)).toEqual([
+      before.effectiveDefinitions.taskTypes.map((item) => item.localId).sort(),
+    ).toEqual(["civil-matter", "criminal-matter", "labor-matter", "matter"]);
+    const beforeMatterWorkflow = before.workflows.find(
+      (workflow) =>
+        workflow.workflowId ===
+        "pack:org.ai-office.legal/workflows/matter-workflow",
+    );
+    expect(beforeMatterWorkflow?.stages.map((stage) => stage.id)).toEqual([
       "intake",
       "research",
       "draft",
       "citation-review",
       "human-approval",
     ]);
-    expect(before.policies[0]?.workflowId).toBe(
-      "pack:org.ai-office.legal/workflows/matter-workflow",
+    const beforeCivilWorkflow = before.workflows.find(
+      (workflow) =>
+        workflow.workflowId ===
+        "pack:org.ai-office.legal/workflows/civil-matter-workflow",
     );
+    expect(beforeCivilWorkflow?.stages.map((stage) => stage.id)).toEqual([
+      "intake",
+      "research",
+      "draft",
+      "citation-review",
+      "filing-approval",
+    ]);
+    expect(
+      before.policies.find(
+        (policy) =>
+          policy.workflowId ===
+          "pack:org.ai-office.legal/workflows/matter-workflow",
+      ),
+    ).toBeDefined();
     expect(before.knowledge[0]?.knowledgeId).toBe(
       "pack:org.ai-office.legal/knowledge/matter-research",
     );
@@ -266,7 +295,12 @@ describe("GP-17 legal reference pack", () => {
     });
     const after = await h.configuration.read("legal");
     expect(after.selectedPacks).toEqual([v2]);
-    expect(after.workflows[0]).toMatchObject({
+    const afterMatterWorkflow = after.workflows.find(
+      (workflow) =>
+        workflow.workflowId ===
+        "pack:org.ai-office.legal/workflows/matter-workflow",
+    );
+    expect(afterMatterWorkflow).toMatchObject({
       workflowId: "pack:org.ai-office.legal/workflows/matter-workflow",
       title: "Project matter review",
       customization: "replace",
@@ -371,5 +405,134 @@ describe("GP-17 legal reference pack", () => {
       code: "invalid_contribution",
       path: "contributions.policies[0].stages[0].stage",
     });
+  });
+});
+
+// Added beyond GP-17's original minimal-fixture scope, at explicit user
+// request: civil, criminal and labor practice-area workflows alongside the
+// unchanged matter-workflow. See docs/development/generic-core-domain-packs.md
+// for the scope and non-goals record. This stays at the definition layer only
+// (no Runtime execution, no legal service claim).
+describe("Legal reference pack practice-area depth", () => {
+  test("declares civil, criminal and labor practice-area workflows and policies", () => {
+    expect(manifest.contributions.taskTypes.map((item) => item.id)).toEqual([
+      "matter",
+      "civil-matter",
+      "criminal-matter",
+      "labor-matter",
+    ]);
+    expect(manifest.contributions.roles.map((role) => role.id)).toEqual([
+      "intake-clerk",
+      "researcher",
+      "drafter",
+      "reviewer",
+      "approver",
+      "deadline-clerk",
+      "conciliator",
+    ]);
+
+    const civil = manifest.contributions.workflows.find(
+      (workflow) => workflow.id === "civil-matter-workflow",
+    );
+    expect(civil?.taskType).toBe("civil-matter");
+    expect(civil?.stages.map((stage) => stage.id)).toEqual([
+      "intake",
+      "research",
+      "draft",
+      "citation-review",
+      "filing-approval",
+    ]);
+
+    const criminal = manifest.contributions.workflows.find(
+      (workflow) => workflow.id === "criminal-matter-workflow",
+    );
+    expect(criminal?.taskType).toBe("criminal-matter");
+    expect(criminal?.stages.map((stage) => stage.id)).toEqual([
+      "intake",
+      "deadline-check",
+      "research",
+      "draft",
+      "citation-review",
+      "human-approval",
+    ]);
+    expect(
+      criminal?.stages.find((stage) => stage.id === "deadline-check")?.role,
+    ).toBe("deadline-clerk");
+
+    const labor = manifest.contributions.workflows.find(
+      (workflow) => workflow.id === "labor-matter-workflow",
+    );
+    expect(labor?.taskType).toBe("labor-matter");
+    expect(labor?.stages.map((stage) => stage.id)).toEqual([
+      "intake",
+      "conciliation",
+      "research",
+      "draft",
+      "citation-review",
+      "human-approval",
+    ]);
+    expect(
+      labor?.stages.find((stage) => stage.id === "conciliation")?.role,
+    ).toBe("conciliator");
+
+    expect(
+      manifest.contributions.policies.map((policy) => policy.id),
+    ).toEqual([
+      "matter-governance",
+      "civil-matter-governance",
+      "criminal-matter-governance",
+      "labor-matter-governance",
+    ]);
+    const criminalPolicy = manifest.contributions.policies.find(
+      (policy) => policy.id === "criminal-matter-governance",
+    );
+    expect(criminalPolicy?.stages).toEqual([
+      { stage: "deadline-check", requiresApproval: true },
+      {
+        stage: "human-approval",
+        requiresApproval: true,
+        requiresIndependentApproval: true,
+        requiresDifferentAgentFrom: ["deadline-check", "draft"],
+      },
+    ]);
+    const laborPolicy = manifest.contributions.policies.find(
+      (policy) => policy.id === "labor-matter-governance",
+    );
+    expect(laborPolicy?.stages).toEqual([
+      { stage: "conciliation", requiresApproval: true },
+      {
+        stage: "human-approval",
+        requiresApproval: true,
+        requiresDifferentAgentFrom: ["draft"],
+      },
+    ]);
+  });
+
+  test("binds and resolves a project to all four practice-area workflows", async () => {
+    const h = await harness();
+    const [v1] = h.versions;
+    expect(v1).toBeDefined();
+    const selection = await h.binding.preview("legal", [v1!]);
+    expect(selection.issues).toEqual([]);
+    await h.binding.apply({
+      projectId: "legal",
+      desired: [v1!],
+      expectedRevision: selection.current.configurationRevision,
+      actorId: "operator",
+    });
+    const configuration = await h.configuration.read("legal");
+    const workflowIds = configuration.workflows
+      .map((workflow) => workflow.workflowId)
+      .sort();
+    expect(workflowIds).toEqual(
+      [
+        "civil-matter-workflow",
+        "criminal-matter-workflow",
+        "labor-matter-workflow",
+        "matter-workflow",
+      ]
+        .map((id) => `pack:org.ai-office.legal/workflows/${id}`)
+        .sort(),
+    );
   });
 });

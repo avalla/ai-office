@@ -5802,3 +5802,148 @@ or `--refresh-guidance`, and otherwise the files stay untouched. A blocked or fa
 reported on stderr and `ai-office install .` repairs it. Callers that use the
 Runtime directly, or run from outside the bound repository, still refresh with
 `install` or the client integration commands.
+
+## Legal reference pack practice-area depth (2026-10-09 addendum)
+
+**Status.** Added after the M16 exit, at the project owner's explicit
+request, not owned by any GP-xx task. GP-17's own non-goal capped the legal
+pack at a "Minimal legal pack/fixture" and excluded "lifecycle execution
+(M16.5)"; this addendum stays inside that non-goal (no lifecycle execution)
+while adding content depth GP-17 never scoped. There is no GP-10A/B/C-style
+content-depth task for the legal pack, unlike the development pack; this
+addendum fills that gap for three practice areas without creating one.
+
+**Decision.** `packages/domain-pack-legal/manifest.json` moves `0.1.0` →
+`0.2.0`. The original `matter` taskType, `matter-workflow` and its five roles,
+artifact types, evidence types, knowledge entry, capability and validator are
+unchanged byte-for-byte in meaning (GP-17's test still pins them). Three new
+workflows are added alongside it, each under its own new taskType and each
+modelling a distinct governance stress point from the M15 "Legal reference
+vertical" text:
+
+- `civil-matter-workflow` (`civil-matter`): adds a `filing-approval` stage
+  (independently approved, different agent from both draft and
+  citation-review) modelling the irreversible external action of filing with
+  a court.
+- `criminal-matter-workflow` (`criminal-matter`): adds an early
+  `deadline-check` stage (new `deadline-clerk` role) and tightens
+  `human-approval` to require a different agent from both draft and
+  deadline-check, modelling statutory-deadline criticality.
+- `labor-matter-workflow` (`labor-matter`): adds a `conciliation` stage (new
+  `conciliator` role) as an approved gate before drafting, modelling a
+  mandatory conciliation attempt before litigation.
+
+All three reuse the existing roles, artifact types, evidence types, knowledge
+entry, capability and validator; only two new roles (`deadline-clerk`,
+`conciliator`), two new agents, three new taskTypes, three new workflows and
+three new policies (one per new workflow, the schema's limit) were added.
+
+**Acceptance.** `tests/integration/legal-reference-pack.test.ts` keeps its
+original GP-17 assertions unchanged in meaning (only widened where the
+underlying collections genuinely grew, e.g. the sorted role/agent/taskType
+lists, and switched from positional indexing to lookup-by-id for
+`workflows`/`policies` now that more than one of each exists) and adds a new
+`describe` block asserting the three new taskTypes, workflows, roles and
+policies, plus a bind/resolve check that a project sees all four workflows
+through the public contracts.
+
+**Non-goals.** No Runtime execution, no production legal service or filing
+adapter, no catalog registration, no project adoption, no opening of the
+closed `officeTaskKinds` list, no claim that any of this is legal advice. See
+[M16.5 scope proposal](m16-5-domain-pack-runtime-activation-scope.md) for what
+would still be required before any of this pack content could execute.
+
+**Implementation record.** `packages/domain-pack-legal/manifest.json` (0.2.0),
+`packages/domain-pack-legal/README.md`,
+`tests/integration/legal-reference-pack.test.ts`.
+
+## Runtime activation — first slice implemented (2026-10-11 addendum)
+
+**Status.** The pin-only first slice proposed in
+[`m16-5-domain-pack-runtime-activation-scope.md`](m16-5-domain-pack-runtime-activation-scope.md)
+is implemented, at the user's explicit request. The full M16.5 scope (pipeline
+selection from a pack, `officeTaskKinds`, the GP-16 run gate, GP-24, GP-14B)
+remains unapproved and unimplemented; nothing here changes that.
+
+**Decision.** `ManagePipelineRuns.start` additionally reads
+`ReadProjectConfiguration`'s `pin` (digest, core contract version, binding and
+definition revisions, exact selected/resolved pack tuples) when the project's
+pack selection is nonempty, and `PipelineRun.create` pins it alongside its
+existing manifest/definition pins (ADR-0026). Which pipeline, stage or role
+runs is unchanged and stays manifest-driven. `configuration_digest`,
+`core_contract_version`, `binding_revision`, `definition_revision` (migration
+`0051_pipeline_run_configuration_pin.sql`) are nullable and set together or
+not at all; a child table `pipeline_run_configuration_pack` pins the exact
+`(id, version, manifestDigest)` tuples, split by `selected`/`resolved`.
+
+**Guardrail resolution, not a workaround.** `ReadProjectConfiguration`
+construction was deliberately moved out of `commands/pipeline.ts` (which
+would have literally needed `context.definitions`/`context.packBindings`,
+tripping the GP-07 scheduling-boundary test) into the single place
+`CommandContext` is built, `runtime-command.ts`, exposed as
+`context.projectConfiguration`. `tests/unit/architecture-boundaries.test.ts`
+gained a new test asserting `manage-pipeline-runs.ts` reads only `.pin`/
+`.selectedPacks` off a resolved configuration, never `.workflows`, `.roles`,
+`.agents`, `.policies` or other selection-bearing views.
+
+**A real bug this surfaced and fixed.** `SqlitePipelineRunRepository.insert`
+now writes two distinct INSERT shapes (with or without the four pin columns)
+so a run without a pin stays insertable against a database that predates
+migration 0051 -- required by `tests/helpers/legacy-development-fixture.ts`'s
+`buildPrePackDatabase`, which deliberately freezes schema history before any
+pack-related migration and still exercises current application code against
+it. While fixing this, `restore` was found to check `row.configuration_digest
+=== null`, which is `false` (not `true`) when the column is entirely absent
+(`undefined`) on such a pre-0051 database -- silently taking the "has a pin"
+branch and crashing. Fixed to a truthiness check, which treats `null` and
+`undefined` alike.
+
+**Acceptance.** New: `tests/integration/pipeline-run-configuration-pin.test.ts`
+(end-to-end: pin set and round-tripped when a pack is selected, absent
+otherwise, absent when no resolver is wired); `tests/unit/pipeline-run.test.ts`
+(domain-level pin validation and round-trip); pin-specific additions to
+`tests/integration/office-pipeline-sqlite-contracts.test.ts` and, as a
+fail-closed case, `tests/integration/office-pipeline-postgres-contracts.test.ts`
+(PostgreSQL does not yet persist this pin and rejects a run that carries one,
+via `PostgresPipelineRunConfigurationPinUnsupportedError`, rather than
+silently dropping it). Every migration-upgrade test with a literal expected
+list through `0050_task_delivery_setup.sql` was extended to `0051`; three
+tests asserting pre-existing `pipeline_run` rows stay byte-identical across
+an upgrade were corrected to expect the four new columns as `NULL` (an
+`ALTER TABLE ADD COLUMN`'s unavoidable, harmless effect on existing rows'
+`SELECT *` shape, not a rewrite of their content).
+
+**Pin consistency under concurrent rebinding.** The pin is resolved and the run
+inserted in one transaction. On SQLite that transaction is `BEGIN IMMEDIATE`,
+so a rebinding from another connection is refused (`SQLITE_BUSY` once its busy
+timeout lapses) and a rebinding on the same connection raises
+`TransactionAlreadyActiveError`, rather than landing between the read and the
+insert. PostgreSQL runs at READ COMMITTED, so a rebinding could commit after
+the pin read and leave an unpinned run on a project that already had a pack
+binding. Its `insert` therefore creates the binding head row if absent, takes
+it `FOR SHARE` (the row `replace` locks `FOR UPDATE`), and fails closed if the
+binding then has any pack. The pin-unsupported error now covers both cases.
+Deterministic interleaving tests (hooks between the pin read and the insert,
+no sleeps): `tests/integration/pipeline-run-configuration-pin.test.ts` (SQLite,
+cross-connection and same-connection) and
+`tests/integration/pipeline-run-configuration-pin-postgres.test.ts` (real
+PostgreSQL with two connections, when `AI_OFFICE_TEST_POSTGRES_URL` is set).
+
+**Non-goals, unchanged.** No `officeTaskKinds` opening, no GP-16 run gate, no
+GP-24, no GP-14B, no PostgreSQL parity for this pin (explicitly fails closed
+instead), no pipeline/stage/role selection from a pack.
+
+**Implementation record.** `migrations/project/0051_pipeline_run_configuration_pin.sql`;
+`packages/domain/src/pipeline/pipeline-run.ts`;
+`packages/application/src/pipeline/manage-pipeline-runs.ts`;
+`packages/storage-sqlite/src/repositories/sqlite-pipeline-run.repository.ts`;
+`packages/storage-postgres/src/repositories/postgres-pipeline-run.repository.ts`;
+`packages/runtime-host/src/commands/shared.ts`,
+`packages/runtime-host/src/runtime-command.ts`,
+`packages/runtime-host/src/commands/pipeline.ts`;
+`tests/unit/architecture-boundaries.test.ts`,
+`tests/unit/pipeline-run.test.ts`,
+`tests/integration/pipeline-run-configuration-pin.test.ts`,
+`tests/integration/office-pipeline-sqlite-contracts.test.ts`,
+`tests/integration/office-pipeline-postgres-contracts.test.ts`, and the
+migration-list updates across the affected upgrade tests.
