@@ -318,6 +318,12 @@ describe("agent client integrations", () => {
       [pointer, false],
       ["# Legacy user notes\n", true],
       [`${pointer}\n${"Keep this note.\n".repeat(100)}`, true],
+      [`${pointer}\nAlways run the linter before committing.\n`, true],
+      [`${pointer}\n## Notes\n\nAlways run the linter.\n`, true],
+      [
+        "# Codex compatibility\n\nThe canonical contract is [AGENTS.md](AGENTS.md) and\nthe office guidance is [AI-OFFICE.md](AI-OFFICE.md).\n",
+        false,
+      ],
     ] as const) {
       const root = temporaryRoot("ai-office-client-legacy-pointer-");
       writeFileSync(join(root, "CODEX.md"), content);

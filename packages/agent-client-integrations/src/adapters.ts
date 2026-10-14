@@ -105,15 +105,27 @@ function isCodexPointerManaged(file: LocalInstructionFile): boolean {
 const legacyPointerMaxLength = 1024;
 const legacyPointerTarget = `](${codexProjectInstructionsPath})`;
 
+const legacyPointerMaxParagraphs = 2;
+
 /**
  * A legacy CODEX.md that is only a short pointer to AGENTS.md needs no
- * migration. The bound keeps a file with substantive notes reported.
+ * migration. It must be at most a few headings and paragraphs, and every
+ * paragraph must itself link AGENTS.md, so notes in a paragraph of their own
+ * keep the file reported. Notes written inside a linking paragraph cannot be
+ * told apart from prose and are accepted.
  */
 function isLegacyCompatibilityPointer(file: LocalInstructionFile): boolean {
+  if (file.content === undefined) return false;
+  const content = normalizeEol(file.content);
+  if (content.length > legacyPointerMaxLength) return false;
+  const paragraphs = content
+    .split(/\n\s*\n/u)
+    .map((block) => block.trim())
+    .filter((block) => block !== "" && !/^#{1,6}\s[^\n]*$/u.test(block));
   return (
-    file.content !== undefined &&
-    file.content.length <= legacyPointerMaxLength &&
-    file.content.includes(legacyPointerTarget)
+    paragraphs.length >= 1 &&
+    paragraphs.length <= legacyPointerMaxParagraphs &&
+    paragraphs.every((block) => block.includes(legacyPointerTarget))
   );
 }
 
