@@ -73,13 +73,34 @@ WHEN EXISTS (
 )
 BEGIN SELECT RAISE(ABORT, 'pipeline run configuration pack pin is append-only'); END;
 
--- Tuples are sealed once the run is created. The run, its tuples and its
--- stage rows are written in one transaction, tuples before stages, and a run
--- always has at least one stage (the domain rejects an empty definition). A
--- tuple may therefore be inserted only while the run has no stage row yet, and
--- only for a run that carries a configuration pin: a later writer cannot add
--- tuples that would change the selected/resolved packs under an unchanged
--- configuration digest.
+-- Tuples are sealed once the run is created. The repository writes the run,
+-- its tuples and then one seal row in a single transaction. The seal row is
+-- immutable state of its own: it cannot be updated, and it cannot be deleted
+-- while the pinned run exists (the parent cascade still removes it). A tuple
+-- may be inserted only for a run that carries a configuration pin and has no
+-- seal row, so a later writer cannot change the selected/resolved packs under
+-- an unchanged configuration digest, and clearing other rows (for example
+-- stages) does not reopen the run.
+CREATE TABLE pipeline_run_configuration_seal (
+  pipeline_run_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  PRIMARY KEY (project_id, pipeline_run_id),
+  FOREIGN KEY (project_id, pipeline_run_id)
+    REFERENCES pipeline_run(project_id, id) ON DELETE CASCADE
+);
+
+CREATE TRIGGER pipeline_run_configuration_seal_prevent_update
+BEFORE UPDATE ON pipeline_run_configuration_seal
+BEGIN SELECT RAISE(ABORT, 'pipeline run configuration seal is immutable'); END;
+
+CREATE TRIGGER pipeline_run_configuration_seal_prevent_delete
+BEFORE DELETE ON pipeline_run_configuration_seal
+WHEN EXISTS (
+  SELECT 1 FROM pipeline_run
+  WHERE project_id = OLD.project_id AND id = OLD.pipeline_run_id
+)
+BEGIN SELECT RAISE(ABORT, 'pipeline run configuration seal is append-only'); END;
+
 CREATE TRIGGER pipeline_run_configuration_pack_seal
 BEFORE INSERT ON pipeline_run_configuration_pack
 WHEN NOT EXISTS (
@@ -87,7 +108,7 @@ WHEN NOT EXISTS (
   WHERE project_id = NEW.project_id AND id = NEW.pipeline_run_id
     AND configuration_digest IS NOT NULL
 ) OR EXISTS (
-  SELECT 1 FROM pipeline_stage_run
+  SELECT 1 FROM pipeline_run_configuration_seal
   WHERE project_id = NEW.project_id AND pipeline_run_id = NEW.pipeline_run_id
 )
 BEGIN SELECT RAISE(ABORT, 'pipeline run configuration pack pin is sealed after the run is created'); END;

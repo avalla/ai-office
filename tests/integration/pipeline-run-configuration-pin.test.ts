@@ -369,8 +369,18 @@ describe("pipeline run configuration pin (M16.5 Runtime activation, first slice)
                  'sha256:${"a".repeat(64)}')`,
       );
 
-    // A late writer cannot add a tuple under the unchanged digest.
+    // A late writer cannot add a tuple under the unchanged digest, and
+    // clearing the stage rows does not reopen the run.
     expect(() => insertTuple(run.snapshot().id, "late-pack")).toThrow(/sealed/);
+    h.database.exec("PRAGMA foreign_keys = OFF");
+    h.database.exec(
+      `DELETE FROM pipeline_stage_run WHERE pipeline_run_id = '${run.snapshot().id}'`,
+    );
+    h.database.exec("PRAGMA foreign_keys = ON");
+    expect(() => insertTuple(run.snapshot().id, "late-pack")).toThrow(/sealed/);
+    expect(() =>
+      h.database.exec("DELETE FROM pipeline_run_configuration_seal"),
+    ).toThrow(/append-only/);
     const read = await h.storage.pipelines.findById(
       run.snapshot().id,
       projectId,

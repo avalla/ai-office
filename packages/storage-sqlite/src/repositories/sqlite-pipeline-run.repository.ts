@@ -181,6 +181,13 @@ export class SqlitePipelineRunRepository implements PipelineRunRepository {
           pin.definitionRevision,
         );
       this.insertConfigurationPackTuples(value.id, value.projectId, pin);
+      // Seal after the tuples: later tuple inserts are refused by the schema.
+      this.database
+        .prepare(
+          `INSERT INTO pipeline_run_configuration_seal(pipeline_run_id, project_id)
+         VALUES (?, ?)`,
+        )
+        .run(value.id, value.projectId);
     }
     for (const valueStage of value.stages)
       this.insertStage(value.id, value.projectId, valueStage);
