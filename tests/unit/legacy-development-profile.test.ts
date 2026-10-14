@@ -208,6 +208,54 @@ describe("GP-09 legacy development profile version 1", () => {
     });
   });
 
+  test("manifest-declared custom task kinds are routed after the shipped kinds, in canonical order (M16.5)", () => {
+    const profile = deriveLegacyDevelopmentProfile(
+      changed((value) => {
+        pipeline(value.office.manifest, "discovery").defaultFor = [
+          "research",
+          "matter",
+        ];
+        pipeline(value.office.manifest, "release").defaultFor = [
+          "release",
+          "civil-matter",
+        ];
+      }),
+    );
+    expect(profile.taskKinds.map((item) => item.kind)).toEqual([
+      ...officeTaskKinds,
+      "civil-matter",
+      "matter",
+    ]);
+    expect(
+      Object.fromEntries(
+        profile.taskKinds.map((item) => [item.kind, item.pipelineId]),
+      ),
+    ).toMatchObject({ matter: "discovery", "civil-matter": "release" });
+  });
+
+  test("reordering pipelines never changes the digest, custom kinds included (M16.5)", () => {
+    const profileFor = (order: readonly string[]) =>
+      deriveLegacyDevelopmentProfile(
+        changed((value) => {
+          const manifest = value.office.manifest;
+          pipeline(manifest, "discovery").defaultFor = [
+            "research",
+            "zeta-kind",
+          ];
+          pipeline(manifest, "release").defaultFor = ["release", "alpha-kind"];
+          manifest.pipelines = order.map((id) => pipeline(manifest, id));
+        }),
+      );
+    const forward = profileFor(["delivery", "bugfix", "discovery", "release"]);
+    const reversed = profileFor(["release", "discovery", "bugfix", "delivery"]);
+    expect(forward.taskKinds.map((item) => item.kind).slice(-2)).toEqual([
+      "alpha-kind",
+      "zeta-kind",
+    ]);
+    expect(reversed.taskKinds).toEqual(forward.taskKinds);
+    expect(reversed.profileDigest).toBe(forward.profileDigest);
+  });
+
   test("unvalidated input with two pipelines naming one kind routes it to the first in manifest order", () => {
     // The manifest schema refuses this input. `GetOfficeContext` would take
     // the first match on it, so the derivation does too, and here, unlike

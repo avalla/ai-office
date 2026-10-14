@@ -151,8 +151,10 @@ construction out of `commands/pipeline.ts` entirely, into the one place
 gained an explicit test asserting this pin-only boundary.
 
 **What this slice does *not* do, stated plainly:** it does not make a legal,
-civil, criminal or labor matter runnable — `officeTaskKinds` stays closed and
-pipeline/stage/role selection stays manifest-driven. It has **zero observable
+civil, criminal or labor matter runnable — this slice leaves task-kind handling
+unchanged (the list was closed when it shipped; it was opened afterwards by a
+separate standalone change, see decision 1) and pipeline/stage/role selection
+stays manifest-driven. It has **zero observable
 effect in production** until GP-10C-2 (development pack adoption) also ships,
 since every project's pack selection is empty until then. It is provable only
 through the existing test fixtures (the same `InMemoryInstalledDomainPackCatalog`
@@ -164,22 +166,20 @@ pack-resolved execution against legacy execution is meaningless until pipeline
 
 ## Open owner decisions
 
-None of these has an owner ruling yet. They block the *full* M16.5 scope;
+Decision 1 is resolved (above); the others have no owner ruling yet. They block the *full* M16.5 scope;
 the first slice above needs none of them, since it only pins identity and
 leaves pipeline selection, task-kind routing and policy enforcement
 untouched.
 
-1. **Opening the closed `officeTaskKinds` list.**
-   `packages/domain/src/office/office-manifest.ts:3-9` hard-codes exactly five
-   software task kinds (`feature, bugfix, maintenance, research, release`),
-   enforced by the office-manifest Zod schema and the `office:pipeline` CLI
-   command. A legal task (`matter`, `civil-matter`, `criminal-matter`,
-   `labor-matter` as declared in the legal pack) cannot route through a real
-   pipeline until this list opens. `generic-core-domain-packs.md:5688-5692`
-   records this as unowned today and notes it is undecided whether the M16
-   "no privileged core import or branch" rule even covers this list. **Needed
-   decision:** who owns opening this list, and whether it opens as part of
-   Runtime activation or as its own task.
+1. **Opening the closed `officeTaskKinds` list. — Resolved 2026-10-11 as a
+   standalone change.** `packages/domain/src/office/office-manifest.ts` used to
+   hard-code exactly five software task kinds. At the owner's explicit request
+   the manifest schema, `office:pipeline` and the generated guidance now accept
+   any manifest-declared kebab-case task kind; the five stay as shipped
+   defaults (see the 2026-10-11 addendum in `generic-core-domain-packs.md`).
+   This resolves only that question. It is not part of M16.5 delivery and does
+   not approve the rest of this proposal; whether the M16 "no privileged core
+   import or branch" rule covers the list is not decided here.
 2. **Splitting the GP-16 run gate.** The merged GP-16 delivered only
    capability declarations and fail-closed provider availability at
    resolution/binding preflight; "bind registered providers at bootstrap" and

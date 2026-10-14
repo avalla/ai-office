@@ -532,8 +532,253 @@ profiles:
     }
   });
 
+  describe("office:apply refreshes generated guidance (ADR-0033)", () => {
+    const skillPath = [".agents", "skills", "ai-office", "SKILL.md"];
+
+    async function boot(prefix: string) {
+      const projectRoot = mkdtempSync(join(tmpdir(), prefix));
+      temporaryDirectories.push(projectRoot);
+      writeFileSync(join(projectRoot, "README.md"), "# Refresh\n");
+      const socket = createTestUnixSocket();
+      temporaryDirectories.push(socket.root);
+      const daemon = await bootstrap({
+        projectRoot,
+        socketPath: socket.socketPath,
+      });
+      const controller = new AbortController();
+      const running = daemon.start(controller.signal);
+      await waitForDaemon(socket.socketPath);
+      const invoke = async (
+        args: string[],
+        workingDirectory = projectRoot,
+        answers: string[] = [],
+      ) => {
+        const output = captureIo(answers);
+        const code = await runRuntimeCli(args, {
+          projectRoot,
+          workingDirectory,
+          socketPath: socket.socketPath,
+          io: output.io,
+        });
+        return { code, ...output };
+      };
+      const stop = async () => {
+        controller.abort();
+        await running;
+      };
+      return { projectRoot, invoke, stop };
+    }
+
+    function manifestWithKind(kind: string): string {
+      const manifest = JSON.parse(
+        readFileSync(
+          new URL(
+            "../../.agents/skills/ai-office/assets/default-office-manifest.json",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      ) as { pipelines: { id: string; defaultFor: string[] }[] };
+      manifest.pipelines.find((p) => p.id === "release")!.defaultFor.push(kind);
+      return JSON.stringify(manifest);
+    }
+
+    async function installed(
+      invoke: (args: string[]) => Promise<{ code: number; stdout: string[] }>,
+    ): Promise<string> {
+      const result = await invoke(["install", ".", "--json"]);
+      expect([0, 2]).toContain(result.code);
+      return (JSON.parse(result.stdout[0]!) as { project: { id: string } })
+        .project.id;
+    }
+
+    test("regenerates the repository skill after a successful apply from the bound repository", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-sync-");
+      try {
+        const projectId = await installed(invoke);
+        const skill = join(projectRoot, ...skillPath);
+        expect(readFileSync(skill, "utf8")).not.toContain("zz-custom-kind");
+
+        const applied = await invoke([
+          "office:apply",
+          "--project",
+          projectId,
+          "--manifest",
+          manifestWithKind("zz-custom-kind"),
+          "--refresh-guidance",
+        ]);
+        expect(applied.code).toBe(0);
+        expect(applied.stderr.join("\n")).toContain(
+          "Generated project guidance reconciled",
+        );
+        expect(readFileSync(skill, "utf8")).toContain("zz-custom-kind");
+      } finally {
+        await stop();
+      }
+    });
+
+    test("keeps the committed revision and reports warnings when an unmanaged skill blocks the refresh", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-blk-");
+      try {
+        const projectId = await installed(invoke);
+        const skill = join(projectRoot, ...skillPath);
+        const userOwned = "# my own skill, not managed by AI Office\n";
+        writeFileSync(skill, userOwned);
+
+        const applied = await invoke([
+          "office:apply",
+          "--project",
+          projectId,
+          "--manifest",
+          manifestWithKind("zz-custom-kind"),
+          "--refresh-guidance",
+        ]);
+        expect(applied.code).toBe(0);
+        expect(readFileSync(skill, "utf8")).toBe(userOwned);
+        // Detected or not, a preserved user-owned skill must never be reported
+        // as a successful reconciliation.
+        const stderr = applied.stderr.join("\n");
+        expect(stderr).toContain("finished with warnings");
+        expect(stderr).toContain("user-owned AI Office file was preserved");
+        expect(stderr).not.toContain("Generated project guidance reconciled");
+        const shown = await invoke(["office:show", "--project", projectId]);
+        expect(shown.stdout.join("\n")).toContain("zz-custom-kind");
+      } finally {
+        await stop();
+      }
+    });
+
+    test("does not warn when only a sibling instruction file is user-owned and the skill is refreshed", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-sib-");
+      try {
+        const projectId = await installed(invoke);
+        writeFileSync(join(projectRoot, "AI-OFFICE.md"), "# my own notes\n");
+        const applied = await invoke([
+          "office:apply",
+          "--project",
+          projectId,
+          "--manifest",
+          manifestWithKind("zz-custom-kind"),
+          "--refresh-guidance",
+        ]);
+        expect(applied.code).toBe(0);
+        expect(readFileSync(join(projectRoot, ...skillPath), "utf8")).toContain(
+          "zz-custom-kind",
+        );
+        expect(applied.stderr.join("\n")).not.toContain("preserved");
+      } finally {
+        await stop();
+      }
+    });
+
+    test("leaves the files untouched when the refresh is not approved", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-no-");
+      try {
+        const projectId = await installed(invoke);
+        const skill = join(projectRoot, ...skillPath);
+        const before = readFileSync(skill, "utf8");
+        const args = [
+          "office:apply",
+          "--project",
+          projectId,
+          "--manifest",
+          manifestWithKind("zz-custom-kind"),
+        ];
+
+        const declined = await invoke(args, projectRoot, ["n"]);
+        expect(declined.code).toBe(0);
+        expect(declined.prompts.join("\n")).toContain("Refresh the generated");
+        expect(declined.stderr.join("\n")).toContain("was not refreshed");
+        expect(declined.stderr.join("\n")).toContain("ai-office install .");
+        expect(declined.stderr.join("\n")).not.toContain("office:apply");
+        expect(readFileSync(skill, "utf8")).toBe(before);
+
+        const status = await invoke(["status", ".", "--json"]);
+        expect(
+          (
+            JSON.parse(status.stdout[0]!) as { issues: { code: string }[] }
+          ).issues.map((issue) => issue.code),
+        ).toContain("shared_project_artifacts_drifted");
+
+        const accepted = await invoke(
+          [
+            ...args.slice(0, 3),
+            "--manifest",
+            manifestWithKind("zz-custom-kind-2"),
+          ],
+          projectRoot,
+          ["y"],
+        );
+        expect(accepted.code).toBe(0);
+        expect(accepted.stderr.join("\n")).toContain("reconciled");
+        expect(readFileSync(skill, "utf8")).toContain("zz-custom-kind-2");
+      } finally {
+        await stop();
+      }
+    });
+
+    test("treats a skill with relocated marker text as preserved, like the adapter", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-mk-");
+      try {
+        const projectId = await installed(invoke);
+        const skill = join(projectRoot, ...skillPath);
+        writeFileSync(skill, `my notes first\n${readFileSync(skill, "utf8")}`);
+        const applied = await invoke([
+          "office:apply",
+          "--project",
+          projectId,
+          "--manifest",
+          manifestWithKind("zz-custom-kind"),
+          "--refresh-guidance",
+        ]);
+        expect(applied.code).toBe(0);
+        expect(applied.stderr.join("\n")).toContain("was preserved");
+        expect(applied.stderr.join("\n")).not.toContain("reconciled");
+      } finally {
+        await stop();
+      }
+    });
+
+    test("does not touch any repository when the caller is outside the bound project", async () => {
+      const { projectRoot, invoke, stop } = await boot("ai-office-apply-out-");
+      const elsewhere = mkdtempSync(join(tmpdir(), "ai-office-apply-cwd-"));
+      temporaryDirectories.push(elsewhere);
+      try {
+        const projectId = await installed(invoke);
+        const skill = join(projectRoot, ...skillPath);
+        const before = readFileSync(skill, "utf8");
+
+        const applied = await invoke(
+          [
+            "office:apply",
+            "--project",
+            projectId,
+            "--manifest",
+            manifestWithKind("zz-custom-kind"),
+          ],
+          elsewhere,
+        );
+        expect(applied.code).toBe(0);
+        expect(applied.stderr).toEqual([]);
+        expect(readFileSync(skill, "utf8")).toBe(before);
+
+        // The contract-aware lifecycle status still reports the stale skill.
+        const status = await invoke(["status", ".", "--json"]);
+        expect(
+          (
+            JSON.parse(status.stdout[0]!) as { issues: { code: string }[] }
+          ).issues.map((issue) => issue.code),
+        ).toContain("shared_project_artifacts_drifted");
+      } finally {
+        await stop();
+      }
+    });
+  });
+
   test("persists and resolves task-delivery setup over the socket with project autodiscovery", async () => {
-    const projectRoot = mkdtempSync(join(tmpdir(), "ai-office-delivery-setup-cli-"));
+    const projectRoot = mkdtempSync(
+      join(tmpdir(), "ai-office-delivery-setup-cli-"),
+    );
     temporaryDirectories.push(projectRoot);
     writeFileSync(join(projectRoot, "README.md"), "# Setup\n");
     const socket = createTestUnixSocket();
@@ -683,7 +928,15 @@ profiles:
 
     expect(
       await runRuntimeCli(
-        ["delivery:setup:set", "--project", "p", "--key", "handoffMode", "--value", '"gate"'],
+        [
+          "delivery:setup:set",
+          "--project",
+          "p",
+          "--key",
+          "handoffMode",
+          "--value",
+          '"gate"',
+        ],
         {
           projectRoot,
           runtimePaths,

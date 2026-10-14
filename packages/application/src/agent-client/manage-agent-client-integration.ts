@@ -79,7 +79,7 @@ export class ManageAgentClientIntegration {
     const draft = await this.clients.get(input.clientId).plan({
       rootPath: input.rootPath,
       canonicalInstructions: compileProjectInstructions(input.contract),
-      projectSkill: compileProjectSkill(),
+      projectSkill: compileProjectSkill(input.contract.project.taskKinds),
     });
     return publicPlan(draft);
   }
@@ -94,7 +94,7 @@ export class ManageAgentClientIntegration {
     const draft = await client.plan({
       rootPath: input.rootPath,
       canonicalInstructions: compileProjectInstructions(input.contract),
-      projectSkill: compileProjectSkill(),
+      projectSkill: compileProjectSkill(input.contract.project.taskKinds),
     });
     if (draft.issues.some((issue) => issue.severity === "conflict"))
       throw new AgentClientPlanConflictError();

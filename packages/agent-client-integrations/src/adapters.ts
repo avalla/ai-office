@@ -21,6 +21,11 @@ import {
   compileProjectSkill,
   managedProjectSkillMarker,
 } from "@ai-office/application/agent-client/project-skill-compiler.ts";
+import {
+  officeIdentifierMaxLength,
+  officeIdentifierPattern,
+  officeTaskKindsMaxCount,
+} from "@ai-office/domain/office/office-manifest.ts";
 import { AgentClientIntegrationError } from "@ai-office/application/agent-client/errors.ts";
 import {
   LocalAgentClientFiles,
@@ -124,6 +129,14 @@ function isProjectSkillManaged(file: LocalInstructionFile): boolean {
   return hasManagedSkillMarker(file, managedProjectSkillMarker);
 }
 
+/** The adapter's own ownership rule for the shared project skill, by content. */
+export function isManagedProjectSkillContent(content: string): boolean {
+  return hasManagedSkillMarker(
+    { content } as LocalInstructionFile,
+    managedProjectSkillMarker,
+  );
+}
+
 function isClaudeSkillManaged(file: LocalInstructionFile): boolean {
   return hasManagedSkillMarker(file, claudeSkillMarker);
 }
@@ -161,6 +174,66 @@ function legacyState(file: LocalInstructionFile): AgentClientFileState {
   return file.exists
     ? fileState(file, "user_owned", "unmanaged")
     : fileState(file, "absent", "missing");
+}
+
+const taskKindsLinePattern = /^Classify tasks as (.+) and resolve/mu;
+const taskKindsPlaceholder =
+  "Classify tasks as <project task kinds> and resolve";
+
+/**
+ * Parse the rendered list ("a", "a or b", "a, b, or c"). Returns undefined
+ * when the line is absent or is not a well-formed list of manifest task-kind
+ * identifiers, i.e. it was hand-edited or is not the generated rendering.
+ */
+function declaredTaskKinds(content: string): string[] | undefined {
+  const list = taskKindsLinePattern.exec(content)?.[1];
+  if (list === undefined) return undefined;
+  const kinds = list.split(/,\s*(?:or\s+)?|\s+or\s+/u);
+  // Same constraints as the manifest and instruction-contract parsers: a list
+  // they would reject cannot be a generated projection.
+  return new Set(kinds).size === kinds.length &&
+    kinds.length <= officeTaskKindsMaxCount &&
+    kinds.every(
+      (kind) =>
+        kind.length <= officeIdentifierMaxLength &&
+        officeIdentifierPattern.test(kind),
+    )
+    ? kinds
+    : undefined;
+}
+
+/**
+ * The project skill's "Classify tasks as ..." line is manifest-dependent
+ * (M16.5). The contractless `inspect`/`validate` path has no authoritative
+ * manifest to recompute it from, so the exact kinds cannot be verified
+ * there: everything else is compared exactly, the line is only checked to be
+ * a well-formed generated list, and the state says the task kinds were not
+ * verified. Contract-aware paths (`plan`, lifecycle `status`) compare the
+ * exact line against the manifest-derived rendering.
+ */
+function normalizedProjectSkill(content: string): string {
+  return content.replace(taskKindsLinePattern, taskKindsPlaceholder);
+}
+
+function projectSkillState(file: LocalInstructionFile): AgentClientFileState {
+  if (!file.exists) return fileState(file, "absent", "missing");
+  if (!isProjectSkillManaged(file))
+    return fileState(file, "user_owned", "unmanaged");
+  const expected = normalizedProjectSkill(compileProjectSkill());
+  const actual =
+    file.content === undefined
+      ? undefined
+      : normalizedProjectSkill(file.content);
+  const wellFormed =
+    file.content !== undefined && declaredTaskKinds(file.content) !== undefined;
+  const state = fileState(
+    file,
+    "ai_office_owned",
+    wellFormed && equivalentText(actual, expected) ? "integrated" : "drifted",
+  );
+  return state.integrationStatus === "integrated"
+    ? { ...state, unverified: ["task_kinds"] }
+    : state;
 }
 
 interface ClaudeBridgeAnalysis {
@@ -482,11 +555,7 @@ export class CodexAgentClientAdapter extends BaseAgentClientAdapter {
       rootPath: root,
       canonicalInstructions: canonicalState(canonical),
       clientInstructions: codexPointerState(pointer),
-      skillInstructions: managedState(
-        projectSkill,
-        isProjectSkillManaged,
-        compileProjectSkill(),
-      ),
+      skillInstructions: projectSkillState(projectSkill),
       legacyInstructions: legacyState(legacy),
       issues,
     };
@@ -712,11 +781,7 @@ export class ClaudeAgentClientAdapter extends BaseAgentClientAdapter {
       rootPath: root,
       canonicalInstructions: canonicalState(canonical),
       clientInstructions: bridge.state,
-      sharedSkillInstructions: managedState(
-        projectSkill,
-        isProjectSkillManaged,
-        compileProjectSkill(),
-      ),
+      sharedSkillInstructions: projectSkillState(projectSkill),
       skillInstructions: managedState(
         claudeSkill,
         isClaudeSkillManaged,

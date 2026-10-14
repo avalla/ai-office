@@ -1,3 +1,9 @@
+import {
+  officeIdentifierMaxLength,
+  officeIdentifierPattern,
+  officeTaskKindsMaxCount,
+} from "../office/office-manifest.ts";
+
 export type AgentReasoningStyle = "architecture_first";
 export type AgentAutonomy = "guided" | "high";
 export type ChangeAuthority = "autonomous" | "approval_required";
@@ -27,6 +33,8 @@ export interface ProjectInstructionContract {
     testing: readonly string[];
     documentation: readonly string[];
     definitionOfDone: readonly string[];
+    /** Task kinds this project's own office manifest declares a default pipeline for. */
+    taskKinds: readonly string[];
   };
 }
 
@@ -60,6 +68,27 @@ function exactKeys(
     );
 }
 
+function keysWithOptional(
+  value: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+  path: string,
+): void {
+  const actual = new Set(Object.keys(value));
+  for (const key of required)
+    if (!actual.has(key))
+      throw new InvalidProjectInstructionContractError(
+        path,
+        `missing required field: ${key}`,
+      );
+  for (const key of actual)
+    if (!required.includes(key) && !optional.includes(key))
+      throw new InvalidProjectInstructionContractError(
+        path,
+        `unexpected field: ${key}`,
+      );
+}
+
 function text(value: unknown, path: string): string {
   if (typeof value !== "string" || value.trim() === "")
     throw new InvalidProjectInstructionContractError(
@@ -78,6 +107,38 @@ function textList(value: unknown, path: string): readonly string[] {
   return Object.freeze(
     value.map((item, index) => text(item, `${path}[${index}]`)),
   );
+}
+
+/**
+ * Task kinds must be resolvable against an office manifest, so they follow
+ * the manifest identifier rule and are unique.
+ */
+function taskKindList(value: unknown, path: string): readonly string[] {
+  // An empty list is the normalized form of an omitted field (the shipped
+  // default kinds), so a parsed contract must survive being parsed again.
+  if (Array.isArray(value) && value.length === 0) return Object.freeze([]);
+  const kinds = textList(value, path);
+  kinds.forEach((kind, index) => {
+    if (
+      kind.length > officeIdentifierMaxLength ||
+      !officeIdentifierPattern.test(kind)
+    )
+      throw new InvalidProjectInstructionContractError(
+        `${path}[${index}]`,
+        "expected a lowercase kebab-case task kind identifier",
+      );
+  });
+  if (new Set(kinds).size !== kinds.length)
+    throw new InvalidProjectInstructionContractError(
+      path,
+      "task kinds must be unique",
+    );
+  if (kinds.length > officeTaskKindsMaxCount)
+    throw new InvalidProjectInstructionContractError(
+      path,
+      `at most ${officeTaskKindsMaxCount} task kinds are allowed`,
+    );
+  return kinds;
 }
 
 function boolean(value: unknown, path: string): boolean {
@@ -130,7 +191,7 @@ export function parseProjectInstructionContract(
     "$.policy",
   );
   const project = record(root.project, "$.project");
-  exactKeys(
+  keysWithOptional(
     project,
     [
       "name",
@@ -142,6 +203,10 @@ export function parseProjectInstructionContract(
       "documentation",
       "definitionOfDone",
     ],
+    // M16.5: optional for backward compatibility with contract JSON
+    // written before task kinds became project-specific; absent means
+    // "use the shipped default kinds" (see project-skill-compiler.ts).
+    ["taskKinds"],
     "$.project",
   );
 
@@ -198,6 +263,10 @@ export function parseProjectInstructionContract(
         project.definitionOfDone,
         "$.project.definitionOfDone",
       ),
+      taskKinds:
+        project.taskKinds === undefined
+          ? Object.freeze([])
+          : taskKindList(project.taskKinds, "$.project.taskKinds"),
     }),
   });
 }

@@ -55,9 +55,11 @@ Commands:
   office:validate (--file <path> [--root <path>] | --manifest <json>)
     --file is canonically contained in the nearest binding/Git root from --root
     (--root defaults to caller cwd; standalone directories use that directory)
-  office:apply --project <id> (--file <path> | --manifest <json>)
+  office:apply --project <id> (--file <path> | --manifest <json>) [--refresh-guidance]  # from the bound repository, approve refreshing generated guidance (runs install .)
   office:show --project <id>
-  office:pipeline --project <id> --task-kind <feature|bugfix|maintenance|research|release>
+  office:pipeline --project <id> --task-kind <kind>
+    kind must match a task kind the project's own office manifest declares a
+    default pipeline for; shipped defaults are feature|bugfix|maintenance|research|release
   pipeline:start --project <id> --task <id> --pipeline <id> [--actor-label <label>]
   pipeline:status --project <id> [--run <id>]
   pipeline:assign --project <id> --run <id> --agent <id> [--actor-label <label>]

@@ -1,5 +1,10 @@
 import { createInterface, type Interface } from "node:readline/promises";
-import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import {
+  codexProjectSkillPath,
+  isManagedProjectSkillContent,
+} from "@ai-office/agent-client-integrations/adapters.ts";
 import { isLocalVersionInvocation } from "@ai-office/command-support/version.ts";
 import { runVersionCli } from "./version-cli.ts";
 import { resolveCallerLocalPaths } from "@ai-office/command-support/caller-local-paths.ts";
@@ -292,6 +297,111 @@ async function resolveDiscoveredProject(
   return status.project.id;
 }
 
+function optionValue(args: string[], name: string): string | undefined {
+  const index = args.indexOf(name);
+  return index === -1 ? undefined : args[index + 1];
+}
+
+/**
+ * ADR-0033: `office:apply` only persists a manifest revision. When the caller
+ * runs inside the repository bound to the applied project, the client then
+ * reconciles the generated guidance through the existing `install` flow. The
+ * revision is already committed, so a failed refresh is reported on stderr and
+ * never changes the apply exit code.
+ */
+async function refreshGeneratedGuidance(input: {
+  client: RuntimeClient;
+  bindings: ProjectBindingReader;
+  workingDirectory: string;
+  appliedProjectId: string | undefined;
+  io: CliIo;
+  /** Explicit non-interactive approval (`--refresh-guidance`). */
+  approved: boolean;
+  /** True when a person can answer: a test prompt or a terminal. */
+  interactive: boolean;
+  prompt: (message: string) => Promise<string>;
+}): Promise<void> {
+  const recovery =
+    "Run ai-office install . from the repository to refresh the generated guidance.";
+  try {
+    const inspection = await input.bindings.inspect(input.workingDirectory, {
+      ancestors: true,
+    });
+    if (inspection.status !== "valid" || inspection.binding === undefined)
+      return;
+    let boundProjectId: string;
+    try {
+      boundProjectId = await resolveDiscoveredProject(
+        input.client,
+        inspection.rootPath,
+      );
+    } catch (error) {
+      // A binding this Runtime does not know is not this project's repository.
+      if (error instanceof ProjectBindingError) return;
+      throw error;
+    }
+    if (boundProjectId !== input.appliedProjectId) return;
+    // ADR-0033: the refresh rewrites repository files, so it needs approval:
+    // the explicit flag, or an interactive answer. Without either the
+    // revision stays committed and the files stay untouched.
+    let approved = input.approved;
+    if (!approved && input.interactive)
+      approved = /^y(es)?$/iu.test(
+        (
+          await input.prompt(
+            "Refresh the generated project guidance in this repository now (runs ai-office install .)? [y/N] ",
+          )
+        ).trim(),
+      );
+    if (!approved) {
+      input.io.stderr(
+        `The manifest revision was applied; the generated guidance was not refreshed. ${recovery}`,
+      );
+      return;
+    }
+    const response = await input.client.execute([
+      "install",
+      inspection.rootPath,
+      "--json",
+    ]);
+    const exitCode = response.exitCode ?? 1;
+    if (exitCode !== 0 && exitCode !== 2) {
+      input.io.stderr(
+        `The manifest revision was applied, but refreshing the generated guidance failed. ${recovery}`,
+      );
+      return;
+    }
+    const installed = JSON.parse(response.stdout[0] ?? "{}") as {
+      changes?: unknown[];
+    };
+    // Exit 0 does not prove a user-owned skill was refreshed (`clientIssues`
+    // hides unmanaged configurations of undetected clients), and a client
+    // reported as unmanaged may still own a managed skill. Inspect the skill
+    // files themselves: a skill without the managed marker was preserved.
+    const skillFile = join(inspection.rootPath, codexProjectSkillPath);
+    let preserved = false;
+    try {
+      preserved =
+        existsSync(skillFile) &&
+        !isManagedProjectSkillContent(readFileSync(skillFile, "utf8"));
+    } catch {
+      preserved = false;
+    }
+    if (exitCode === 2 || preserved)
+      input.io.stderr(
+        `The manifest revision was applied, but the generated guidance refresh finished with warnings${preserved ? ": a user-owned AI Office file was preserved and may still list the previous task kinds" : ""}. Run ai-office status . for details.`,
+      );
+    else
+      input.io.stderr(
+        `Generated project guidance reconciled (${installed.changes?.length ?? 0} file(s) updated).`,
+      );
+  } catch {
+    input.io.stderr(
+      `The manifest revision was applied, but refreshing the generated guidance failed. ${recovery}`,
+    );
+  }
+}
+
 export async function runRuntimeCli(
   args: string[],
   options: RuntimeCliOptions,
@@ -472,7 +582,17 @@ export async function runRuntimeCli(
       return projectStatusExitCode(status.health);
     }
 
-    const prepared = await resolvedArguments(args, workingDirectory, bindings);
+    // `--refresh-guidance` is a client-only approval (ADR-0033); the Runtime
+    // never sees it.
+    const refreshApproved =
+      args[0] === "office:apply" && args.includes("--refresh-guidance");
+    const prepared = await resolvedArguments(
+      refreshApproved
+        ? args.filter((argument) => argument !== "--refresh-guidance")
+        : args,
+      workingDirectory,
+      bindings,
+    );
     const commandArguments =
       prepared.discoveredRoot === undefined
         ? prepared.args
@@ -499,7 +619,23 @@ export async function runRuntimeCli(
         for (const line of stdout) io.stdout(line);
         for (const line of response.stderr) io.stderr(line);
 
-        if (response.prompt === undefined) return response.exitCode ?? 1;
+        if (response.prompt === undefined) {
+          const exitCode = response.exitCode ?? 1;
+          if (exitCode === 0 && commandArguments[0] === "office:apply")
+            await refreshGeneratedGuidance({
+              client,
+              bindings,
+              workingDirectory,
+              appliedProjectId: optionValue(commandArguments, "--project"),
+              io,
+              approved: refreshApproved,
+              interactive:
+                io.prompt !== undefined ||
+                (process.stdin.isTTY === true && process.stdout.isTTY === true),
+              prompt,
+            });
+          return exitCode;
+        }
         previousPromptContext = promptContext(response.stdout);
         answer = await prompt(response.prompt.message);
       }

@@ -207,6 +207,29 @@ describe("skill-first onboarding through the daemon", () => {
       ).toBe(0);
       expect(JSON.parse(pipeline.stdout[0]!)).toMatchObject({ id: "bugfix" });
 
+      // A malformed kind is rejected before lookup and never echoed.
+      const malformed = captureIo();
+      expect(
+        await runDaemonCli(
+          [
+            "office:pipeline",
+            "--project",
+            importResult.projectId,
+            "--task-kind",
+            "Civil_Matter",
+          ],
+          {
+            projectRoot,
+            workingDirectory: projectRoot,
+            socketPath,
+            io: malformed.io,
+          },
+        ),
+      ).not.toBe(0);
+      expect(malformed.stdout).toEqual([]);
+      expect(malformed.stderr.join("\n")).toContain("kebab-case identifier");
+      expect(malformed.stderr.join("\n")).not.toContain("Civil_Matter");
+
       manifest.project.mission = "Ship a provider-neutral onboarding flow";
       writeFileSync(manifestPath, JSON.stringify(manifest));
       const secondApply = captureIo();

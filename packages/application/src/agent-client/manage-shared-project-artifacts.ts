@@ -16,7 +16,7 @@ export class ManageSharedProjectArtifacts {
     return this.adapter.plan({
       rootPath: input.rootPath,
       canonicalInstructions: compileProjectInstructions(input.contract),
-      projectSkill: compileProjectSkill(),
+      projectSkill: compileProjectSkill(input.contract.project.taskKinds),
     });
   }
 

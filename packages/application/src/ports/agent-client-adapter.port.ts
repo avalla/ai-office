@@ -19,6 +19,12 @@ export interface AgentClientFileState {
   /** Integration state at this file's boundary; see the client integration contract. */
   integrationStatus:
     "missing" | "integrated" | "drifted" | "unmanaged" | "conflict";
+  /**
+   * Aspects this inspection could not verify for lack of the authoritative
+   * project contract. An `integrated` state with entries here is a partial
+   * verification, not a complete one. Absent when everything was verified.
+   */
+  unverified?: readonly "task_kinds"[];
 }
 
 export interface AgentClientIntegrationIssue {
