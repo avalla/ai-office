@@ -320,6 +320,10 @@ describe("agent client integrations", () => {
       [`${pointer}\n${"Keep this note.\n".repeat(100)}`, true],
       [`${pointer}\nAlways run the linter before committing.\n`, true],
       [`${pointer}\n## Notes\n\nAlways run the linter.\n`, true],
+      [`${pointer.trimEnd()}\n- Always run the release script.\n`, true],
+      [`${pointer.trimEnd()}\n> Always run the release script.\n`, true],
+      [`${pointer.trimEnd()}\n1. Always run the release script.\n`, true],
+      [`${pointer.trimEnd()}\n    npm run release\n`, true],
       [
         "# Codex compatibility\n\n## Always run the release script manually\n\nSee [AGENTS.md](AGENTS.md).\n",
         true,

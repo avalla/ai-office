@@ -106,13 +106,18 @@ const legacyPointerMaxLength = 1024;
 const legacyPointerTarget = `](${codexProjectInstructionsPath})`;
 
 const legacyPointerMaxParagraphs = 2;
+// Line starts that open a Markdown block other than a plain paragraph: list,
+// quote, heading, fence, table, HTML, setext underline, or indented code.
+const nonParagraphLineStart =
+  /^(?:[-*+]\s|\d+[.)]\s|>|#|\||```|~~~|<|=+\s*$|-+\s*$| {4}|\t)/u;
 
 /**
  * A legacy CODEX.md that is only a short pointer to AGENTS.md needs no
  * migration. Besides an optional leading H1 title, it must be at most a couple
- * of paragraphs and each must itself link AGENTS.md, so any other heading or
- * paragraph keeps the file reported. Notes written inside a linking paragraph
- * or in the title cannot be told apart from prose and are accepted.
+ * of plain paragraphs, each linking AGENTS.md and containing no other Markdown
+ * block (list, quote, heading, code, table, HTML), so any other block keeps
+ * the file reported. Notes written inside a linking paragraph or in the title
+ * cannot be told apart from prose and are accepted.
  */
 function isLegacyCompatibilityPointer(file: LocalInstructionFile): boolean {
   if (file.content === undefined) return false;
@@ -126,7 +131,11 @@ function isLegacyCompatibilityPointer(file: LocalInstructionFile): boolean {
   return (
     blocks.length >= 1 &&
     blocks.length <= legacyPointerMaxParagraphs &&
-    blocks.every((block) => block.includes(legacyPointerTarget))
+    blocks.every(
+      (block) =>
+        block.includes(legacyPointerTarget) &&
+        !block.split("\n").some((line) => nonParagraphLineStart.test(line)),
+    )
   );
 }
 
