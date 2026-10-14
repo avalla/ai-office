@@ -107,9 +107,9 @@ const legacyPointerMaxParagraphs = 2;
 const legacyPointerTitle = /^# [\p{L}\p{M}\p{N} .,;:!?'’()-]+$/u;
 const legacyPointerCodeSpan = /`[^`\n]+`/gu;
 const legacyPointerAgentsLink =
-  /\[[\p{L}\p{M}\p{N} .,'’-]+\]\((?:\.\/)?AGENTS\.md\)/u;
+  /(?<!!)\[[\p{L}\p{M}\p{N} .,'’-]+\]\((?:\.\/)?AGENTS\.md\)/u;
 const legacyPointerCanonicalLink =
-  /\[[\p{L}\p{M}\p{N} .,'’-]+\]\((?:\.\/)?(?:AGENTS|AI-OFFICE)\.md\)/gu;
+  /(?<!!)\[[\p{L}\p{M}\p{N} .,'’-]+\]\((?:\.\/)?(?:AGENTS|AI-OFFICE)\.md\)/gu;
 const legacyPointerProse = /^[\p{L}\p{M}\p{N} .,;:!?'’()\n-]+$/u;
 const legacyPointerLineStart = /^[\p{L}[`]/u;
 

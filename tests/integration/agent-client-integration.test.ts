@@ -337,6 +337,7 @@ describe("agent client integrations", () => {
       ["# Codex compatibility\n\nSee [AGENTS.md](AGENTS.md)!\n", false],
       ["Istruzioni del dépôt: vedi [AGENTS.md](AGENTS.md).\n", false],
       ["See [AGENTS.md](AGENTS.md) *now*.\n", true],
+      ["See ![AGENTS.md](AGENTS.md) here.\n", true],
       ["`[AGENTS.md](AGENTS.md)`\n", true],
       ["![AGENTS.md](AGENTS.md)\n", true],
       ["See \\[AGENTS.md](AGENTS.md).\n", true],
