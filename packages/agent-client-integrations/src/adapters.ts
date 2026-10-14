@@ -103,13 +103,13 @@ function isCodexPointerManaged(file: LocalInstructionFile): boolean {
 }
 
 const legacyPointerMaxLength = 1024;
-const legacyPointerTarget = `](${codexProjectInstructionsPath})`;
+const legacyPointerLink = /\]\((?:\.\/)?AGENTS\.md\)/u;
 
 const legacyPointerMaxParagraphs = 2;
 // Line starts that open a Markdown block other than a plain paragraph: list,
 // quote, heading, fence, table, HTML, setext underline, or indented code.
 const nonParagraphLineStart =
-  /^(?:[-*+]\s|\d+[.)]\s|>|#|\||```|~~~|<|=+\s*$|-+\s*$| {4}|\t)/u;
+  /^ {0,3}(?:[-*+]\s|\d+[.)]\s|>|#|\||```|~~~|<|=+\s*$|-+\s*$)|^(?: {4}|\t)/u;
 
 /**
  * A legacy CODEX.md that is only a short pointer to AGENTS.md needs no
@@ -133,7 +133,7 @@ function isLegacyCompatibilityPointer(file: LocalInstructionFile): boolean {
     blocks.length <= legacyPointerMaxParagraphs &&
     blocks.every(
       (block) =>
-        block.includes(legacyPointerTarget) &&
+        legacyPointerLink.test(block) &&
         !block.split("\n").some((line) => nonParagraphLineStart.test(line)),
     )
   );

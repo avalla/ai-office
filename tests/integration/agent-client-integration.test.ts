@@ -324,6 +324,9 @@ describe("agent client integrations", () => {
       [`${pointer.trimEnd()}\n> Always run the release script.\n`, true],
       [`${pointer.trimEnd()}\n1. Always run the release script.\n`, true],
       [`${pointer.trimEnd()}\n    npm run release\n`, true],
+      [`${pointer.trimEnd()}\n  - Always run the release script.\n`, true],
+      [`${pointer.trimEnd()}\n   > Always run the release script.\n`, true],
+      ["# Codex compatibility\n\nSee [instructions](./AGENTS.md).\n", false],
       [
         "# Codex compatibility\n\n## Always run the release script manually\n\nSee [AGENTS.md](AGENTS.md).\n",
         true,
