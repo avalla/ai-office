@@ -72,3 +72,22 @@ WHEN EXISTS (
   WHERE project_id = OLD.project_id AND id = OLD.pipeline_run_id
 )
 BEGIN SELECT RAISE(ABORT, 'pipeline run configuration pack pin is append-only'); END;
+
+-- Tuples are sealed once the run is created. The run, its tuples and its
+-- stage rows are written in one transaction, tuples before stages, and a run
+-- always has at least one stage (the domain rejects an empty definition). A
+-- tuple may therefore be inserted only while the run has no stage row yet, and
+-- only for a run that carries a configuration pin: a later writer cannot add
+-- tuples that would change the selected/resolved packs under an unchanged
+-- configuration digest.
+CREATE TRIGGER pipeline_run_configuration_pack_seal
+BEFORE INSERT ON pipeline_run_configuration_pack
+WHEN NOT EXISTS (
+  SELECT 1 FROM pipeline_run
+  WHERE project_id = NEW.project_id AND id = NEW.pipeline_run_id
+    AND configuration_digest IS NOT NULL
+) OR EXISTS (
+  SELECT 1 FROM pipeline_stage_run
+  WHERE project_id = NEW.project_id AND pipeline_run_id = NEW.pipeline_run_id
+)
+BEGIN SELECT RAISE(ABORT, 'pipeline run configuration pack pin is sealed after the run is created'); END;

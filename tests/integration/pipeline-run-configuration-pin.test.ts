@@ -338,6 +338,65 @@ describe("pipeline run configuration pin (M16.5 Runtime activation, first slice)
     expect(tuples().n).toBe(0);
   });
 
+  test("pinned pack tuples are sealed once the run is created (P2, PR #168)", async () => {
+    const h = await harness();
+    const projectId = "seal-project";
+    const taskId = "seal-task";
+    await seedProject(h, projectId, taskId);
+    const bytes = readFileSync(
+      new URL(
+        "../../packages/domain-pack-legal/manifest.json",
+        import.meta.url,
+      ),
+    );
+    const pack = h.catalog.register({
+      bytes,
+      artifactDigest: computeArtifactDigest(bytes),
+      provenance: { installerId: "pin-fixture", reference: "legal" },
+    });
+    await h.storage.packBindings.replace(projectId, 0, [pack], now);
+    const run = await h.manager.start({
+      projectId,
+      taskId,
+      pipelineId: "delivery",
+      principal: localOperatorPrincipal,
+    });
+    const insertTuple = (runId: string, packId: string) =>
+      h.database.exec(
+        `INSERT INTO pipeline_run_configuration_pack
+           (pipeline_run_id, project_id, relation, pack_id, pack_version, manifest_digest)
+         VALUES ('${runId}', '${projectId}', 'selected', '${packId}', '1.0.0',
+                 'sha256:${"a".repeat(64)}')`,
+      );
+
+    // A late writer cannot add a tuple under the unchanged digest.
+    expect(() => insertTuple(run.snapshot().id, "late-pack")).toThrow(/sealed/);
+    const read = await h.storage.pipelines.findById(
+      run.snapshot().id,
+      projectId,
+    );
+    expect(read?.snapshot().configurationPin?.selectedPacks).toEqual([pack]);
+
+    // Nor can tuples be attached to a run that carries no pin.
+    const bareProject = "seal-bare-project";
+    await seedProject(h, bareProject, "seal-bare-task");
+    const unpinned = await h.manager.start({
+      projectId: bareProject,
+      taskId: "seal-bare-task",
+      pipelineId: "delivery",
+      principal: localOperatorPrincipal,
+    });
+    expect(unpinned.snapshot().configurationPin).toBeUndefined();
+    expect(() =>
+      h.database.exec(
+        `INSERT INTO pipeline_run_configuration_pack
+           (pipeline_run_id, project_id, relation, pack_id, pack_version, manifest_digest)
+         VALUES ('${unpinned.snapshot().id}', '${bareProject}', 'selected', 'late-pack', '1.0.0',
+                 'sha256:${"a".repeat(64)}')`,
+      ),
+    ).toThrow(/sealed/);
+  });
+
   test("pins nothing when the project has no pack selection, exactly like before this change", async () => {
     const h = await harness();
     const projectId = "no-pin-project";
