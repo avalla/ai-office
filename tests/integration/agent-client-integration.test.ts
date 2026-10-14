@@ -321,6 +321,10 @@ describe("agent client integrations", () => {
       [`${pointer}\nAlways run the linter before committing.\n`, true],
       [`${pointer}\n## Notes\n\nAlways run the linter.\n`, true],
       [
+        "# Codex compatibility\n\n## Always run the release script manually\n\nSee [AGENTS.md](AGENTS.md).\n",
+        true,
+      ],
+      [
         "# Codex compatibility\n\nThe canonical contract is [AGENTS.md](AGENTS.md) and\nthe office guidance is [AI-OFFICE.md](AI-OFFICE.md).\n",
         false,
       ],
