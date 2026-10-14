@@ -168,7 +168,8 @@ do not substitute `bun update -g` for the source-linked workflow.
     ai-office office:apply --project <projectId> --manifest <json>
     ```
 
-11. Return the applied revision and any capability or executor setup still needed.
+11. If the apply changed task kinds or other manifest-derived guidance, the generated repository skill is refreshed by `ai-office install .`. Tell the user that refresh runs `install` for this repository, which can also update other AI Office-managed files (for example `AI-OFFICE.md`, and an existing `CLAUDE.md` gets the managed bridge block appended while its own content is preserved). With their approval rerun the apply from the repository with `--refresh-guidance`, or run `ai-office install .` afterwards; without it the revision stays applied and the skill stays stale.
+12. Return the applied revision and any capability or executor setup still needed.
 
 ## Revise the office
 

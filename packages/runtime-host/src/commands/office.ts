@@ -11,7 +11,11 @@ import {
   parseTaskPageQuery,
   queryLimits,
 } from "@ai-office/application/protocol/query-protocol.ts";
-import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
+import {
+  officeIdentifierMaxLength,
+  officeIdentifierPattern,
+  type OfficeManifest,
+} from "@ai-office/domain/office/office-manifest.ts";
 import {
   CliUsageError,
   type CommandContext,
@@ -249,6 +253,15 @@ export async function handleOfficeCommand(
     // fixed global list. An unknown kind surfaces as
     // OfficePipelineNotFoundError from resolvePipeline below.
     const taskKind = requiredOption(parsed, "task-kind");
+    // Shape only: any conforming manifest-defined identifier is accepted, but
+    // a malformed value never reaches the lookup or the error text.
+    if (
+      taskKind.length > officeIdentifierMaxLength ||
+      !officeIdentifierPattern.test(taskKind)
+    )
+      throw new CliUsageError(
+        `--task-kind must be a lowercase kebab-case identifier of at most ${officeIdentifierMaxLength} characters`,
+      );
     const pipeline = await new GetOfficeContext(
       context.projects,
       context.profiles,
