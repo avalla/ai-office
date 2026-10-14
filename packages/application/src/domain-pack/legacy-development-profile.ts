@@ -327,17 +327,31 @@ export function deriveLegacyDevelopmentProfile(
     .sort((left, right) => compareCodeUnits(left.id, right.id));
 
   // Same rule as `GetOfficeContext.resolvePipeline`: the first pipeline, in
-  // manifest order, whose `defaultFor` names the kind.
-  const taskKinds: LegacyTaskKindRoute[] =
+  // manifest order, whose `defaultFor` names the kind. The five shipped kinds
+  // are always listed first, routed or not; kinds the manifest declares beyond
+  // them (M16.5) follow in manifest order. Before M16.5 a manifest could not
+  // declare other kinds, so the output for every previously valid manifest is
+  // unchanged and the profile version stays 1.
+  const declaredKinds: string[] =
     manifest === null
       ? []
-      : officeTaskKinds.map((kind) => ({
-          kind,
-          pipelineId:
-            manifest.pipelines.find((pipeline) =>
-              pipeline.defaultFor.includes(kind),
-            )?.id ?? null,
-        }));
+      : [
+          ...officeTaskKinds,
+          ...new Set(
+            manifest.pipelines
+              .flatMap((pipeline) => pipeline.defaultFor)
+              .filter(
+                (kind) =>
+                  !(officeTaskKinds as readonly string[]).includes(kind),
+              ),
+          ),
+        ];
+  const taskKinds: LegacyTaskKindRoute[] = declaredKinds.map((kind) => ({
+    kind,
+    pipelineId:
+      manifest?.pipelines.find((pipeline) => pipeline.defaultFor.includes(kind))
+        ?.id ?? null,
+  }));
 
   const runtimeOnlyRoles: LegacyRuntimeOnlyRole[] = input.roles
     .filter((role) => !manifestRoleIds.has(role.key))

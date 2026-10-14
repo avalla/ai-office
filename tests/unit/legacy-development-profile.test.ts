@@ -208,6 +208,31 @@ describe("GP-09 legacy development profile version 1", () => {
     });
   });
 
+  test("manifest-declared custom task kinds are routed after the shipped kinds (M16.5)", () => {
+    const profile = deriveLegacyDevelopmentProfile(
+      changed((value) => {
+        pipeline(value.office.manifest, "discovery").defaultFor = [
+          "research",
+          "matter",
+        ];
+        pipeline(value.office.manifest, "release").defaultFor = [
+          "release",
+          "civil-matter",
+        ];
+      }),
+    );
+    expect(profile.taskKinds.map((item) => item.kind)).toEqual([
+      ...officeTaskKinds,
+      "matter",
+      "civil-matter",
+    ]);
+    expect(
+      Object.fromEntries(
+        profile.taskKinds.map((item) => [item.kind, item.pipelineId]),
+      ),
+    ).toMatchObject({ matter: "discovery", "civil-matter": "release" });
+  });
+
   test("unvalidated input with two pipelines naming one kind routes it to the first in manifest order", () => {
     // The manifest schema refuses this input. `GetOfficeContext` would take
     // the first match on it, so the derivation does too, and here, unlike

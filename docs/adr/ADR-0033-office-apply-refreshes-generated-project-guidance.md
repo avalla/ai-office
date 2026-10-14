@@ -51,8 +51,12 @@ chose to keep the existing contract: the approval is an explicit decision to
 run `ai-office install .` for the bound repository (an interactive `[y/N]`
 answer, or `--refresh-guidance`). It is not bound to a plan hash, so a
 concurrent change between approval and apply is not re-approved, and `install`
-may reconcile other AI Office-managed artifacts (for example `AI-OFFICE.md`),
-never user-owned files. Hash-bound approval for this refresh remains a possible
+may reconcile other AI Office-managed artifacts (for example `AI-OFFICE.md`).
+It never overwrites a user-owned file's own content, but it can modify the
+file: when Claude is detected and an unmarked `CLAUDE.md` exists, `install`
+appends the managed bridge block to it, and it can replace an existing managed
+block inside a merged file. Approving the refresh therefore permits those edits
+too; arbitrary user content is preserved. Hash-bound approval for this refresh remains a possible
 follow-up that needs its own contract decision.
 
 ## Consequences
