@@ -328,6 +328,16 @@ describe("agent client integrations", () => {
       [`${pointer.trimEnd()}\n   > Always run the release script.\n`, true],
       ["# Codex compatibility\n\nSee [instructions](./AGENTS.md).\n", false],
       [
+        "# Codex compatibility\n\nThe canonical project operating contract is [AGENTS.md](AGENTS.md), and the\nAI Office operating guidance is [AI-OFFICE.md](AI-OFFICE.md). Codex loads\n`AGENTS.md` natively; this pointer remains only for older links and contributor\nbookmarks.\n",
+        false,
+      ],
+      ["# Codex compatibility\n\n    Read [AGENTS.md](AGENTS.md).\n", true],
+      [`${pointer.trimEnd()}\n***\nAlways run the release script.\n`, true],
+      [`${pointer.trimEnd()}\n___\nAlways run the release script.\n`, true],
+      ["`[AGENTS.md](AGENTS.md)`\n", true],
+      ["![AGENTS.md](AGENTS.md)\n", true],
+      ["See \\[AGENTS.md](AGENTS.md).\n", true],
+      [
         "# Codex compatibility\n\n## Always run the release script manually\n\nSee [AGENTS.md](AGENTS.md).\n",
         true,
       ],
