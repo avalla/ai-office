@@ -42,6 +42,13 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Executor confinement proposal](adr/ADR-0029-executor-confinement-and-filesystem-trust-boundary.md): proposed M18 decision gate for the filesystem trust boundary outside the executor client; not accepted current architecture.
 - [Task delivery profiles and handoff](development/task-delivery-profiles.md): plan for lite/full/custom delivery profiles, a slimmer skill, a handoff packet and `delivery:validate`; not implemented.
 - [Runtime-owned delivery state proposal](adr/ADR-0031-runtime-owned-delivery-state.md): proposed decision gate for recording delivery runs in the Runtime; not accepted current architecture.
+- [M20 Adaptive Agent Learning plan](development/adaptive-agent-learning.md):
+  proposed experience store, evaluation and admission, dataset curation,
+  fine-tuning backends and benchmark/rollout slices (AL-01–AL-05); no
+  implementation or training is authorized.
+- [Adaptive Agent Learning & Experience Governance](adr/ADR-0034-adaptive-agent-learning-experience-governance.md):
+  proposed decision gate separating advisory knowledge, authoritative Runtime
+  state and trained model weights; not accepted current architecture.
 - [Professional-work verticals](development/professional-work-verticals.md):
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and
