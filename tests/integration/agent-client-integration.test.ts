@@ -309,6 +309,56 @@ describe("agent client integrations", () => {
     );
   });
 
+  test("reports a legacy CODEX.md unless it is only a short pointer to AGENTS.md", async () => {
+    const integration = service();
+    const legacyCode = "legacy_codex_instructions_detected";
+    const pointer =
+      "# Codex compatibility\n\nCanonical contract: [AGENTS.md](AGENTS.md).\n";
+    for (const [content, reported] of [
+      [pointer, false],
+      ["# Legacy user notes\n", true],
+      [`${pointer}\n${"Keep this note.\n".repeat(100)}`, true],
+      [`${pointer}\nAlways run the linter before committing.\n`, true],
+      [`${pointer}\n## Notes\n\nAlways run the linter.\n`, true],
+      [`${pointer.trimEnd()}\n- Always run the release script.\n`, true],
+      [`${pointer.trimEnd()}\n> Always run the release script.\n`, true],
+      [`${pointer.trimEnd()}\n1. Always run the release script.\n`, true],
+      [`${pointer.trimEnd()}\n    npm run release\n`, true],
+      [`${pointer.trimEnd()}\n  - Always run the release script.\n`, true],
+      [`${pointer.trimEnd()}\n   > Always run the release script.\n`, true],
+      ["# Codex compatibility\n\nSee [instructions](./AGENTS.md).\n", false],
+      [
+        "# Codex compatibility\n\nThe canonical project operating contract is [AGENTS.md](AGENTS.md), and the\nAI Office operating guidance is [AI-OFFICE.md](AI-OFFICE.md). Codex loads\n`AGENTS.md` natively; this pointer remains only for older links and contributor\nbookmarks.\n",
+        false,
+      ],
+      ["# Codex compatibility\n\n    Read [AGENTS.md](AGENTS.md).\n", true],
+      [`${pointer.trimEnd()}\n***\nAlways run the release script.\n`, true],
+      [`${pointer.trimEnd()}\n___\nAlways run the release script.\n`, true],
+      ["# Codex compatibility\n\nSee [AGENTS.md](AGENTS.md)!\n", false],
+      ["Istruzioni del dépôt: vedi [AGENTS.md](AGENTS.md).\n", false],
+      ["See [AGENTS.md](AGENTS.md) *now*.\n", true],
+      ["See ![AGENTS.md](AGENTS.md) here.\n", true],
+      ["`[AGENTS.md](AGENTS.md)`\n", true],
+      ["![AGENTS.md](AGENTS.md)\n", true],
+      ["See \\[AGENTS.md](AGENTS.md).\n", true],
+      [
+        "# Codex compatibility\n\n## Always run the release script manually\n\nSee [AGENTS.md](AGENTS.md).\n",
+        true,
+      ],
+      [
+        "# Codex compatibility\n\nThe canonical contract is [AGENTS.md](AGENTS.md) and\nthe office guidance is [AI-OFFICE.md](AI-OFFICE.md).\n",
+        false,
+      ],
+    ] as const) {
+      const root = temporaryRoot("ai-office-client-legacy-pointer-");
+      writeFileSync(join(root, "CODEX.md"), content);
+      const inspection = await integration.inspect("claude", root);
+      const codes = inspection.issues.map((issue) => issue.code);
+      expect(codes.includes(legacyCode)).toBe(reported);
+      expect(readFileSync(join(root, "CODEX.md"), "utf8")).toBe(content);
+    }
+  });
+
   test("preserves user AGENTS and merges only the Claude managed bridge", async () => {
     const root = temporaryRoot("ai-office-client-claude-");
     writeFileSync(join(root, "AGENTS.md"), "# User canonical contract\n");

@@ -102,6 +102,53 @@ function isCodexPointerManaged(file: LocalInstructionFile): boolean {
   return file.content?.startsWith(codexManagedInstructionsHeader) === true;
 }
 
+const legacyPointerMaxLength = 1024;
+const legacyPointerMaxParagraphs = 2;
+const legacyPointerTitle = /^# [\p{L}\p{M}\p{N} .,;:!?'’()-]+$/u;
+const legacyPointerCodeSpan = /`[^`\n]+`/gu;
+const legacyPointerAgentsLink =
+  /(?<!!)\[[\p{L}\p{M}\p{N} .,'’-]+\]\((?:\.\/)?AGENTS\.md\)/u;
+const legacyPointerCanonicalLink =
+  /(?<!!)\[[\p{L}\p{M}\p{N} .,'’-]+\]\((?:\.\/)?(?:AGENTS|AI-OFFICE)\.md\)/gu;
+const legacyPointerProse = /^[\p{L}\p{M}\p{N} .,;:!?'’()\n-]+$/u;
+const legacyPointerLineStart = /^[\p{L}[`]/u;
+
+/**
+ * A legacy CODEX.md that is only a short pointer to AGENTS.md needs no
+ * migration. It is recognised by a closed grammar rather than by excluding
+ * Markdown constructs: an optional plain H1 title, then one or two paragraphs
+ * of plain words, inline code spans and links to AGENTS.md or AI-OFFICE.md,
+ * at least one real AGENTS.md link per paragraph outside code spans. Lists,
+ * quotes, indented or fenced code, tables, HTML, images, thematic breaks and
+ * escapes fall outside it, so such a file stays reported. Prose notes written
+ * inside a pointer paragraph cannot be told apart from the pointer and are
+ * accepted; the file is never modified.
+ */
+function isLegacyCompatibilityPointer(file: LocalInstructionFile): boolean {
+  if (file.content === undefined) return false;
+  const content = normalizeEol(file.content);
+  if (content.length > legacyPointerMaxLength) return false;
+  const blocks = content
+    .split(/\n(?:[^\S\n]*\n)+/u)
+    .map((block) => block.replace(/^\n+|\s+$/gu, ""))
+    .filter((block) => block !== "");
+  if (blocks[0] !== undefined && legacyPointerTitle.test(blocks[0]))
+    blocks.shift();
+  return (
+    blocks.length >= 1 &&
+    blocks.length <= legacyPointerMaxParagraphs &&
+    blocks.every((block) => {
+      if (!block.split("\n").every((line) => legacyPointerLineStart.test(line)))
+        return false;
+      const text = block.replace(legacyPointerCodeSpan, "x");
+      return (
+        legacyPointerAgentsLink.test(text) &&
+        legacyPointerProse.test(text.replace(legacyPointerCanonicalLink, "x"))
+      );
+    })
+  );
+}
+
 function isUserOwnedCodexHost(file: LocalInstructionFile): boolean {
   return (
     file.exists &&
@@ -437,7 +484,7 @@ function baseIssues(
       message:
         "The repository-local ai-office skill is user-owned and will be preserved",
     });
-  if (legacy.exists)
+  if (legacy.exists && !isLegacyCompatibilityPointer(legacy))
     issues.push({
       severity: "warning",
       code: "legacy_codex_instructions_detected",
