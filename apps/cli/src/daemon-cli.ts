@@ -355,7 +355,7 @@ async function refreshGeneratedGuidance(input: {
       );
     if (!approved) {
       input.io.stderr(
-        `The manifest revision was applied; the generated guidance was not refreshed. ${recovery} Or rerun office:apply with --refresh-guidance.`,
+        `The manifest revision was applied; the generated guidance was not refreshed. ${recovery}`,
       );
       return;
     }

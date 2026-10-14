@@ -689,6 +689,8 @@ profiles:
         expect(declined.code).toBe(0);
         expect(declined.prompts.join("\n")).toContain("Refresh the generated");
         expect(declined.stderr.join("\n")).toContain("was not refreshed");
+        expect(declined.stderr.join("\n")).toContain("ai-office install .");
+        expect(declined.stderr.join("\n")).not.toContain("office:apply");
         expect(readFileSync(skill, "utf8")).toBe(before);
 
         const status = await invoke(["status", ".", "--json"]);
