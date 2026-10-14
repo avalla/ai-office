@@ -102,6 +102,21 @@ function isCodexPointerManaged(file: LocalInstructionFile): boolean {
   return file.content?.startsWith(codexManagedInstructionsHeader) === true;
 }
 
+const legacyPointerMaxLength = 1024;
+const legacyPointerTarget = `](${codexProjectInstructionsPath})`;
+
+/**
+ * A legacy CODEX.md that is only a short pointer to AGENTS.md needs no
+ * migration. The bound keeps a file with substantive notes reported.
+ */
+function isLegacyCompatibilityPointer(file: LocalInstructionFile): boolean {
+  return (
+    file.content !== undefined &&
+    file.content.length <= legacyPointerMaxLength &&
+    file.content.includes(legacyPointerTarget)
+  );
+}
+
 function isUserOwnedCodexHost(file: LocalInstructionFile): boolean {
   return (
     file.exists &&
@@ -437,7 +452,7 @@ function baseIssues(
       message:
         "The repository-local ai-office skill is user-owned and will be preserved",
     });
-  if (legacy.exists)
+  if (legacy.exists && !isLegacyCompatibilityPointer(legacy))
     issues.push({
       severity: "warning",
       code: "legacy_codex_instructions_detected",

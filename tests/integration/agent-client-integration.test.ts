@@ -309,6 +309,25 @@ describe("agent client integrations", () => {
     );
   });
 
+  test("reports a legacy CODEX.md unless it is only a short pointer to AGENTS.md", async () => {
+    const integration = service();
+    const legacyCode = "legacy_codex_instructions_detected";
+    const pointer =
+      "# Codex compatibility\n\nCanonical contract: [AGENTS.md](AGENTS.md).\n";
+    for (const [content, reported] of [
+      [pointer, false],
+      ["# Legacy user notes\n", true],
+      [`${pointer}\n${"Keep this note.\n".repeat(100)}`, true],
+    ] as const) {
+      const root = temporaryRoot("ai-office-client-legacy-pointer-");
+      writeFileSync(join(root, "CODEX.md"), content);
+      const inspection = await integration.inspect("claude", root);
+      const codes = inspection.issues.map((issue) => issue.code);
+      expect(codes.includes(legacyCode)).toBe(reported);
+      expect(readFileSync(join(root, "CODEX.md"), "utf8")).toBe(content);
+    }
+  });
+
   test("preserves user AGENTS and merges only the Claude managed bridge", async () => {
     const root = temporaryRoot("ai-office-client-claude-");
     writeFileSync(join(root, "AGENTS.md"), "# User canonical contract\n");
