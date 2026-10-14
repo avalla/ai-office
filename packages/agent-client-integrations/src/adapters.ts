@@ -104,13 +104,14 @@ function isCodexPointerManaged(file: LocalInstructionFile): boolean {
 
 const legacyPointerMaxLength = 1024;
 const legacyPointerMaxParagraphs = 2;
-const legacyPointerTitle = /^# [A-Za-z0-9 .,'()-]+$/u;
+const legacyPointerTitle = /^# [\p{L}\p{M}\p{N} .,;:!?'’()-]+$/u;
 const legacyPointerCodeSpan = /`[^`\n]+`/gu;
-const legacyPointerAgentsLink = /\[[A-Za-z0-9 .,'-]+\]\((?:\.\/)?AGENTS\.md\)/u;
+const legacyPointerAgentsLink =
+  /\[[\p{L}\p{M}\p{N} .,'’-]+\]\((?:\.\/)?AGENTS\.md\)/u;
 const legacyPointerCanonicalLink =
-  /\[[A-Za-z0-9 .,'-]+\]\((?:\.\/)?(?:AGENTS|AI-OFFICE)\.md\)/gu;
-const legacyPointerProse = /^[A-Za-z0-9 .,;:'()\n-]+$/u;
-const legacyPointerLineStart = /^[A-Za-z[`]/u;
+  /\[[\p{L}\p{M}\p{N} .,'’-]+\]\((?:\.\/)?(?:AGENTS|AI-OFFICE)\.md\)/gu;
+const legacyPointerProse = /^[\p{L}\p{M}\p{N} .,;:!?'’()\n-]+$/u;
+const legacyPointerLineStart = /^[\p{L}[`]/u;
 
 /**
  * A legacy CODEX.md that is only a short pointer to AGENTS.md needs no
