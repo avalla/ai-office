@@ -28,6 +28,9 @@ function service(context: CommandContext): ManagePipelineRuns {
     context.transactions,
     context.jobOutbox,
     context.taskDependencies,
+    // M16.5 Runtime activation, first slice: consulted only for a new run's
+    // pack-configuration pin, never for pipeline/stage/role selection.
+    context.projectConfiguration,
   );
 }
 

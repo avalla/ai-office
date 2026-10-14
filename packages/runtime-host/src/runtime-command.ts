@@ -167,6 +167,7 @@ import type { ProjectStorage } from "@ai-office/application/ports/project-storag
 import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import { DomainPackCatalogError } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
 import { StaleProjectPackBindingError } from "@ai-office/application/ports/project-pack-binding-repository.port.ts";
+import { PipelineRunConfigurationPinUnsupportedError } from "@ai-office/application/ports/pipeline-run-repository.port.ts";
 import {
   ProjectDefinitionConflictError,
   ProjectDefinitionPayloadShapeError,
@@ -182,6 +183,7 @@ import {
 } from "@ai-office/application/domain-pack/manage-project-pack-binding.ts";
 import { InMemoryInstalledDomainPackCatalog } from "./installed-domain-pack-catalog.ts";
 import { createOperationProviderCatalog } from "./operation-provider-catalog.ts";
+import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
 import { handleProjectPackCommand } from "./commands/project-pack.ts";
 import { ProjectPackUpgradeError } from "@ai-office/application/domain-pack/reconcile-project-pack-upgrade.ts";
 import { handleProjectConfigurationCommand } from "./commands/project-configuration.ts";
@@ -437,6 +439,9 @@ function formatKnownError(error: unknown): string | null {
   // operator repairs the row in the database, so the procedure is named too.
   if (error instanceof ProjectDefinitionPayloadShapeError)
     return `${error.message}. Classify the row with the query in supabase/README.md and repair it as that section describes.`;
+  // Names only the run id; the guidance is the operator's two ways forward.
+  if (error instanceof PipelineRunConfigurationPinUnsupportedError)
+    return `${error.message}. PostgreSQL project storage cannot store pipeline run configuration pins yet, so a project with bound packs cannot start a pipeline run there. Use SQLite project storage for this project, or unbind its packs with project:pack:apply --packs '[]' before starting the run.`;
   if (
     error instanceof CliUsageError ||
     error instanceof DomainPackCatalogError ||
@@ -629,6 +634,7 @@ export async function executeRuntimeCommand(
     // One registry per composition: the gateway's connectors and the
     // read-only provider catalog pack commands see are the same set.
     const connectors = createDefaultConnectorRegistry();
+    const operationProviders = createOperationProviderCatalog(connectors);
     const context: CommandContext = {
       ...(options.onRunChanged === undefined
         ? {}
@@ -648,7 +654,23 @@ export async function executeRuntimeCommand(
       ids,
       clock,
       connectors,
-      operationProviders: createOperationProviderCatalog(connectors),
+      operationProviders,
+      // M16.5 Runtime activation, first slice: the only place this resolver
+      // is constructed, so no scheduling command needs `definitions` or
+      // `packBindings` directly (GP-07's scheduling boundary, verified by
+      // tests/unit/architecture-boundaries.test.ts). The catalog expression
+      // below repeats the field just above on purpose (not a shared local),
+      // keeping that field's exact shape recognized by the GP-10A
+      // entry-point test as "forwards the caller's value, supplies none".
+      projectConfiguration: new ReadProjectConfiguration({
+        projects: projectStorage.projects,
+        bindings: projectStorage.packBindings,
+        definitions: projectStorage.definitions,
+        transactions: projectStorage.transactions,
+        catalog:
+          options.installedPacks ?? new InMemoryInstalledDomainPackCatalog(1, []),
+        providers: operationProviders,
+      }),
       agentClients: options.agentClients ?? new DefaultAgentClientCatalog(),
       projectBindings:
         options.projectBindings ?? new LocalProjectBindingAdapter(),

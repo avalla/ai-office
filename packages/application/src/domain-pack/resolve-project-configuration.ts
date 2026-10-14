@@ -497,6 +497,12 @@ export function resolveProjectConfiguration(input: {
    * required operation is never bound by omission.
    */
   readonly providers?: OperationProviderCatalog;
+  /**
+   * False skips GP-16 provider binding, so `capabilities` is empty and no
+   * provider issue can refuse the resolution. Only for callers that consume
+   * provider-independent material such as `pin`.
+   */
+  readonly bindProviders?: boolean;
 }): ResolvedProjectConfiguration {
   const {
     projectId: owner,
@@ -1111,10 +1117,13 @@ export function resolveProjectConfiguration(input: {
 
   // GP-16: every capability of the closure, whether or not a role or an agent
   // names it. A capability has no override, so nothing above can hide one.
-  const bound = bindCapabilityContracts(
-    closure,
-    input.providers ?? noOperationProviders,
-  );
+  const bound =
+    input.bindProviders === false
+      ? { capabilities: [] }
+      : bindCapabilityContracts(
+          closure,
+          input.providers ?? noOperationProviders,
+        );
   if ("issues" in bound)
     failure(bound.issues[0]!.code, bound.issues[0]!.message);
 

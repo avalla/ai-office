@@ -93,6 +93,43 @@ test("GP-06 configuration remains derived and outside scheduling and portable au
     );
 });
 
+test("M16.5 first slice: pipeline-run creation reads the resolved configuration only for its pin, never for selection", () => {
+  const manager = readFileSync(
+    join(
+      repositoryRoot,
+      "packages/application/src/pipeline/manage-pipeline-runs.ts",
+    ),
+    "utf8",
+  );
+  // This is the one deliberate, owner-approved exception to the rule above:
+  // `ManagePipelineRuns` (packages/application/src/pipeline/, not
+  // src/runtime/) may read `ReadProjectConfiguration`, but only to pin a
+  // run's pack-configuration identity. If this starts failing because the
+  // reference was removed, the M16.5 first-slice pin wiring regressed.
+  expect(manager).toContain("ReadProjectConfiguration");
+  // It must never read a derived, selection-bearing view off the resolved
+  // configuration result (the local binding is named `configuration`):
+  // doing so would let pack content influence which pipeline, stage, role
+  // or policy runs, which is still manifest-driven and out of scope for
+  // this slice.
+  for (const forbidden of [
+    "configuration.workflows",
+    "configuration.roles",
+    "configuration.agents",
+    "configuration.policies",
+    "configuration.knowledge",
+    "configuration.capabilities",
+    "configuration.artifactTypes",
+    "configuration.evidenceTypes",
+    "configuration.validators",
+    "configuration.effectiveDefinitions",
+  ])
+    expect(manager).not.toContain(forbidden);
+  // The only fields this slice may read off a resolved configuration.
+  expect(manager).toContain("configuration.selectedPacks");
+  expect(manager).toContain("configuration.pin");
+});
+
 test("GP-09 legacy profile stays a derived read model outside scheduling, storage and portable state", () => {
   const profileModules = [
     "packages/application/src/domain-pack/legacy-development-profile.ts",

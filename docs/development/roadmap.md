@@ -2227,6 +2227,16 @@ empty/custom fixtures run the same core lifecycles.
 
 Non-goals: expected to be those of M16; set with the scope proposal.
 
+A [scope-proposal draft](m16-5-domain-pack-runtime-activation-scope.md) lays
+out the planned-contents table above alongside the open owner decisions it
+depends on (opening the closed `officeTaskKinds` list, the GP-16 run-gate
+split, GP-14B's M11.6 Phase B dependency, and which ADR-0026 clauses to target
+first). It is a proposal, with one delivered exception: the pin-only first
+slice, in which a pipeline run records the resolved pack-configuration
+identity it started under (migration 0051, no change to pipeline, stage or
+role selection), was explicitly requested and is implemented. The rest of the
+proposal is not approved.
+
 ## M17 — Execution Observability & Heterogeneous Actors Foundation
 
 Status: planned; requirements, delivery slices and proposed ADR only. No

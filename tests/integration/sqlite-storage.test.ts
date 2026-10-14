@@ -88,6 +88,7 @@ describe("project database migrations", () => {
       "0048_review_ready_task_dependencies.sql",
       "0049_task_completion_requires_completed_prerequisites.sql",
       "0050_task_delivery_setup.sql",
+      "0051_pipeline_run_configuration_pin.sql",
     ]);
     expect(migrate(database, migrationDirectory).applied).toEqual([]);
 
@@ -148,6 +149,7 @@ describe("project database migrations", () => {
       { version: "0048_review_ready_task_dependencies.sql" },
       { version: "0049_task_completion_requires_completed_prerequisites.sql" },
       { version: "0050_task_delivery_setup.sql" },
+      { version: "0051_pipeline_run_configuration_pin.sql" },
     ]);
     database.close();
   });

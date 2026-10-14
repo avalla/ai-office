@@ -1,7 +1,9 @@
 import {
   PipelineRun,
   type PipelineOverrideRecord,
+  type PipelineRunConfigurationPin,
 } from "@ai-office/domain/pipeline/pipeline-run.ts";
+import type { ReadProjectConfiguration } from "../domain-pack/read-project-configuration.ts";
 import {
   OfficeManifestNotFoundError,
   OfficePipelineNotFoundError,
@@ -47,6 +49,13 @@ export class ManagePipelineRuns {
     private readonly transactions: TransactionRunner,
     private readonly outbox?: JobOutboxRepository,
     private readonly taskDependencies?: TaskDependencyRepository,
+    /**
+     * M16.5 Runtime activation, first slice: when present, a new run's
+     * configuration pin is read from here. Which pipeline/stage/role runs
+     * stays manifest-driven; this collaborator is consulted only for the
+     * pin, never for selection (see `resolveConfigurationPin`).
+     */
+    private readonly configuration?: ReadProjectConfiguration,
   ) {}
 
   async start(input: {
@@ -82,20 +91,9 @@ export class ManagePipelineRuns {
       throw new OfficePipelineNotFoundError(input.projectId, input.pipelineId);
     if (definition.enforcement !== "enforced")
       throw new PipelineDefinitionNotEnforcedError(definition.id);
-    const now = this.clock.now();
-    const run = PipelineRun.create({
-      id: this.ids.generate(),
-      projectId: input.projectId,
-      taskId: input.taskId,
-      manifestRevisionId: revision.id,
-      manifestRevision: revision.revision,
-      definition,
-      startedBy: input.principal.id,
-      stageRunIds: definition.stages.map(() => this.ids.generate()),
-      now,
-    });
-    task.start(now);
-    await this.transactions.run(async () => {
+    const stageRunIds = definition.stages.map(() => this.ids.generate());
+    const runId = this.ids.generate();
+    const run = await this.transactions.run(async () => {
       if (this.taskDependencies !== undefined)
         await assertTaskPrerequisitesComplete(
           input.projectId,
@@ -103,6 +101,27 @@ export class ManagePipelineRuns {
           this.tasks,
           this.taskDependencies,
         );
+      // Resolved inside this same authoritative transaction so the pin
+      // reflects the binding/definition revisions as of the run insertion
+      // below, not a possibly-stale snapshot read before the transaction
+      // opened (an immutable historical pin cannot be revalidated later).
+      const now = this.clock.now();
+      const configurationPin = await this.resolveConfigurationPin(
+        input.projectId,
+      );
+      const run = PipelineRun.create({
+        id: runId,
+        projectId: input.projectId,
+        taskId: input.taskId,
+        manifestRevisionId: revision.id,
+        manifestRevision: revision.revision,
+        definition,
+        startedBy: input.principal.id,
+        stageRunIds,
+        ...(configurationPin === undefined ? {} : { configurationPin }),
+        now,
+      });
+      task.start(now);
       await this.tasks.save(task);
       await this.pipelines.insert(run);
       await this.event(run, "pipeline.started", input.principal, {
@@ -117,6 +136,7 @@ export class ManagePipelineRuns {
         stageId: run.currentStage()!.stageId,
       });
       await this.enqueueCurrentStage(run);
+      return run;
     });
     return run;
   }
@@ -379,6 +399,30 @@ export class ManagePipelineRuns {
   ): Promise<void> {
     if (!(await this.pipelines.save(run, expectedVersion)))
       throw new ConcurrentPipelineTransitionError(run.snapshot().id);
+  }
+
+  /**
+   * M16.5 Runtime activation, first slice. Reads only the `pin` field of
+   * the resolved configuration (digest, revisions, exact pack tuples) --
+   * never `workflows`, `roles`, `agents`, `policies` or any other derived
+   * view -- so this stays identity pinning and cannot influence which
+   * pipeline, stage or role the run above selects.
+   *
+   * Must be called from inside `this.transactions.run(...)` (see `start`):
+   * it uses `readPinWithinActiveTransaction`, which reads through the same
+   * open transaction instead of opening its own, so the pin reflects the
+   * binding/definition revisions exactly as of the run insertion that
+   * follows -- no commit boundary in between for a concurrent pack-binding
+   * or project-definition mutation to land in.
+   */
+  private async resolveConfigurationPin(
+    projectId: string,
+  ): Promise<PipelineRunConfigurationPin | undefined> {
+    if (this.configuration === undefined) return undefined;
+    const configuration =
+      await this.configuration.readPinWithinActiveTransaction(projectId);
+    if (configuration.selectedPacks.length === 0) return undefined;
+    return configuration.pin;
   }
 
   private requireOperator(actor: OperatorPrincipal): void {
