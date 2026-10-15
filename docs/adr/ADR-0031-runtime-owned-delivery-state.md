@@ -88,10 +88,49 @@ Two pieces of delivery state already exist and predate this decision:
   publication (M19-T2). Per point 3 above the skill keeps working without a
   Runtime, so that store stays as the offline path.
 
+## Proposed answers to the remaining questions
+
+These two questions were put to an independent reviewer and are marked resolved
+in this proposal. Accepting the ADR accepts them.
+
+- **Setup storage.** The delivery run is a separate aggregate with its own
+  persistence and repository port, beside `delivery:setup:*`; it does not extend
+  the key-value JSON storage. Setup is mutable configuration resolved by scope;
+  a run is a history with identity, transitions and evidence references that
+  needs explicit constraints. A forward-only migration introduces it without
+  changing `0050_task_delivery_setup`.
+  - At creation the run fixes an immutable snapshot of the configuration
+    effectively resolved at that moment, so a later setup change cannot alter a
+    run in progress. The snapshot is the resolved configuration, not only a
+    profile name, and includes the schema version and the selected gates.
+- **Checkpoint store.** The delivery run complements the file-based checkpoint
+  store and does not replace it. The file store remains the source of truth for
+  a checkpoint's content, validity and resume; the delivery run is the Runtime
+  register of the reference, its hash, and its association with the run, gate
+  and head commit. The delivery run can name a candidate checkpoint but cannot
+  declare it valid for resume, and a checkpoint's existence never implies that a
+  gate passed or is authorized. With a linked enforced pipeline, the pipeline
+  run remains the source of gate state.
+  - Reconciliation protocol (the file publication and `delivery:record` cannot
+    share a transaction):
+    1. Publish the immutable checkpoint atomically to the file store.
+    2. Register its reference and hash on the delivery run with an idempotent
+       operation. Registering the same checkpoint with the same hash again is
+       harmless; a reference already registered with a different hash is an
+       explicit conflict, never an overwrite.
+    3. If registration fails, the checkpoint is kept and reconciled later.
+    4. Resume is conservative: it resolves the reference and validates the file,
+       hash, version and association to the run. A missing or invalid
+       checkpoint makes resume from it fail explicitly; the system does not
+       silently fall back to a possibly inconsistent state.
+
+## Known limitations
+
+- The file store is local. Losing it loses the checkpoints it held, and resume on
+  another host without the original files is not supported. Cross-machine
+  portability would need shared or replicated checkpoint storage, which is a
+  separate decision and outside this ADR.
+
 ## Open questions
 
-- Does the delivery run extend the existing `delivery:setup:*` storage or sit
-  beside it as a separate aggregate?
-- When a Runtime is available, does the delivery run replace the file-based
-  checkpoint store or complement it (for example, a checkpoint is published
-  to the file store and its reference is recorded on the delivery run)?
+None remain in this proposal. The ADR stays Proposed until explicitly accepted.
