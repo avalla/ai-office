@@ -30,6 +30,7 @@ export const stageResultLimits = Object.freeze({
   /** Structural bounds checked before any normalization of `data`. */
   dataDepth: 8,
   dataNodes: 512,
+  dataKeyBytes: 128,
 });
 
 export type StageResultOutcome = "succeeded" | "failed";
@@ -66,34 +67,62 @@ const identifierPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]*$/;
 const actorLabelPattern = /^[A-Za-z0-9][A-Za-z0-9._@: -]*$/;
 const errorCodePattern = /^[a-z][a-z0-9_]{0,63}$/;
 // C0/C1 controls and DEL; tab, LF and CR are checked separately because only
-// the summary may span lines.
+// the summary and data string values may contain them.
 const forbiddenControls =
   // eslint-disable-next-line no-control-regex
   /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
-// Bidi overrides/isolates and line/paragraph separators enable display and
-// log-line spoofing in any later projection.
-function isFormattingSpoof(text: string): boolean {
+
+/**
+ * Code points that enable display or log-line spoofing in a later projection:
+ * bidi marks, overrides and isolates, zero-width and byte-order marks, line and
+ * paragraph separators, and lone surrogates (invalid UTF-16).
+ */
+function hasSpoofingCodePoint(text: string): boolean {
   for (const character of text) {
     const code = character.codePointAt(0) ?? 0;
     if (
+      (code >= 0x200b && code <= 0x200f) ||
       (code >= 0x202a && code <= 0x202e) ||
       (code >= 0x2066 && code <= 0x2069) ||
+      (code >= 0xd800 && code <= 0xdfff) ||
+      code === 0x061c ||
       code === 0x2028 ||
-      code === 0x2029
+      code === 0x2029 ||
+      code === 0xfeff
     )
       return true;
   }
   return false;
 }
+
 // Credential-looking content is rejected, not redacted: evidence stays exact
-// or is refused. Deliberately conservative, not a complete secret scanner.
+// or is refused. The patterns look for token-shaped material, not for words,
+// so ordinary prose such as "basic validation" or "token: refresh logic" is
+// accepted. Deliberately conservative; not a complete secret scanner.
 const credentialPatterns: readonly RegExp[] = [
-  /\b(?:bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/i,
-  /\b(?:gh[pousr]_|github_pat_|sk-|xox[abprs]-|AKIA)[A-Za-z0-9_-]{8,}/,
-  /\bauthorization\s*[:=]/i,
-  /\b(?:api[_-]?key|secret|token|password|passwd|credential)s?\s*[:=]\s*\S/i,
+  // Bearer: a long token, or a shorter one that mixes in a digit.
+  /\bbearer\s+(?:[A-Za-z0-9._~+/=-]{20,}|(?=[A-Za-z0-9._~+/=-]*[0-9])[A-Za-z0-9._~+/=-]{12,})/i,
+  // Basic: base64-shaped, with a digit, '+', '/', '=' or an interior capital.
+  /\b[Bb][Aa][Ss][Ii][Cc]\s+(?=[A-Za-z0-9+/]*(?:[0-9+/]|[a-z][A-Z]))[A-Za-z0-9+/]{16,}={0,2}/,
+  /\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}/,
+  /\bsk-[A-Za-z0-9_-]{20,}/,
+  /\bxox[abprs]-[A-Za-z0-9-]{10,}/,
+  /\bAKIA[0-9A-Z]{16}\b/,
+  /\bauthorization\s*[:=]\s*(?:bearer|basic|token|digest)\s+\S{8,}/i,
+  // name=value where the value has letters and digits, at least 6 characters.
+  /\b(?:api[_-]?key|secret|token|password|passwd|credential)s?\s*[:=]\s*["']?(?=[^\s"']*[0-9])(?=[^\s"']*[A-Za-z])[^\s"']{6,}/i,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
 ];
+
+// Token-usage metering names are data, not secrets; a bare `token` is not.
+const meteringKeyPattern =
+  /^(?:input|output|total|prompt|completion|cached|max)?tokens(?:used|count)?$/;
+
+function isSensitiveDataKey(key: string): boolean {
+  const normalized = normalizeSensitiveFieldKey(key);
+  if (meteringKeyPattern.test(normalized)) return false;
+  return sensitiveFieldNames.some((name) => normalized.includes(name));
+}
 
 function byteLength(value: string): number {
   return new TextEncoder().encode(value).byteLength;
@@ -109,7 +138,7 @@ function invalid(reason: string): never {
 }
 
 function assertSafeText(text: string, field: string): void {
-  if (forbiddenControls.test(text) || isFormattingSpoof(text))
+  if (forbiddenControls.test(text) || hasSpoofingCodePoint(text))
     invalid(`${field} contains forbidden characters`);
   if (credentialPatterns.some((pattern) => pattern.test(text)))
     invalid(`${field} contains credential-like content`);
@@ -139,12 +168,12 @@ function boundedText(
 function parseProducer(value: unknown): StageResultProducer {
   if (!isRecord(value)) return invalid("producer must be an object");
   const keys = Object.keys(value);
-  const { kind, agentRunId, actorLabel } = value;
+  const kind = value.kind;
   if (kind === "agent_run") {
     if (keys.some((key) => !["kind", "agentRunId"].includes(key)))
       return invalid("producer has unknown fields");
     const id = boundedText(
-      agentRunId,
+      value.agentRunId,
       "producer.agentRunId",
       stageResultLimits.identifierBytes,
     );
@@ -156,7 +185,7 @@ function parseProducer(value: unknown): StageResultProducer {
     if (keys.some((key) => !["kind", "actorLabel"].includes(key)))
       return invalid("producer has unknown fields");
     const label = boundedText(
-      actorLabel,
+      value.actorLabel,
       "producer.actorLabel",
       stageResultLimits.identifierBytes,
     );
@@ -184,58 +213,75 @@ function parseError(value: unknown): StageResultError {
   });
 }
 
+interface DataBudget {
+  nodes: number;
+  /** Cumulative characters of string values and keys. */
+  chars: number;
+}
+
+function spend(budget: DataBudget, characters: number): void {
+  budget.chars += characters;
+  if (budget.chars > stageResultLimits.dataBytes)
+    invalid(`data exceeds ${stageResultLimits.dataBytes} bytes`);
+}
+
 /**
  * Bounded pre-pass over untrusted `data`, run before any normalization so a
- * hostile shape (deep, wide or huge) is refused in O(budget), not O(payload).
- * Reads own data properties only; an accessor is refused without being invoked.
+ * hostile shape (deep, wide or huge) is refused in work proportional to the
+ * budget, not to the payload. It reads each own data property once and returns
+ * a plain snapshot; every later step works on the snapshot, so a Proxy or an
+ * object that changes between reads cannot get different content past the
+ * checks. Accessors are refused without being invoked.
  */
-function guardData(
-  value: unknown,
-  depth: number,
-  budget: { nodes: number },
-): void {
+function guardData(value: unknown, depth: number, budget: DataBudget): unknown {
   budget.nodes += 1;
   if (budget.nodes > stageResultLimits.dataNodes)
     invalid("data has too many nodes");
   if (depth > stageResultLimits.dataDepth) invalid("data is nested too deeply");
   if (typeof value === "string") {
-    if (value.length > stageResultLimits.dataBytes)
-      invalid(`data exceeds ${stageResultLimits.dataBytes} bytes`);
+    spend(budget, value.length);
     // Tab/LF/CR are legitimate inside data strings; other controls are not.
     assertSafeText(value, "data");
-    return;
+    return value;
   }
-  if (typeof value !== "object" || value === null) return;
+  if (typeof value !== "object" || value === null) return value;
   if (Array.isArray(value)) {
     if (value.length > stageResultLimits.dataNodes)
       invalid("data has too many nodes");
+    const items: unknown[] = [];
     for (let index = 0; index < value.length; index += 1) {
       const descriptor = Object.getOwnPropertyDescriptor(value, index);
       if (descriptor === undefined || !("value" in descriptor))
         invalid("data is not canonical JSON");
-      guardData(descriptor.value, depth + 1, budget);
+      items.push(guardData(descriptor.value, depth + 1, budget));
     }
-    return;
+    return items;
   }
+  const entries: [string, unknown][] = [];
   for (const key of Object.keys(value)) {
-    const normalizedKey = normalizeSensitiveFieldKey(key);
-    if (sensitiveFieldNames.some((name) => normalizedKey.includes(name)))
-      invalid("data contains a sensitive field");
+    if (key.length > stageResultLimits.dataKeyBytes)
+      invalid("data contains an oversized key");
+    spend(budget, key.length);
+    if (/[\t\n\r]/.test(key)) invalid("data contains forbidden characters");
+    assertSafeText(key, "data");
+    if (isSensitiveDataKey(key)) invalid("data contains a sensitive field");
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (descriptor === undefined || !("value" in descriptor))
       invalid("data is not canonical JSON");
-    guardData(descriptor.value, depth + 1, budget);
+    entries.push([key, guardData(descriptor.value, depth + 1, budget)]);
   }
+  // fromEntries defines own properties, so a `__proto__` key stays a key.
+  return Object.fromEntries(entries);
 }
 
 function parseData(
   value: unknown,
 ): Readonly<Record<string, CanonicalJsonValue>> {
   if (!isRecord(value)) return invalid("data must be an object");
-  guardData(value, 0, { nodes: 0 });
+  const snapshot = guardData(value, 0, { nodes: 0, chars: 0 });
   let normalized: CanonicalJsonValue;
   try {
-    normalized = normalizeCanonicalJson(value);
+    normalized = normalizeCanonicalJson(snapshot);
   } catch {
     // The underlying message may quote a field name or value; keep it out.
     return invalid("data is not canonical JSON");

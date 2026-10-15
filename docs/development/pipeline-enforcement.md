@@ -98,18 +98,34 @@ delivery with this precedence (first match wins):
 The assessment is a pure decision: it never retries, overwrites or grants
 anything, and only `accepted` may be applied by a caller.
 
-Limits: summary 2000 bytes, error message 500 bytes, data 16384 bytes,
-identifiers 128 bytes, data nesting depth 8 and at most 512 data nodes. Size,
-depth and node budget are checked before the payload is normalized, so an
-oversized or hostile shape is refused in bounded work. Unknown versions,
-unknown fields, control and bidi/line-separator characters, line breaks outside
-the summary, credential-looking text (bearer or basic tokens, common provider
-token prefixes, `authorization`/`password`/`token` assignments, private key
-headers) and data keys that contain a sensitive name (for example
-`githubToken`, `client_secret`) are rejected. Rejection messages name the
-failing field and never echo the rejected value. The credential check is
-conservative and is not a complete secret scanner; the containment rule on
-data keys also rejects harmless names such as `totalTokens`.
+An operator delivery is not bound to an AgentRun: while a run is bound and
+nothing is recorded, an operator result is `accepted` (an explicit operator
+override), and the bound run's later result is then a `conflict`.
+
+Limits: summary 2000 bytes, error message 500 bytes, data 16384 bytes in total
+(string values and keys together), identifiers and data keys 128 bytes, data
+nesting depth 8 and at most 512 data nodes. Size, depth, node budget and the
+cumulative character budget are checked in a bounded pre-pass before the
+payload is normalized, and the pre-pass returns a plain snapshot that every
+later step uses, so an oversized or hostile shape is refused in bounded work
+and an object that changes between reads cannot get different content past the
+checks.
+
+Rejected: unknown versions and fields; control characters, bidi marks and
+overrides, zero-width and byte-order marks, line and paragraph separators and
+lone surrogates in any text or data key; line breaks outside the summary and
+data string values; data keys that contain a sensitive name (for example
+`githubToken`, `client_secret`), except the token-usage metering names
+`inputTokens`, `outputTokens`, `totalTokens`, `promptTokens`,
+`completionTokens`, `cachedTokens` and `maxTokens` (also with a `Used` or
+`Count` suffix); and token-shaped credential material in the summary, error
+message, data strings and data keys: bearer and basic credentials, common
+provider token prefixes, an `authorization` header value, `key=value`
+assignments whose value mixes letters and digits, and private key headers.
+Ordinary prose such as "basic validation" or "token: refresh logic" is
+accepted. The credential check is conservative and is not a complete secret
+scanner. Rejection messages name the failing field and never echo the
+rejected value.
 
 Compatibility is provisional: this is not a stable public schema and may change
 with a new `version`. It is run evidence only and is not yet wired into the
