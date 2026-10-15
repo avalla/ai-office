@@ -2,7 +2,21 @@ import { describe, expect, test } from "vitest";
 import { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import type { OfficePipeline } from "@ai-office/domain/office/office-manifest.ts";
 import { PipelineRun } from "@ai-office/domain/pipeline/pipeline-run.ts";
-import { findSuspendedStageCandidates } from "@ai-office/application/pipeline/recover-suspended-pipelines.ts";
+import { Task } from "@ai-office/domain/task/task.ts";
+import {
+  findSuspendedStageCandidates,
+  RecoverSuspendedPipelines,
+} from "@ai-office/application/pipeline/recover-suspended-pipelines.ts";
+import { TaskPrerequisiteIncompleteError } from "@ai-office/application/commands/manage-task-dependencies.ts";
+import type { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
+import {
+  ConcurrentPipelineTransitionError,
+  PipelineActorUnauthorizedError,
+} from "@ai-office/application/pipeline-errors.ts";
+import type { AgentRuntimeRepository } from "@ai-office/application/ports/agent-runtime-repository.port.ts";
+import type { PipelineRunRepository } from "@ai-office/application/ports/pipeline-run-repository.port.ts";
+import type { TaskDependencyRepository } from "@ai-office/application/ports/task-dependency-repository.port.ts";
+import type { TaskRepository } from "@ai-office/application/ports/task-repository.port.ts";
 
 const now = new Date("2026-10-15T00:00:00.000Z");
 
@@ -121,5 +135,123 @@ describe("findSuspendedStageCandidates", () => {
         (candidate) => candidate.pipelineRunId,
       ),
     ).toEqual(["pipeline-a", "pipeline-b"]);
+  });
+});
+
+type CompletionInput = Parameters<
+  ManagePipelineRuns["completeStageFromAgentRun"]
+>[0];
+
+/**
+ * One suspended candidate (active pipeline, active stage, completed bound
+ * run, running task, no dependency edges) whose resume write fails with the
+ * given error. The repositories are stubs over domain aggregates; only the
+ * catch-branch mapping under test reaches the failing completion.
+ */
+function serviceWithFailingCompletion(failure: () => Error) {
+  const run = pipelineRun("pipeline-1");
+  const agentRun = completedRun(
+    "run-1",
+    "task-pipeline-1",
+    "pipeline-1-stage-1",
+  );
+  const task = Task.create({
+    id: "task-pipeline-1",
+    projectId: "project",
+    title: "Dependent",
+    now,
+  });
+  task.start(now);
+  const calls: CompletionInput[] = [];
+  const service = new RecoverSuspendedPipelines(
+    { listByProject: async () => [run] } as unknown as PipelineRunRepository,
+    { listRuns: async () => [agentRun] } as unknown as AgentRuntimeRepository,
+    { listByProject: async () => [task] } as unknown as TaskRepository,
+    { listByProject: async () => [] } as unknown as TaskDependencyRepository,
+    {
+      completeStageFromAgentRun: async (input: CompletionInput) => {
+        calls.push(input);
+        throw failure();
+      },
+    },
+  );
+  return { service, run, calls };
+}
+
+describe("RecoverSuspendedPipelines refusal mappings", () => {
+  test("maps a prerequisite refusal from the guarded write to awaiting_prerequisites", async () => {
+    const { service, run, calls } = serviceWithFailingCompletion(
+      () =>
+        new TaskPrerequisiteIncompleteError(
+          "task-pipeline-1",
+          [{ taskId: "prereq", status: "waiting_review" }],
+          "completion",
+        ),
+    );
+
+    const result = await service.execute({ projectId: "project", trigger: "tick" });
+
+    expect(result).toEqual({
+      projectId: "project",
+      trigger: "tick",
+      recoveries: [
+        {
+          pipelineRunId: "pipeline-1",
+          pipelineStageRunId: "pipeline-1-stage-1",
+          agentRunId: "run-1",
+          taskId: "task-pipeline-1",
+          outcome: "awaiting_prerequisites",
+        },
+      ],
+    });
+    // The write was attempted once and the refusal changed nothing.
+    expect(calls).toEqual([
+      {
+        projectId: "project",
+        agentRunId: "run-1",
+        expectedPipelineRunId: "pipeline-1",
+        resumption: { trigger: "tick" },
+      },
+    ]);
+    expect(run.snapshot().status).toBe("active");
+  });
+
+  test.each([
+    ["ConcurrentPipelineTransitionError", () => new ConcurrentPipelineTransitionError("pipeline-1")],
+    ["PipelineActorUnauthorizedError", () => new PipelineActorUnauthorizedError("stage completion")],
+  ] as const)(
+    "maps a lost-race %s to superseded",
+    async (_name, failure) => {
+      const { service, run, calls } = serviceWithFailingCompletion(failure);
+
+      const result = await service.execute({
+        projectId: "project",
+        trigger: "task_completion",
+        triggerTaskId: "prereq",
+      });
+
+      expect(result.recoveries).toEqual([
+        expect.objectContaining({
+          pipelineRunId: "pipeline-1",
+          outcome: "superseded",
+        }),
+      ]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.resumption).toEqual({
+        trigger: "task_completion",
+        triggerTaskId: "prereq",
+      });
+      expect(run.snapshot().status).toBe("active");
+    },
+  );
+
+  test("propagates an error that is not a recognized refusal", async () => {
+    const { service } = serviceWithFailingCompletion(
+      () => new Error("disk full"),
+    );
+
+    await expect(
+      service.execute({ projectId: "project", trigger: "tick" }),
+    ).rejects.toThrowError("disk full");
   });
 });

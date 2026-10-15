@@ -18,7 +18,9 @@ import { Role } from "@ai-office/domain/agent/role.ts";
 import { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
+import { ScheduleAgentRun } from "@ai-office/application/commands/schedule-agent-run.ts";
 import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
+import { OrchestratePipelineStage } from "@ai-office/application/pipeline/orchestrate-pipeline-stage.ts";
 import { RecoverSuspendedPipelines } from "@ai-office/application/pipeline/recover-suspended-pipelines.ts";
 import { PipelineActorUnauthorizedError } from "@ai-office/application/pipeline-errors.ts";
 import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
@@ -127,6 +129,28 @@ async function fixture() {
     tasks,
     dependencies,
     pipelineManagement,
+  );
+  const schedule = new ScheduleAgentRun(
+    projects,
+    tasks,
+    runtime,
+    ids,
+    clock,
+    transactions,
+    pipelines,
+    undefined,
+    undefined,
+    dependencies,
+  );
+  // Unlike the durable-queue harness, the pipeline manager here is wired with
+  // the dependency repository, so the replay of a completed bound run hits
+  // the review-ready refusal instead of closing the stage.
+  const orchestrator = new OrchestratePipelineStage(
+    pipelines,
+    runtime,
+    tasks,
+    pipelineManagement,
+    schedule,
   );
 
   await projects.save(Project.create({ id: "project", name: "Project", now }));
@@ -244,6 +268,7 @@ async function fixture() {
     pipelines,
     pipelineManagement,
     recovery,
+    orchestrator,
     seedSuspended,
     completePrerequisite,
     resumedEvents,
@@ -387,5 +412,76 @@ describe("RecoverSuspendedPipelines (SQLite)", () => {
     expect((await tasks.findById("dependent"))!.snapshot().status).toBe(
       "cancelled",
     );
+  });
+});
+
+describe("Orchestration replay recovery (SQLite)", () => {
+  test("a replay while a prerequisite is still in review is a quiet no-op", async () => {
+    const { orchestrator, pipelines, tasks, seedSuspended, resumedEvents } =
+      await fixture();
+    const { pipelineRunId, stageId } = await seedSuspended();
+    const input = {
+      projectId: "project",
+      pipelineRunId,
+      pipelineStageRunId: stageId,
+    };
+
+    // The replay repairs the suspended stage only when it can; while the
+    // prerequisite is in review it is a waiting state, not an error.
+    expect(await orchestrator.execute(input)).toBeNull();
+    expect(await orchestrator.execute(input)).toBeNull();
+
+    const pipeline = (await pipelines.findById(pipelineRunId, "project"))!;
+    expect(pipeline.snapshot().status).toBe("active");
+    expect(pipeline.currentStage()).toMatchObject({
+      id: stageId,
+      status: "active",
+    });
+    expect((await tasks.findById("dependent"))!.snapshot().status).toBe(
+      "running",
+    );
+    expect(resumedEvents()).toEqual([]);
+  });
+
+  test("a replay after the last prerequisite completes resumes the pipeline with provenance", async () => {
+    const {
+      orchestrator,
+      pipelines,
+      tasks,
+      seedSuspended,
+      completePrerequisite,
+      resumedEvents,
+    } = await fixture();
+    const { pipelineRunId, stageId } = await seedSuspended();
+    await completePrerequisite();
+
+    // The replay returns null even when it resumes the pipeline: it never
+    // schedules a new run for a completed binding.
+    expect(
+      await orchestrator.execute({
+        projectId: "project",
+        pipelineRunId,
+        pipelineStageRunId: stageId,
+      }),
+    ).toBeNull();
+
+    const pipeline = (await pipelines.findById(pipelineRunId, "project"))!;
+    expect(pipeline.snapshot().status).toBe("completed");
+    expect(pipeline.snapshot().stages[0]).toMatchObject({
+      id: stageId,
+      status: "completed",
+    });
+    expect((await tasks.findById("dependent"))!.snapshot().status).toBe(
+      "completed",
+    );
+
+    const events = resumedEvents();
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      agentRunId: "suspended-run",
+      trigger: "orchestration_replay",
+      prerequisiteTaskIds: ["prereq"],
+    });
+    expect(events[0]).not.toHaveProperty("triggerTaskId");
   });
 });

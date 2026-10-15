@@ -76,3 +76,25 @@ enabled it.
 - Reconciliation of dependents whose prerequisite left review towards a
   terminal non-completed state remains a separate concern (RRD-02); recovery
   reports those tasks as superseded and changes nothing for them.
+
+## Audit semantics
+
+A `pipeline.resumed` event with trigger `orchestration_replay` records that a
+stage was completed via an automatic replay trigger. That covers both the
+review-ready suspension and plain crash repairs of runs whose task has
+prerequisites: both leave the same durable artifact, and both resume through
+the same replay. The event therefore proves the resume was automatic and
+replay-driven, not that a prerequisite refusal preceded it — an accepted
+widening of the audit signal.
+
+## Known limitations
+
+- A genuine binding corruption on the replay path (a
+  `PipelineActorUnauthorizedError` from a stage/agent binding that no longer
+  matches) is a quiet no-op in the replay; it is visible only through the tick
+  sweep's `superseded` outcome.
+- SQLite single-writer collisions (`TransactionAlreadyActiveError`) on the
+  automatic write paths are pre-existing: the affected trigger fails once and
+  self-heals on the next replay or sweep.
+- A `superseded` artifact is re-reported on every sweep until the RRD-02
+  reconciliation work lands.
