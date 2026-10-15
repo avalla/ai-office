@@ -22,6 +22,7 @@ import {
   TaskPrerequisiteIncompleteError,
 } from "@ai-office/application/commands/manage-task-dependencies.ts";
 import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
+import { RecoverSuspendedPipelines } from "@ai-office/application/pipeline/recover-suspended-pipelines.ts";
 import { executeRuntimeCommand } from "@ai-office/runtime-host/runtime-command.ts";
 import type { RuntimePaths } from "@ai-office/runtime-paths/runtime-paths.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
@@ -220,6 +221,8 @@ describe.skipIf(connectionString === undefined)(
         manifests,
         runtime,
         pipelines,
+        tasks,
+        dependencies,
         scheduler,
         admission,
         execute,
@@ -685,13 +688,15 @@ describe.skipIf(connectionString === undefined)(
 
           // The refused run is skipped, not failed: exit 0, empty results,
           // nothing on stderr, and the execution-control reservation is
-          // released even though the claim raced the refusal.
+          // released even though the claim raced the refusal. No pipeline is
+          // suspended in this scenario, so the recovery sweep is empty.
           expect(refused.code).toBe(0);
           expect(refused.stderr).toEqual([]);
           expect(JSON.parse(refused.stdout.join("\n"))).toEqual({
             schemaVersion: 1,
             results: [],
             unsuccessful: 0,
+            pipelineRecoveries: [],
           });
           expect(handler.executionControl.has(runId)).toBe(false);
           expect((await f.runtime.findRun(runId))?.snapshot().status).toBe(
@@ -810,23 +815,286 @@ describe.skipIf(connectionString === undefined)(
           ]),
         ).toEqual([{ status: "running" }]);
 
-        // Once the prerequisite completes, the stage closes. run:tick does
-        // not re-drive completed runs, so closure goes through the same
-        // application service the command used.
+        // Once the prerequisite completes, the next tick's recovery sweep
+        // resumes the suspended pipeline: the stage closes, the pipeline and
+        // the task complete, and the resume is reported with its provenance.
         await setTaskStatus(
           f.prerequisiteId,
           "completed",
           new Date(epoch.getTime() + 1),
         );
-        const completed = await f.pipelineManager.completeStageFromAgentRun({
-          projectId: f.projectId,
-          agentRunId: runId,
-          expectedPipelineRunId: pipelineRunId,
-        });
-        expect(completed.snapshot().status).toBe("completed");
+        const resumedTick = await handler.run([
+          "run:tick",
+          "--project",
+          f.projectId,
+          "--simulate",
+          "--json",
+        ]);
+        expect(resumedTick.code).toBe(0);
+        const resumedReport = JSON.parse(resumedTick.stdout.join("\n")) as {
+          pipelineRecoveries: {
+            pipelineRunId: string;
+            outcome: string;
+          }[];
+        };
+        expect(resumedReport.pipelineRecoveries).toEqual([
+          expect.objectContaining({ pipelineRunId, outcome: "resumed" }),
+        ]);
+        expect(
+          (await f.pipelines.findById(pipelineRunId, f.projectId))?.snapshot()
+            .status,
+        ).toBe("completed");
+        expect(
+          await db.client.query("SELECT status FROM core.task WHERE id = $1", [
+            f.dependentId,
+          ]),
+        ).toEqual([{ status: "completed" }]);
+
+        // A repeated tick finds nothing to resume.
+        const idleTick = await handler.run([
+          "run:tick",
+          "--project",
+          f.projectId,
+          "--simulate",
+          "--json",
+        ]);
+        expect(idleTick.code).toBe(0);
+        expect(
+          (
+            JSON.parse(idleTick.stdout.join("\n")) as {
+              pipelineRecoveries: unknown[];
+            }
+          ).pipelineRecoveries,
+        ).toEqual([]);
       } finally {
         await handler.close();
       }
+    });
+
+    // RRD-01: the recovery service resumes the suspended artifact once the
+    // last prerequisite completes — exactly once, with provenance, and
+    // serialized against concurrent triggers by the project advisory lock.
+    async function seedSuspendedPipeline(f: Awaited<ReturnType<typeof seedOffice>>) {
+      await seedDeliveryManifest(f);
+      const started = await f.pipelineManager.start({
+        projectId: f.projectId,
+        taskId: f.dependentId,
+        pipelineId: "delivery",
+        principal: localOperatorPrincipal,
+      });
+      const pipelineRunId = started.snapshot().id;
+      await f.pipelineManager.assign({
+        projectId: f.projectId,
+        pipelineRunId,
+        agentId: f.agent.id,
+        principal: localOperatorPrincipal,
+      });
+      const runId = await f.scheduler.execute({
+        projectId: f.projectId,
+        taskId: f.dependentId,
+        agentId: f.agent.id,
+      });
+      const claimed = await f.admission.execute(
+        (await f.runtime.listQueuedRuns(f.projectId, 1))[0]!,
+      );
+      const result = await f.execute.execute(claimed!);
+      expect(result.status).toBe("completed");
+      // Sanity: the stage-completion refusal leaves the suspended artifact.
+      expect(
+        (await f.pipelines.findById(pipelineRunId, f.projectId))?.snapshot()
+          .status,
+      ).toBe("active");
+      return { pipelineRunId, runId };
+    }
+
+    function recoveryOn(f: Awaited<ReturnType<typeof seedOffice>>) {
+      return new RecoverSuspendedPipelines(
+        f.pipelines,
+        f.runtime,
+        f.tasks,
+        f.dependencies,
+        f.pipelineManager,
+      );
+    }
+
+    test("recovery resumes a suspended pipeline exactly once, with provenance", async () => {
+      const f = await seedOffice();
+      const { pipelineRunId, runId } = await seedSuspendedPipeline(f);
+      const recovery = recoveryOn(f);
+
+      // While the prerequisite is still in review the sweep is a quiet no-op.
+      const waiting = await recovery.execute({
+        projectId: f.projectId,
+        trigger: "tick",
+      });
+      expect(waiting.recoveries).toEqual([
+        expect.objectContaining({
+          pipelineRunId,
+          outcome: "awaiting_prerequisites",
+        }),
+      ]);
+
+      await setTaskStatus(
+        f.prerequisiteId,
+        "completed",
+        new Date(epoch.getTime() + 1),
+      );
+      const resumed = await recovery.execute({
+        projectId: f.projectId,
+        trigger: "task_completion",
+        triggerTaskId: f.prerequisiteId,
+      });
+      expect(resumed.recoveries).toEqual([
+        expect.objectContaining({ pipelineRunId, outcome: "resumed" }),
+      ]);
+      expect(
+        (await f.pipelines.findById(pipelineRunId, f.projectId))?.snapshot()
+          .status,
+      ).toBe("completed");
+      expect(
+        await db.client.query("SELECT status FROM core.task WHERE id = $1", [
+          f.dependentId,
+        ]),
+      ).toEqual([{ status: "completed" }]);
+
+      // Provenance: one pipeline.resumed event links the resume to the
+      // completion that caused it, with the authoritative prerequisite list.
+      const events = await db.client.query<{
+        actor_type: string;
+        payload: Record<string, unknown>;
+      }>(
+        "SELECT actor_type, payload_json AS payload FROM core.audit_event WHERE project_id = $1 AND event_type = 'pipeline.resumed'",
+        [f.projectId],
+      );
+      expect(events).toHaveLength(1);
+      expect(events[0]!.actor_type).toBe("system");
+      expect(events[0]!.payload).toMatchObject({
+        agentRunId: runId,
+        trigger: "task_completion",
+        triggerTaskId: f.prerequisiteId,
+        prerequisiteTaskIds: [f.prerequisiteId],
+      });
+      // No duplicate execution evidence for the resumed run.
+      expect(
+        (await f.runtime.listRunEvents(runId)).map((event) => event.status),
+      ).toEqual(["queued", "preparing", "running", "reviewing", "completed"]);
+
+      // Repeated triggers are no-ops: no candidate, no second audit record.
+      const again = await recovery.execute({
+        projectId: f.projectId,
+        trigger: "tick",
+      });
+      expect(again.recoveries).toEqual([]);
+      expect(
+        await db.client.query(
+          "SELECT id FROM core.audit_event WHERE project_id = $1 AND event_type = 'pipeline.resumed'",
+          [f.projectId],
+        ),
+      ).toHaveLength(1);
+    });
+
+    test("concurrent recovery triggers resume once under the advisory lock", async () => {
+      const f = await seedOffice();
+      const { pipelineRunId } = await seedSuspendedPipeline(f);
+      await setTaskStatus(
+        f.prerequisiteId,
+        "completed",
+        new Date(epoch.getTime() + 1),
+      );
+
+      // A second, independent recovery pipeline on its own connection, so the
+      // two triggers genuinely race on the same project state.
+      const other = new PostgresClient(db.connectionString);
+      try {
+        const otherRecovery = new RecoverSuspendedPipelines(
+          new PostgresPipelineRunRepository(other, f.tenantId),
+          new PostgresAgentRuntimeRepository(other, f.tenantId),
+          new PostgresTaskRepository(other, f.tenantId),
+          new PostgresTaskDependencyRepository(other, f.tenantId),
+          new ManagePipelineRuns(
+            new PostgresOfficeManifestRepository(other, f.tenantId),
+            new PostgresPipelineRunRepository(other, f.tenantId),
+            new PostgresTaskRepository(other, f.tenantId),
+            new PostgresAgentRuntimeRepository(other, f.tenantId),
+            new RecordAuditEvent(
+              new PostgresAuditEventRepository(other, f.tenantId),
+              ids,
+              clock,
+            ),
+            ids,
+            clock,
+            new PostgresTransactionRunner(other),
+            undefined,
+            new PostgresTaskDependencyRepository(other, f.tenantId),
+          ),
+        );
+
+        const [first, second] = await Promise.all([
+          recoveryOn(f).execute({ projectId: f.projectId, trigger: "tick" }),
+          otherRecovery.execute({
+            projectId: f.projectId,
+            trigger: "task_completion",
+            triggerTaskId: f.prerequisiteId,
+          }),
+        ]);
+
+        const outcomes = [...first.recoveries, ...second.recoveries].map(
+          (entry) => entry.outcome,
+        );
+        expect(
+          outcomes.filter((outcome) => outcome === "resumed"),
+        ).toHaveLength(1);
+        expect(
+          (await f.pipelines.findById(pipelineRunId, f.projectId))?.snapshot()
+            .status,
+        ).toBe("completed");
+        expect(
+          await db.client.query(
+            "SELECT id FROM core.audit_event WHERE project_id = $1 AND event_type = 'pipeline.resumed'",
+            [f.projectId],
+          ),
+        ).toHaveLength(1);
+      } finally {
+        await other.close();
+      }
+    });
+
+    test("a prerequisite that regresses before resume keeps the pipeline suspended", async () => {
+      const f = await seedOffice();
+      const { pipelineRunId } = await seedSuspendedPipeline(f);
+      const recovery = recoveryOn(f);
+
+      await setTaskStatus(
+        f.prerequisiteId,
+        "completed",
+        new Date(epoch.getTime() + 1),
+      );
+      // The regression: the prerequisite is reopened before any recovery runs.
+      await setTaskStatus(
+        f.prerequisiteId,
+        "waiting_review",
+        new Date(epoch.getTime() + 2),
+      );
+
+      const result = await recovery.execute({
+        projectId: f.projectId,
+        trigger: "tick",
+      });
+      expect(result.recoveries).toEqual([
+        expect.objectContaining({
+          pipelineRunId,
+          outcome: "awaiting_prerequisites",
+        }),
+      ]);
+      expect(
+        (await f.pipelines.findById(pipelineRunId, f.projectId))?.snapshot()
+          .status,
+      ).toBe("active");
+      expect(
+        await db.client.query("SELECT status FROM core.task WHERE id = $1", [
+          f.dependentId,
+        ]),
+      ).toEqual([{ status: "running" }]);
     });
   },
 );
