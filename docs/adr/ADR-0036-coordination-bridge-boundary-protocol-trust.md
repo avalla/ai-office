@@ -150,8 +150,7 @@ given to the process, not by tool names.
 
 1. **Dedicated read-only listener.** The host serves a second Unix socket,
    disabled by default and enabled explicitly by the owner, that mounts the
-   query API in a new `coordination` route profile: only
-   `/api/coordination/v1/...` GET routes and a dedicated health query. It has no
+   query API in a new `coordination` route profile: only `/api/coordination/v1/...` GET routes, a dedicated health query and the principal projection route of Decision 6. It has no
    `/commands` route, no dashboard routes (memory, runs, run output, activity,
    agents, events) and no wildcard. The existing query API has no route profiles
    today and the dashboard, which also holds the main socket path, is
@@ -213,9 +212,7 @@ given to the process, not by tool names.
    reachable on a private interface. That would add a network read listener, which conflicts with this ADR's Unix-socket-only Runtime surfaces and would be reachable by local users or containers on that network, so it needs an ADR amendment and a transport authentication design before CB-10 implements it; it is a design point for CB-10 and CB-11D, to be verified. On Linux it needs a system unit with `User=` and sandboxing
    options, or the user manager of a dedicated user, or a container. The
    existing user-level adapters remain for the non-isolated development mode.
-5. **Runtime-side minimization.** The coordination route profile returns only
-   classified P and T projections built by Runtime-side mappers, so D and A data
-   can never leave the listener. The owner enables the listener per project and
+5. **Runtime-side minimization.** The coordination route profile returns exactly two kinds of payload, both built by Runtime-side mappers with an explicit field set: classified P and T projections for tool data, and one minimized authorization projection for the MCP program, which is not tool output and carries only issuer, subject, enabled flag, scopes, project identifiers and a version tag (no names, emails or descriptions). D and A data can never leave the listener. The owner enables the listener per project and
    per data class in Runtime configuration; a project not enabled there is not
    served at all. Per-principal scope inside the enabled set is checked by the
    MCP program, so a compromised MCP program can read every enabled project at
@@ -266,8 +263,7 @@ not issue tokens and is not an identity provider.
   projection through the read listener, caches it for at most ten seconds and
   fails closed when the projection is unavailable or stale beyond that interval.
   Disabling an entry therefore cuts access within the cache interval regardless
-  of token lifetime. The verified principal itself never crosses into the Runtime
-  on a data read.
+  of token lifetime. The verified principal itself never crosses into the Runtime on a data read. The projection is a configuration read for the MCP program, not tool output; it carries issuer and subject identifiers that may be personal data, so it is never returned by a tool and is classified apart from P and T. CB-10 delivers the listener, CB-11C the registry persistence and the projection route on that listener (CB-11C already follows CB-10 through CB-11A).
 - **Renewal and revocation.** Short-lived access tokens, refresh handled between
   client and authorization server, immediate local principal disablement,
   authorization-server revocation, and service stop as the kill switch.
@@ -291,9 +287,7 @@ and per channel; an unclassified field is not exposed.
   T only; D needs `planning:detail`; A is never exposed by M23.
 - **Mechanism.** An exposure registry classifies each field; responses are built
   in the Runtime application layer by explicit mappers from the read models,
-  never by passing or spreading an existing read-model object, so the MCP
-  program only ever receives P and T; contract tests assert the exact field
-  set per tool and per published message; a best-effort scrubber replaces
+  never by passing or spreading an existing read-model object, so the MCP program receives only P and T tool data plus the minimized authorization projection of Decision 5 point 5; contract tests assert the exact field set per tool, per published message and for the authorization projection; a best-effort scrubber replaces
   strings that match credential patterns.
 - **Scope.** Two layers. The Runtime enables a project and its data classes on
   the read listener. The MCP program restricts each principal to a subset of the
@@ -399,8 +393,7 @@ The protocol document specifies the contract; the decisions are:
   audit events commit in the same transaction; a refusal is recorded in its own
   short transaction after the rollback.
   Rejected: sequential calls with compensation, partial execution with
-  reconciliation, simulated global transactions. Fallback if the refactor is
-  declined: single-operation plans.
+  reconciliation, simulated global transactions. Fallback if the refactor or the writer exclusion is declined: single-operation plans.
 - **Approval.** Bound to the plan digest, the approving principal, an expiry
   (default 24 hours, maximum 72, configurable) and the audit trail. A plan that
   is modified, expired or stale cannot be applied; one approval applies once.

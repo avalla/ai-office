@@ -315,12 +315,20 @@ recorded in its own short transaction so it can be returned again. The apply
 command is idempotent: applying an applied plan returns the stored receipt,
 applying a refused plan returns the stored refusal.
 
-Concurrency is closed by the recheck inside the apply transaction
-(`BEGIN IMMEDIATE`), not by command serialization: the daemon queue does not
-cover `run:tick` or the queue runtime, which call the Runtime directly and
-change task status. Apply is submitted through the command queue; if it meets an
-already active transaction it returns the retryable `RUNTIME_BUSY` and leaves
-the approval unconsumed.
+Concurrency has two parts. The recheck of the preconditions inside the apply
+transaction (`BEGIN IMMEDIATE`) closes the window between preview and apply
+against other planning commands. It does not, alone, make the apply atomic:
+`BEGIN IMMEDIATE` excludes other database connections, not other asynchronous
+callers on the same connection, and `run:tick` and the queue runtime bypass the
+daemon queue, call the Runtime directly and change task status on that
+connection, so their writes could be committed or rolled back with the plan.
+Writer exclusion is therefore a precondition of CB-08 (ADR-0036 Decision 9):
+every writer is serialized through one gate that apply also takes, or
+connection-level transaction ownership stops unrelated writes from joining, and
+this touches the daemon and needs owner approval. Until it holds, plans are
+limited to one operation and no atomicity beyond that is claimed. Apply is
+submitted through the command queue; if it meets an already active transaction it
+returns the retryable `RUNTIME_BUSY` and leaves the approval unconsumed.
 
 Receipt publication is a separate side effect through the publication outbox
 (ADR-0036 Decision 8); it never runs inside the apply transaction and retries
@@ -339,9 +347,8 @@ after a restart.
   edit of a not-yet-approved request is a new digest and creates a superseding
   revision; an edit of an approved or applied request is ignored and reported as
   drift (CB-09).
-- **Multi-operation plans.** Up to 20 operations apply atomically as above, with the sequential semantics of 8.2.
-  If the transaction-body refactor of Decision 9 is declined, plans are limited
-  to one operation and all other rules are unchanged.
+- **Multi-operation plans.** Up to 20 operations apply atomically as above, with the sequential semantics of 8.2, once the writer exclusion of 8.4 holds.
+  If the transaction-body refactor or the writer exclusion of Decision 9 is declined, plans are limited to one operation and all other rules are unchanged.
 
 ### 8.6 Proposal lifecycle
 

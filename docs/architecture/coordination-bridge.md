@@ -62,7 +62,7 @@ Rules enforced by tests, not conventions:
 | Public internet and remote MCP client | none                                    | TLS and limits at the proxy; OAuth bearer on every request; audience, scope and principal allowlist; sanitized errors                 |
 | GitHub content                        | none, untrusted data                    | numeric-account allowlist as an acceptance filter, closed-grammar parsing, size limits, Runtime-side validation, no command semantics |
 | MCP and bridge programs               | low, internet-facing or text-processing | least Runtime surface, separate supervision, no storage, no credentials beyond their own, kill switch                                 |
-| Runtime                               | authority                               | validation, preconditions, approval check, audit, single-writer command queue                                                         |
+| Runtime                               | authority                               | validation, preconditions, approval check, audit, command queue (not every writer goes through it; ADR-0036 Decision 9)               |
 | Operator on the local machine         | trusted-local                           | approve and apply commands; identity recorded, presence not authenticated                                                             |
 | Same-user local process               | trusted-local, not a boundary           | acknowledged in ADR-0014 and ADR-0003; M10 owns the remedy                                                                            |
 
