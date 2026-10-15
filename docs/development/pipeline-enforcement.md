@@ -74,3 +74,28 @@ operator, so operator administration is not strongly isolated in this release.
 Worker-mediated actions and AgentRun transitions remain runtime-enforced.
 Authenticated human presence, worker sandboxing, and remote multi-user identity
 remain future hardening work.
+
+## Provisional stage result contract (M11-1)
+
+`@ai-office/domain/pipeline/stage-result.ts` defines a versioned, internal
+envelope for the structured outcome of one stage attempt:
+`version`, `outcome` (`succeeded` | `failed`), `summary`, `producer` (an
+AgentRun id or an operator label), optional bounded canonical-JSON `data`, and
+a typed `error` that is required exactly when the outcome is `failed`.
+`assessStageResultDelivery` in the application layer classifies a delivery as
+`accepted`, `duplicate` (same canonical result), `stale` (AgentRun no longer
+bound to the stage) or `conflict` (a different result already recorded). It is
+a pure decision: it never retries, overwrites or grants anything.
+
+Limits: summary 2000 bytes, error message 500 bytes, data 16384 bytes,
+identifiers 128 bytes. Unknown versions, unknown fields, sensitive field names
+and control characters are rejected, and rejection messages never echo the
+rejected value.
+
+Compatibility is provisional: this is not a stable public schema and may change
+with a new `version`. It is run evidence only and is not yet wired into the
+AgentRun-to-stage completion path. Not in this contract: a persisted
+Artifact/ArtifactVersion aggregate, review lifecycle, ReviewRequest/ReviewResult
+or approval semantics (M11.6), and automated worker dispatch (M12). M11-2
+consumes the envelope fields in conditions; M12 and M11.6 are the explicit
+consumers of this contract.
