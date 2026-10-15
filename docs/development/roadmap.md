@@ -1881,8 +1881,7 @@ dependency edges; GP-02's cross-milestone M15-4 prerequisite is also stored as
 a typed task dependency edge in the project Runtime. GP-10A, GP-10B-1,
 GP-10B-2 and GP-10C-1 remain separately tracked extraction slices. Runtime
 records carry the split. GP-14 was narrowed to its delivered definition half
-(GP-14A, PRs #128 and #129) and verified; GP-14B is a separate M16.5
-requirement. GP-16 was rejected as a scope split, not for a defect: GP-16A
+(GP-14A, PRs #128 and #129) and verified; GP-14B is a separate requirement (M16.5, moved to M11.6 on 2026-10-15). GP-16 was rejected as a scope split, not for a defect: GP-16A
 (the delivered capability contracts, PR #116) is verified in M16, and GP-16-RG
 (the run gate) is an M16.5 requirement. GP-10C was likewise split into GP-10C-1
 (M16, verified) and GP-10C-2 (M16.5), and GP-24 moved to M16.5 as GP-24-M165.
@@ -2186,10 +2185,18 @@ governance, ProjectStorage, AgentKnowledgeStore, model routing, or worker queue.
 
 ## M16.5 — Domain Pack Runtime Activation
 
-Status: planned. No scope proposal, acceptance criteria or ADR change is
-approved, and nothing here is implemented. The milestone was created by the
-owner's 2026-10-06 re-scope of the M16 exit; its name and number are
-provisional.
+Status: active scope, owner decisions of 2026-10-15 recorded; the pin-only
+first slice is implemented (PR #168, migration 0051) and the rest is not. The
+milestone was created by the owner's 2026-10-06 re-scope of the M16 exit; its
+name and number are provisional.
+
+Owner decisions, 2026-10-15: (1) GP-14B moves to M11.6, which owns the Phase B
+artifact contract it needs, and leaves M16.5; (2) the GP-16 run gate is its own
+task, after Runtime activation and GP-24; (3) activation selects pipeline,
+stages and roles from the resolved configuration only for projects that
+adopted a pack through GP-10C-2, and legacy projects are unchanged; (4)
+ADR-0026 settles the target architecture and is implemented as accepted, and a
+conflict stops work for an owner decision rather than being resolved locally.
 
 Goal: make the Runtime execute from the resolved project configuration that
 M16 defines, and deliver the pack work that needs that execution or the
@@ -2201,17 +2208,19 @@ Planned contents, each needing an owner-approved scope before work. The
 order and dependencies among them are provisional and are set by each scope
 proposal:
 
-- Runtime activation: Runtime execution consumes the generic resolved
+- Runtime activation, Runtime task `aa10a111-9658-4f11-b99f-7074fe522588`
+  (requirement M165-ACT): Runtime execution consumes the generic resolved
   configuration, and a new run persists its configuration digest and exact
-  source pack tuples with its existing pins. No task owns this yet.
+  source pack tuples with its existing pins. The pin is delivered; selection
+  from the pack is not.
 - GP-24: block a pack removal while an active run pins that pack. Whether
   it also blocks a workflow change on such a run is set by its scope
   proposal. It needs the persisted pins, which activation is expected to
   deliver.
 - Execution parity, Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`:
   compare execution from a resolved configuration with legacy execution.
-- GP-14B: stale evidence and invalid validator output fail closed, with
-  version-bound review. Depends on M11.6 Phase B.
+- GP-14B moved to M11.6 (requirement GP-14B-M116, task `d991b5be`), which
+  owns the Phase B contract it depends on. It is no longer an M16.5 item.
 - GP-10C-2: previewed explicit adoption of the development pack and its
   registration, preserving old bindings.
 - The GP-16 run gate (requirement GP-16-RG, the split-off half of GP-16; the
@@ -2230,7 +2239,7 @@ Non-goals: expected to be those of M16; set with the scope proposal.
 A [scope-proposal draft](m16-5-domain-pack-runtime-activation-scope.md) lays
 out the planned-contents table above alongside the open owner decisions it
 depends on (the GP-16 run-gate split, GP-14B's M11.6 Phase B dependency, and which ADR-0026 clauses to target
-first). It is a proposal, with one delivered exception: the pin-only first
+first), all four since ruled on. It is a proposal, with one delivered exception: the pin-only first
 slice, in which a pipeline run records the resolved pack-configuration
 identity it started under (migration 0051, no change to pipeline, stage or
 role selection), was explicitly requested and is implemented. The rest of the

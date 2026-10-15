@@ -32,7 +32,7 @@ document:
 | Runtime activation (no task yet) | GP-10B-2, GP-25 | Runtime execution consumes the resolved configuration; a new run persists its `configurationDigest` and exact source pack tuples with its existing pins (ADR-0026). |
 | GP-24 — block pack removal on active pack-pinned runs | Runtime activation | Block a pack removal while an active run pins that pack. |
 | Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834` | GP-10B-1, GP-10B-2, GP-25, activation | Execution parity: compare execution from a resolved configuration with legacy execution. |
-| GP-14B — evidence and validator enforcement | GP-14A, M11.6 Phase B | Stale evidence and invalid validator output fail closed, with version-bound review. |
+| GP-14B — evidence and validator enforcement (moved to M11.6 on 2026-10-15) | GP-14A, M11.6 Phase B | Stale evidence and invalid validator output fail closed, with version-bound review. |
 | GP-10C-2 — development pack adoption | GP-10C-1, activation | Previewed explicit adoption of the development pack and its catalog registration, preserving old bindings. |
 | GP-16 run gate | GP-16, activation | Bind registered providers at bootstrap; reject a missing required provider before runs. |
 
@@ -163,6 +163,21 @@ pattern already used in `tests/integration/legal-reference-pack.test.ts` and
 task (`a45ddb12-3159-4b60-9b8b-c26516720834`) stays out of scope: comparing
 pack-resolved execution against legacy execution is meaningless until pipeline
 *selection* also comes from a pack, which this slice does not change.
+
+## Owner rulings, 2026-10-15
+
+- Decision 2 (run gate): its own task `f8d75709`, after Runtime activation and
+  GP-24. The execution-parity task and GP-24 do not own it.
+- Decision 3 (GP-14B): deferred to M11.6, whose Phase B it depends on. It is
+  requirement GP-14B-M116 and leaves M16.5.
+- Decision 4 (ADR-0026): sufficient as the target; implement as accepted. A
+  conflict found during implementation stops work for an owner decision.
+- Decision 5 and the extent of activation: selection of pipeline, stages and
+  roles comes from the resolved configuration only for projects that adopted
+  a pack (GP-10C-2); projects without an adopted pack keep legacy selection.
+  Execution parity proves the two paths equivalent for the development pack.
+- Order: activation, then parity, GP-10C-2, GP-24, the run gate, and the two
+  GP-12 follow-ups.
 
 ## Open owner decisions
 
