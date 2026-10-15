@@ -1,9 +1,9 @@
-# Coordination Bridge architecture (proposed)
+# Coordination Bridge architecture (accepted design baseline)
 
-Status: proposed with [ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md)
-and not current architecture. [overview.md](overview.md) describes what
-exists today; nothing here is implemented, and no part of it becomes a
-requirement before the ADR is accepted and the tasks of
+Status: accepted with [ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md)
+as the design baseline, not current architecture. [overview.md](overview.md)
+describes what exists today; nothing here is implemented, and no part of it
+becomes current until the tasks of
 [M23](../development/coordination-bridge.md) deliver it. The wire contract is in
 the [coordination protocol](../development/coordination-protocol.md).
 

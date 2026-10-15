@@ -57,8 +57,8 @@ AI Office keeps different kinds of documentation separate so current product tru
   authority; nothing implemented.
 - [Coordination Bridge boundary, protocol and trust model](adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md),
   [architecture](architecture/coordination-bridge.md) and
-  [protocol v1](development/coordination-protocol.md): proposed M23 decision
-  gate; not accepted current architecture.
+  [protocol v1](development/coordination-protocol.md): accepted M23 design
+  baseline; not implemented, and not current architecture until delivered.
 - [Professional-work verticals](development/professional-work-verticals.md):
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and
