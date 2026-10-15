@@ -1,6 +1,6 @@
 # Coordination protocol v1
 
-Status: proposed with [ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md);
+Status: accepted with [ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md);
 nothing in this document is implemented. It is the contract CB-02, CB-04,
 CB-05, CB-06, CB-07 and CB-08 build against. The ADR owns the decisions; this
 document owns the wire shapes and the planning-change semantics. Field and code

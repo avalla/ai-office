@@ -1,7 +1,7 @@
 # M23 — AI Office Coordination Bridge
 
 Status: planned on 2026-10-15, revised after owner review the same day; the
-architecture and protocol are proposed by CB-01 in
+architecture and protocol are proposed by CB-01 and accepted in
 [ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md),
 [architecture](../architecture/coordination-bridge.md) and the
 [protocol](coordination-protocol.md). Nothing in this document is implemented.
@@ -360,7 +360,7 @@ CB-01 was authorized by the owner on 2026-10-15 and is documentation only: no
 production code, no migration, no dependency. Its deliverables are:
 
 1. [ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md),
-   status Proposed: topology and dependency rules, authority and aggregate,
+   status Accepted: topology and dependency rules, authority and aggregate,
    principals and trust, protocol, Runtime access path, remote authentication,
    data exposure, Coordination Publication, plan atomicity and revision
    conflicts, deployment, credential boundary amendment, alternatives,

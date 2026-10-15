@@ -1,6 +1,6 @@
 # ADR-0036: Coordination Bridge — boundary, protocol and trust model
 
-- Status: Proposed
+- Status: Accepted (owner accepted the boundary, protocol and trust model on 2026-10-15, after merge of PR #179; the approvals listed at the end, in particular for CB-08 and CB-11C, remain separate decision gates)
 - Date: 2026-10-15
 - Scope: M23 — AI Office Coordination Bridge (CB-R01–CB-R14), delivered by CB-01
 - Owner decisions recorded: D1–D6 approved 2026-10-15; D8 revised and D7, D9,
@@ -412,8 +412,9 @@ The protocol document specifies the contract; the decisions are:
   writer exclusion is in effect. Both prerequisites are mandatory for CB-08.
   Publishing the receipt to GitHub is a later effect through the outbox, made
   idempotent by a stable publication marker and converged by reconciliation
-  (CB-09); it is never part of that transaction. This decision is Proposed and
-  does not become accepted by being specified here.
+  (CB-09); it is never part of that transaction. This decision is Accepted as the
+  design baseline; implementing apply still requires both prerequisites and the
+  separate CB-08 approval.
 - **Approval.** Bound to the plan digest, the approving principal, an expiry
   (default 24 hours, maximum 72, configurable) and the audit trail. A plan that
   is modified, expired or stale cannot be applied; one approval applies once.
