@@ -3,8 +3,9 @@ import {
   UpdateTask,
   type UpdateTaskInput,
 } from "@ai-office/application/commands/update-task.ts";
-import { manageAgentRuns } from "./run-services.ts";
+import { manageAgentRuns, managePipelineRuns } from "./run-services.ts";
 import { ManageTaskLifecycle } from "@ai-office/application/commands/manage-task-lifecycle.ts";
+import { RecoverSuspendedPipelines } from "@ai-office/application/pipeline/recover-suspended-pipelines.ts";
 import { ManageTaskRequirements } from "@ai-office/application/commands/manage-task-requirements.ts";
 import { ManageTaskDependencies } from "@ai-office/application/commands/manage-task-dependencies.ts";
 import {
@@ -372,6 +373,36 @@ export async function handleTaskCommand(
                       ...(reason === undefined ? {} : { reason }),
                     });
     io.stdout(`Task ${input.taskId} is now ${status}`);
+    if (operation === "complete") {
+      // A completion can be the last prerequisite a suspended pipeline was
+      // waiting for. The sweep runs after the completion has committed —
+      // the completion is authoritative whether or not recovery succeeds —
+      // and the daemon's orchestration replay remains the backstop.
+      try {
+        const recovery = await new RecoverSuspendedPipelines(
+          pipelines,
+          runtime,
+          tasks,
+          context.taskDependencies,
+          managePipelineRuns(context),
+        ).execute({
+          projectId: input.projectId,
+          trigger: "task_completion",
+          triggerTaskId: input.taskId,
+        });
+        const resumed = recovery.recoveries.filter(
+          (entry) => entry.outcome === "resumed",
+        );
+        for (const entry of resumed)
+          io.stdout(
+            `Suspended pipeline ${entry.pipelineRunId} resumed for task ${entry.taskId}`,
+          );
+      } catch (error) {
+        io.stderr(
+          `Pipeline recovery after completion failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
     return 0;
   }
 

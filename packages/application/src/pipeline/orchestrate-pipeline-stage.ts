@@ -2,6 +2,11 @@ import type { AgentRuntimeRepository } from "../ports/agent-runtime-repository.p
 import { localOperatorPrincipal } from "../ports/execution-principal.port.ts";
 import type { PipelineRunRepository } from "../ports/pipeline-run-repository.port.ts";
 import type { TaskRepository } from "../ports/task-repository.port.ts";
+import { isPrerequisiteRefusal } from "../commands/manage-task-dependencies.ts";
+import {
+  ConcurrentPipelineTransitionError,
+  PipelineActorUnauthorizedError,
+} from "../pipeline-errors.ts";
 import { ManagePipelineRuns } from "./manage-pipeline-runs.ts";
 import { ScheduleAgentRun } from "../commands/schedule-agent-run.ts";
 
@@ -60,7 +65,12 @@ export class OrchestratePipelineStage {
     if (existing !== undefined) return existing.snapshot().id;
 
     // A completed run can be left just before the SQLite stage bridge by a
-    // process crash. Replaying the stage intent repairs that exact binding.
+    // process crash, or by the review-ready guard refusing the final stage
+    // while a prerequisite is still in review. Replaying the stage intent
+    // repairs that exact binding. While the prerequisites remain incomplete
+    // the replay is a quiet no-op — suspension is a waiting state, not an
+    // error — and the next replay after the last prerequisite completes
+    // resumes the pipeline.
     const completed = boundRuns.find(
       (run) => run.snapshot().status === "completed",
     );
@@ -69,11 +79,24 @@ export class OrchestratePipelineStage {
         throw new PipelineStageOrchestrationError(
           "Completed AgentRun cannot reconcile the assigned pipeline stage",
         );
-      await this.pipelineManagement.completeStageFromAgentRun({
-        projectId: input.projectId,
-        agentRunId: completed.snapshot().id,
-        expectedPipelineRunId: snapshot.id,
-      });
+      try {
+        await this.pipelineManagement.completeStageFromAgentRun({
+          projectId: input.projectId,
+          agentRunId: completed.snapshot().id,
+          expectedPipelineRunId: snapshot.id,
+          resumption: { trigger: "orchestration_replay" },
+        });
+      } catch (error) {
+        // Still suspended, or a concurrent trigger completed the stage
+        // first: both are legitimate outcomes of a replayed intent.
+        if (
+          isPrerequisiteRefusal(error) ||
+          error instanceof ConcurrentPipelineTransitionError ||
+          error instanceof PipelineActorUnauthorizedError
+        )
+          return null;
+        throw error;
+      }
       return null;
     }
 
