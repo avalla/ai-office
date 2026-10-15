@@ -5,8 +5,7 @@
 - Scope: M23 — AI Office Coordination Bridge (CB-R01–CB-R14), delivered by CB-01
 - Owner decisions recorded: D1–D6 approved 2026-10-15; D8 revised and D7, D9,
   D10, D11 confirmed as binding design constraints the same day (see the
-  matrix below). One decision is open and blocks acceptance: Decision 5,
-  point 4.
+  matrix below). Decision 5 point 4 (capability isolation) and the HTTPS exposure choice of Decision 10 were decided by the owner on 2026-10-15.
 
 Companion documents: [architecture](../architecture/coordination-bridge.md),
 [protocol and planning-change semantics](../development/coordination-protocol.md),
@@ -97,9 +96,7 @@ programs depend only on application ports and pure protocol modules, on the
 extracted runtime-client package, and on their own infrastructure libraries.
 They never import `apps/*`, storage packages, `runtime-host`, the mutating
 `RuntimeClient` operation or domain mutators; `apps/daemon` never imports them.
-CB-11B and CB-03 enforce this with an import-boundary test. One reverse proxy,
-preferably Caddy, is a deployment component documented and templated by
-CB-11E; no general-purpose proxy is embedded in the Runtime.
+CB-11B and CB-03 enforce this with an import-boundary test. HTTPS exposure (Cloudflare Tunnel first, Nginx as the alternative, Caddy optional) is a deployment component documented and templated by CB-11E; no general-purpose proxy is embedded in the Runtime.
 
 ### Decision 2 — Authority, write scope and aggregate
 
@@ -169,30 +166,46 @@ given to the process, not by tool names.
 3. **Dedicated health.** `GET /api/coordination/v1/health` returns only the
    contract version, `status` and `startedAt`; it omits queue, knowledge, path
    and version detail.
-4. **Process capability — open owner decision.** The main socket path is fixed
-   (`<runtime home>/daemon.sock`) and the existing service management installs
-   per-user services only (`systemctl --user`, LaunchAgents), so a same-user
-   MCP program can open the main socket and post any command, including
-   approval and apply under a label it chooses. Interface restrictions and
-   configuration alone therefore do not deliver the capability half of D9: a
-   remote-code-execution flaw in the public program, or in its SDK dependency,
-   would be full Runtime authority reachable from the internet. Options:
-   - **Option 1 (recommended): capability isolation as a hard precondition of
-     public exposure.** The requirement is a verifiable property: the MCP
-     program's identity cannot connect to the main socket. CB-11D and CB-11E
-     refuse to enable the public vhost until a startup capability probe proves
-     it. Two implementations qualify: a system-level service under a dedicated
-     operating-system user with a group-owned read-socket directory and the
-     Runtime home closed to that user, or a container or sandbox that mounts
-     only the read socket. Both are new work (system-level launchd and systemd
-     adapters, or a container recipe) and are added to the scope of CB-11D.
-   - **Option 2: separate machine.** The MCP program runs on another host and
-     reaches only the read listener over a restricted channel. Strongest
-     separation, more operations, and the channel itself needs a design.
-   - **Option 3: accept the interface-only guarantee** for the first release,
-     with the residual risk above stated in the operating guide and the owner's
-     explicit acceptance recorded, and D9 downgraded to its interface half;
-     suitable for loopback-only or tunnel testing, not for a public vhost.
+4. **Process capability — decided 2026-10-15: isolation is mandatory for public
+   exposure.** The main socket path is fixed (`<runtime home>/daemon.sock`). The
+   existing launchd adapter bootstraps LaunchAgents into the caller's own
+   `gui/<uid>` domain, and the launchd manual states that `UserName` and
+   `GroupName` apply only to services loaded into the privileged system domain;
+   the systemd adapter drives `systemctl --user` only. Neither can give a
+   service another identity, so with today's service management a public MCP
+   program would run as the Runtime user and a remote-code-execution flaw in it
+   or in its SDK dependency would be full Runtime authority, approval and apply
+   included. The owner's decision, binding for CB-10, CB-11D, CB-11E and CB-11F:
+   a. A publicly exposed MCP program must not be able to reach the main socket,
+   even if its process is compromised. The Runtime query client is an
+   interface, not a barrier against code execution, and is not sufficient.
+   b. Isolation is provided by a separate operating-system identity with
+   verifiable permissions, or by a container or sandbox with exclusive access
+   to the read-only listener.
+   c. Fail closed: if isolation cannot be verified, public deployment is refused.
+   There is no silent fallback to same-user mode.
+   d. CB-11D delivers the isolated deployment. CB-11F verifies that the read
+   socket works and that access to the authoritative socket is refused, also
+   with arbitrary code executed in the MCP context.
+   e. The startup probe is an additional check, not the isolation mechanism.
+   Protection against later changes of permissions, mounts and configuration
+   is documented and tested: the installer sets and audits ownership and
+   modes, the preconditions are re-checked at every start, on detected
+   configuration or permission change and periodically, and the service
+   stops on failure.
+   f. A non-isolated mode exists only for local development: no public endpoint,
+   no tunnel or proxy enabled, loopback bind, with its limitations printed.
+   Platform assessment, made in CB-01: on macOS this cannot be achieved with
+   LaunchAgents; it needs a system-domain LaunchDaemon with a dedicated
+   `UserName` and `GroupName` (administrator rights at install, a group-owned
+   read-socket directory, the Runtime home closed to that user) or a container or
+   virtual machine with access to the read listener only. Sharing a host Unix
+   socket into the Linux virtual machine of common macOS container runtimes is
+   not generally available, so the container path may need the read listener
+   reachable on a private interface; that is a design point for CB-10 and CB-11D,
+   to be verified. On Linux it needs a system unit with `User=` and sandboxing
+   options, or the user manager of a dedicated user, or a container. The
+   existing user-level adapters remain for the non-isolated development mode.
 5. **Runtime-side minimization.** The coordination route profile returns only
    classified P and T projections built by Runtime-side mappers, so D and A data
    can never leave the listener. The owner enables the listener per project and
@@ -254,10 +267,7 @@ not issue tokens and is not an identity provider.
   skew, refresh and re-authorization, revocation of principal and refresh
   token, principal lifecycle, scope step-up, and that missing, invalid, expired
   or revoked credentials never reach a tool.
-- **Not supported.** Static bearer keys are not an option for the first
-  client. Transport-level mTLS or IP allowlisting using OpenAI's published
-  chain and ranges is optional defence in depth at the proxy and never replaces
-  OAuth.
+- **Not supported.** Static bearer keys are not an option for the first client. Transport-level client restrictions (OpenAI's published client certificate chain and egress ranges) are optional defence in depth where TLS terminates at a proxy the owner controls; behind a tunnel that terminates TLS at the provider's edge an end-to-end client certificate cannot be verified at the origin. Neither a tunnel nor a proxy nor any client restriction replaces OAuth 2.1 and scope checks.
 
 ### Decision 7 — Data exposure (D11)
 
@@ -393,11 +403,7 @@ The protocol document specifies the contract; the decisions are:
 ### Decision 10 — Deployment and one MCP server
 
 Runtime not publicly exposed; MCP server a separate Streamable HTTP program
-binding loopback only; reverse proxy HTTPS, Caddy preferred, configurable and
-documented (TLS, vhost, request-body limit, rate limit, optional client
-restriction, health, rollback); launchd on macOS and systemd on Linux through
-the existing service management, extended with an MCP service and, subject to
-Decision 5 point 4, with a capability-isolated deployment profile; MCP read-only
+binding only the private interface the deployment designates (loopback by default, a container-private address when containerized; never a wildcard or public address); HTTPS exposure through Cloudflare Tunnel as the preferred initial deployment on macOS, with Nginx as the supported alternative reverse proxy, both configurable and documented (TLS, request-body limit, rate limit, optional client restriction, health, rollback) and Caddy permitted but not required; launchd on macOS and systemd on Linux through service management, extended with an MCP service and the capability-isolated deployment of Decision 5 point 4 (mandatory when public); MCP read-only
 initially and independently disableable without affecting the Runtime or the
 dashboard. The CB-11 series delivers the project's single MCP server; the M9 MCP
 task extends it and depends on CB-11B. Initial tools use the `ai_office_`
@@ -419,21 +425,23 @@ nothing is stored in SQLite, audit, logs or service definitions.
 
 ## Alternatives considered
 
-| Topic                  | Rejected alternative                                   | Reason                                                                                                 |
-| ---------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| Runtime access for MCP | `RuntimeClient.execute` behind an in-process allowlist | Read-only would be a convention in a public-facing process; the process would hold mutation capability |
-| Runtime access for MCP | Expose the existing dashboard query API                | Returns descriptions, run output, activity and global memory                                           |
-| Runtime access for MCP | Embed the MCP server in the daemon                     | Couples availability and attack surface of the authority to a public endpoint                          |
-| Authentication         | Static or owner-issued API tokens                      | Not accepted by the first client; would make this program an identity provider                         |
-| Authentication         | Build an authorization server                          | Unnecessary identity-provider development and risk                                                     |
-| Publication            | Connector mutation with per-report approval            | Defeats unattended reports                                                                             |
-| Publication            | Relax the connector approval rule                      | Global architecture change that also binds M13                                                         |
-| Publication            | Bridge-authored content                                | Not auditable; unbounded content                                                                       |
-| Atomicity              | Sequential apply with compensation                     | Inverse operations are not always possible once execution starts                                       |
-| Atomicity              | Partial execution with reconciliation                  | Complexity without need at 20 operations                                                               |
-| Revision               | Global revision counter                                | Schema change and false conflicts on unrelated edits                                                   |
-| Aggregate              | Reuse `Review` or wait for M11.6                       | No plan subject; couples M23 to unfinished work                                                        |
-| Proxy                  | Proxy embedded in the Runtime                          | Explicitly excluded by the owner                                                                       |
+| Topic                  | Rejected alternative                                     | Reason                                                                                                               |
+| ---------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Runtime access for MCP | `RuntimeClient.execute` behind an in-process allowlist   | Read-only would be a convention in a public-facing process; the process would hold mutation capability               |
+| Runtime access for MCP | Expose the existing dashboard query API                  | Returns descriptions, run output, activity and global memory                                                         |
+| Runtime access for MCP | Embed the MCP server in the daemon                       | Couples availability and attack surface of the authority to a public endpoint                                        |
+| Authentication         | Static or owner-issued API tokens                        | Not accepted by the first client; would make this program an identity provider                                       |
+| Authentication         | Build an authorization server                            | Unnecessary identity-provider development and risk                                                                   |
+| Publication            | Connector mutation with per-report approval              | Defeats unattended reports                                                                                           |
+| Publication            | Relax the connector approval rule                        | Global architecture change that also binds M13                                                                       |
+| Publication            | Bridge-authored content                                  | Not auditable; unbounded content                                                                                     |
+| Atomicity              | Sequential apply with compensation                       | Inverse operations are not always possible once execution starts                                                     |
+| Atomicity              | Partial execution with reconciliation                    | Complexity without need at 20 operations                                                                             |
+| Revision               | Global revision counter                                  | Schema change and false conflicts on unrelated edits                                                                 |
+| Aggregate              | Reuse `Review` or wait for M11.6                         | No plan subject; couples M23 to unfinished work                                                                      |
+| Proxy                  | Proxy embedded in the Runtime                            | Explicitly excluded by the owner                                                                                     |
+| Isolation              | Same-user MCP program with an interface-only restriction | A code-execution flaw in the public program yields full Runtime authority; rejected for public exposure by the owner |
+| Proxy                  | Caddy as the only supported proxy                        | The owner prefers Cloudflare Tunnel on macOS and Nginx as the alternative; no proxy product is mandatory             |
 
 ## Consequences
 
@@ -456,8 +464,7 @@ nothing is stored in SQLite, audit, logs or service definitions.
 
 ## Points that need further approval
 
-1. Acceptance of this ADR as a whole, which requires the choice in Decision 5
-   point 4 (capability isolation option).
+1. Acceptance of this ADR as a whole.
 2. Decision 5b, the restricted bridge ingest surface.
 3. Decision 9, the transaction-body refactor of two existing services, at CB-08.
 4. The authorization-server product, at CB-11C preflight.
@@ -465,8 +472,8 @@ nothing is stored in SQLite, audit, logs or service definitions.
 6. The new persistence of Decision 8 and the aggregate, at CB-03 and CB-04
    design review (migrations).
 7. The audit `actorType` handling.
-8. Whether to evaluate OpenAI's Secure MCP Tunnel as an alternative to a public
-   vhost (the owner confirmed the Caddy architecture; this is optional).
+8. Acceptance of Cloudflare as a third party that terminates TLS and sees P and T planning data in clear text when the tunnel is used, and of administrator rights for the system-level service install on macOS.
+9. Optionally, an evaluation of OpenAI's Secure MCP Tunnel as an alternative to a public hostname.
 
 ## References
 

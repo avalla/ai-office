@@ -51,7 +51,7 @@ AI Office keeps different kinds of documentation separate so current product tru
   state and trained model weights; not accepted current architecture.
 - [M23 Coordination Bridge plan](development/coordination-bridge.md): planned
   coordination protocol, minimized planning snapshots, a remote read-only MCP
-  server over Streamable HTTP behind a Caddy reverse proxy, an optional GitHub
+  server over Streamable HTTP behind a Cloudflare Tunnel or Nginx exposure layer with mandatory capability isolation, an optional GitHub
   Issues transport, a proposal inbox and governed priority and dependency
   changes with digest-bound local approval; GitHub and MCP are never an
   authority; nothing implemented.

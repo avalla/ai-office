@@ -2509,7 +2509,7 @@ be disabled without affecting the Runtime or the dashboard.
 First verifiable outcome (Remote Read Gate, CB-11F): an authenticated remote
 client calls `ai_office_get_milestones` over HTTPS and receives authoritative
 Runtime data, through a separate read-only MCP server (Streamable HTTP) behind
-a reverse proxy (Caddy preferred), an external OAuth 2.1 authorization server
+a Cloudflare Tunnel or Nginx exposure layer, an external OAuth 2.1 authorization server
 and a read-only Runtime listener; no approve or apply tool exists. Then an
 asynchronous GitHub Issues bridge to a dedicated private repository, and the
 governed priority and dependency changes (digest-bound local approval, atomic

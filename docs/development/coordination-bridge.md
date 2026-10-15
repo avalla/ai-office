@@ -87,7 +87,7 @@ Four separately supervised programs, one authority:
  ChatGPT / Claude / Codex / human
      |  HTTPS (MCP, Streamable HTTP)        |  GitHub Issues (async, untrusted text)
      v                                       v
- Reverse proxy (Caddy, deployment       Dedicated private GitHub repository
+ Tunnel or reverse proxy (deployment       Dedicated private GitHub repository
  component): TLS, vhost, limits               ^   |
      |  loopback HTTP                          |   |  bounded poll, cursor
      v                                         |   v
@@ -165,13 +165,31 @@ authenticated, scoped, minimized, rate limited and revocable.
   at the authorization server, or remove the proxy vhost. None of these touches
   the Runtime or the dashboard.
 
-### 3.4 Reverse proxy
+### 3.4 HTTPS exposure and capability isolation
 
-Caddy is the preferred, documented and configurable deployment component: vhost
-and automatic TLS, `reverse_proxy` to the loopback upstream, `request_body`
-size limit, optional rate limiting, optional client-IP or mTLS restriction.
-CB-11E ships a tested template, not an embedded proxy. Streaming behavior of
-responses is verified in the end-to-end test rather than assumed.
+Owner decisions of 2026-10-15. The preferred initial deployment on macOS is
+Cloudflare Tunnel (`cloudflared` opens outbound-only connections, no inbound
+port); Nginx is the supported alternative reverse proxy; Caddy is permitted but
+not required. The MCP program binds only the private interface the deployment
+designates and a tunnel or proxy never replaces OAuth 2.1 and scope checks. With
+a tunnel TLS terminates at the provider's edge, which then sees P and T planning
+data in clear text; the owner accepts that trade-off explicitly.
+
+A publicly exposed MCP program must not be able to reach the main Runtime
+socket even if its process is compromised: isolation by a separate operating
+system identity with verifiable permissions, or by a container or sandbox with
+exclusive access to the read listener; public deployment fails closed when
+isolation cannot be verified; the startup probe is a further check, not the
+mechanism; drift of permissions, mounts and configuration is re-checked; the
+non-isolated mode is for local development without a public endpoint. The
+existing user-level service adapters cannot provide this (a launchd LaunchAgent
+runs in the user's own domain and `UserName` applies only to system-domain
+services; the systemd adapter drives `systemctl --user` only), so CB-11D adds a
+system-level profile or a container recipe. CB-11E ships tested templates for
+the tunnel and for Nginx. CB-11F verifies both the working read path and the
+refused access to the authoritative socket with arbitrary code executed in the
+MCP context. These are scope changes to CB-11D, CB-11E and CB-11F, registered
+in the Runtime.
 
 ## 4. Requirements and tasks
 
@@ -266,8 +284,7 @@ is not merge order.
 - **Remote Read Gate (CB-11F).** From a remote, authenticated MCP client over
   HTTPS, `ai_office_get_milestones` returns authoritative Runtime data with no
   manual export; unauthenticated, expired, revoked and wrong-scope requests are
-  refused; stopping the MCP service leaves Runtime and dashboard unaffected; no
-  mutating tool exists.
+  refused; stopping the MCP service leaves Runtime and dashboard unaffected; access to the authoritative Runtime socket is refused from the MCP context, also with arbitrary code executed there; no mutating tool exists.
 - **V1 gate (CB-04).** AI Office → GitHub → ChatGPT → GitHub → AI Office with a
   published snapshot, a received proposal and a returned assessment, and no
   authoritative mutation.
@@ -294,16 +311,14 @@ is not merge order.
 | D11 | Binding                               | Per-project scope, field allowlist, pagination and size limits, minimization rules; readable does not mean exposable.                                                                                                                                                                                                     |
 
 The mechanisms are specified in ADR-0036 (Decisions 5 to 8) and summarized
-here. Open owner decision that blocks acceptance of the ADR: how the MCP
-program is denied the main socket (ADR-0036 Decision 5 point 4; recommended:
-capability isolation as a verified precondition of the public vhost, needing
-system-level service adapters or a container recipe in CB-11D). Points the ADR
-also asks the owner to approve: the restricted bridge
-ingest surface, the transaction-body refactor of two existing services (CB-08),
-the authorization-server product (CB-11C preflight), the MCP SDK dependency
-(CB-11B), the new persistence (CB-03, CB-04 design reviews), the audit actor
-type, and optionally an evaluation of OpenAI's Secure MCP Tunnel as an
-alternative to a public vhost.
+here. The owner decided on 2026-10-15 that capability isolation is mandatory for
+any public exposure (section 3.4). Points the ADR still asks the owner to
+approve: the restricted bridge ingest surface, the transaction-body refactor of
+two existing services (CB-08), the authorization-server product (CB-11C
+preflight), the MCP SDK dependency (CB-11B), the new persistence (CB-03, CB-04
+design reviews), the audit actor type, Cloudflare as a TLS-terminating third
+party and administrator rights for the system-level service install on macOS,
+and optionally an evaluation of OpenAI's Secure MCP Tunnel.
 
 - **D7 mechanism.** Publication authorization shaped like a capability grant
   (repository, operations, content classes, size, rate, expiry, revocation); a
@@ -315,9 +330,9 @@ alternative to a public vhost.
   `coordination` route profile (read routes under `/api/coordination/v1` and
   a minimal health route, no `/commands`, no dashboard routes), a GET-only
   `RuntimeQueryClient` over the transport extracted from `apps/cli`, and a
-  capability-isolated deployment (open decision, see above) that gives the MCP
-  program access to that socket only. A default same-user deployment is a code and configuration restriction, not a
-  same-UID boundary.
+  mandatory capability-isolated deployment for public exposure that gives the
+  MCP program access to that socket only. A same-user deployment is a code and
+  configuration restriction and exists for local development only.
 - **D10 mechanism.** Resource-server role only: protected-resource metadata,
   401 and 403 challenges, local JWT validation of issuer, audience, expiry and
   scope, introspection behind the same verifier port, a host-configuration
