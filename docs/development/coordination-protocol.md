@@ -73,10 +73,7 @@ only. The pair (`transport.type`, `transport.locator`, `contentDigest`) makes a
 received message traceable. The Runtime records `author` (claim), `transport`
 (provenance) and the local operator (authority) as three different things.
 
-A remote MCP caller sends no envelope and creates no Runtime record. Its
-verified principal (`issuer`, `subject`) and scope live only in the MCP
-program's local access log (ADR-0036 Decision 7); the read listener receives no
-principal and appends no audit row.
+A remote MCP caller sends no envelope and creates no Runtime record. Its verified principal (`issuer`, `subject`) is checked against the Runtime-owned principal registry (ADR-0036 Decision 6), served to the MCP program as a read projection; access itself is logged only in the MCP program's local access log (Decision 7), and the read listener receives no principal and appends no audit row on a read.
 
 ## 3. Message kinds
 
@@ -95,17 +92,14 @@ dependency by itself.
 
 ### 3.1 `status_snapshot`
 
-`payload`: `snapshotId` (`snapshot:sha256:<digest of the minimized projection>`),
+`payload`: `snapshotId` (`snapshot:sha256:<digest of the complete scoped projection>`),
 `generatedAt`, `schemaVersion`, `scope` (project, optional milestone filter),
 `classes` (the data classes included, normally `P` and optionally `T`),
 `page` (`offset`, `limit`, `total`, `truncated`), `milestones`, `tasks`
 (id, title if `T`, recorded and operational status, priority, milestone ids,
 prerequisite ids, `ready`, `waiting`), `requirements` (id, key, status,
 milestone id, task ids), `blockers`, `runnable`, `inconsistencies` (typed
-codes), and `derived` (analysis kept apart from authoritative fields). The
-identifier is the digest of the canonical projection, which is the list above
-without volatile fields: `generatedAt`, the page cursor and the identifier
-itself are excluded and live in the envelope metadata. The same planning state
+codes), and `derived` (analysis kept apart from authoritative fields). The identifier is the digest of the complete, scoped, canonical projection computed before pagination, without volatile fields: `generatedAt`, the page window (`page`) and the identifier itself are excluded and live in the envelope metadata, so changing `offset` or `limit` over unchanged state yields the same identifier; each page also carries `pageDigest`, the digest of that page's content. The same planning state
 yields the same canonical projection and the same identifier; there is no
 revision counter, the digest is the revision.
 

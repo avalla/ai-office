@@ -106,7 +106,7 @@ applied only through `UpdateTask` and `ManageTaskDependencies`. Scope, requireme
 and milestone changes are advisory proposals without an apply path. A new
 autonomous coordination aggregate owns only the proposal lifecycle: request,
 assessment, plan, approval, apply outcome and receipt references. It holds no
-principal registry, token, transport cursor or publication state. Decision
+principal registry, token, transport cursor or publication state; MCP principals are a separate Runtime-owned record (Decision 6). Decision
 requests and advisory notes are entries attached to the lifecycle of a proposal;
 none exists without one. State machine:
 `received → validated → assessed`, terminal `rejected`, `superseded`, `expired`;
@@ -202,7 +202,7 @@ given to the process, not by tool names.
    program rejects requests whose `Host` or `Origin` is not loopback and any
    request carrying forwarding headers (`Forwarded`, `X-Forwarded-*`,
    `Cf-Connecting-IP`, `CF-Ray` and similar); and it refuses to start with a
-   public resource URI unless the isolation verification passes. CB-11F tests that a tunnel or proxy pointed at a non-isolated instance serves nothing. This is defence in depth, not a guarantee: a proxy that rewrites `Host` and strips forwarding headers passes the header checks, and the loopback-resource audience binding holds only if the client validates the RFC 9728 `resource` value and the authorization server will not issue a token for a loopback resource; it is adequate for a deliberate development mode and never a substitute for isolation on a public endpoint.
+   public resource URI unless the isolation verification passes. CB-11F tests that a request through the supported tunnel and Nginx templates (which forward `Host` and forwarding headers) to a non-isolated instance is refused. This is defence in depth, not a guarantee: a proxy deliberately configured to rewrite `Host` and strip forwarding headers passes the header checks, and the loopback-resource audience binding holds only if the client validates the RFC 9728 `resource` value and the authorization server will not issue a token for a loopback resource. That configuration is outside the guarantee, documented as such and adequate only for a deliberate development mode; on a public endpoint the isolation requirement, not this check, is the protection.
    Platform assessment, made in CB-01: on macOS this cannot be achieved with
    LaunchAgents; it needs a system-domain LaunchDaemon with a dedicated
    `UserName` and `GroupName` (administrator rights at install, a group-owned
@@ -258,13 +258,16 @@ not issue tokens and is not an identity provider.
 - **Scope.** The only initial scope is `planning:read`. `planning:detail` and
   `operations:read` are reserved and unissued.
 - **Principals.** The authorization server authenticates; the owner authorizes.
-  A host-configuration allowlist maps `(issuer, subject)` to enabled flag,
-  scopes and projects, managed by local CLI commands and cached for at most ten
-  seconds. Disabling an entry cuts access within that interval regardless of
-  token lifetime. Principal configuration is host configuration, not Runtime
-  state, so the MCP program does not need the Runtime to authenticate. Principal
-  changes are audited in the Runtime by the CLI command that makes them; the
-  verified principal never crosses into the Runtime on a read.
+  The principal registry is authoritative Runtime state, because it decides who
+  may read authoritative project data: a small, separate record (not part of the
+  proposal aggregate) mapping `(issuer, subject)` to an enabled flag, scopes and
+  projects, with a Runtime command to manage it and its audit event committed in
+  the same transaction. The MCP program receives it as a minimized read
+  projection through the read listener, caches it for at most ten seconds and
+  fails closed when the projection is unavailable or stale beyond that interval.
+  Disabling an entry therefore cuts access within the cache interval regardless
+  of token lifetime. The verified principal itself never crosses into the Runtime
+  on a data read.
 - **Renewal and revocation.** Short-lived access tokens, refresh handled between
   client and authorization server, immediate local principal disablement,
   authorization-server revocation, and service stop as the kill switch.
@@ -300,9 +303,7 @@ and per channel; an unclassified field is not exposed.
   256 KiB; strings truncated at 256 characters with a flag; request arguments at
   most 4 KiB; per-principal rate limit and concurrency cap, with a second limit
   at the proxy. The MCP program writes a local, sanitized access log (tool,
-  principal, project, sizes, outcome; never payload content). It is an
-  operational log, not authoritative Runtime audit: the read listener appends no
-  audit rows and receives no principal.
+  principal, project, sizes, outcome; never payload content). It is an operational log, not authoritative Runtime audit; the principal registry is the Runtime's audited state (Decision 6). The read listener appends no audit rows on a read and receives no principal; it serves the principal projection as a read.
 - **GitHub.** A publication authorization lists the content classes it allows
   (default P; T only when listed). The same mappers and classes apply.
 
@@ -363,9 +364,7 @@ The protocol document specifies the contract; the decisions are:
   preconditions and a scope digest: the recorded status, priority and
   editability of each referenced task, and the edge set within the prerequisite
   closure of each `dependsOnTaskId` (the tasks reachable by following
-  prerequisites from it, which is where a new cycle would appear). Snapshot
-  identity is the content digest of the canonical minimized projection,
-  excluding volatile fields such as `generatedAt`; an expected snapshot is
+  prerequisites from it, which is where a new cycle would appear). Snapshot identity is the digest of the complete, scoped, canonical minimized projection computed before pagination, excluding volatile fields such as `generatedAt`, so it does not change with `offset` or `limit` (each page also carries its own content digest); an expected snapshot is
   advisory.
 - **Sequential semantics.** Preconditions on the initial state (targets exist,
   expected priority, scope digest) are checked first. Whether each operation is
@@ -378,10 +377,19 @@ The protocol document specifies the contract; the decisions are:
   whole plan as stale, with sanitized causes. No automatic rebase and no merge of
   concurrent plans: the proposer submits a new request that supersedes the old
   one. Overlapping concurrent plans are flagged at assessment; the first applied
-  wins and the others become stale. Correctness rests on the recheck inside the
-  apply transaction (`BEGIN IMMEDIATE`), not on command serialization: the daemon queue does not cover `run:tick` or the queue runtime, which call the Runtime directly and share its connection, a pre-existing hazard outside M23 (apply may meet an active transaction, handled as `RUNTIME_BUSY`; their own writes may also be joined by a transaction opened on the shared connection, which the short composing apply keeps minimal and the owner should know about). Apply goes through the command queue, and if it meets a
-  transaction already active it returns the retryable `RUNTIME_BUSY` without
-  consuming the approval.
+  wins and the others become stale. Correctness rests on the recheck inside the apply transaction, and
+  that transaction is atomic only if no other writer can share the connection
+  while it is open. `BEGIN IMMEDIATE` excludes other database connections, not
+  other asynchronous callers on this connection: `run:tick` and the queue runtime
+  bypass the daemon queue and call the Runtime directly, so an apply rollback
+  could undo concurrent run state and a commit could commit it. Writer exclusion
+  is therefore a precondition of CB-08, not a deferred hazard: before claiming
+  atomic apply, CB-08 delivers either serialization of every writer through one
+  gate that apply also takes, or connection-level transaction ownership that
+  stops unrelated writes from joining. That touches the daemon and is an approval
+  point. Apply goes through the command queue and, if it meets a transaction
+  already active, returns the retryable `RUNTIME_BUSY` without consuming the
+  approval.
 - **Atomicity.** All-or-nothing, in one transaction, through a composing apply
   use case that reuses the existing services' transactional bodies. This needs a
   behavior-preserving refactor of `UpdateTask` and `ManageTaskDependencies` to
@@ -451,12 +459,11 @@ nothing is stored in SQLite, audit, logs or service definitions.
 ## Consequences
 
 - New persistence is additive and forward-only: the proposal aggregate
-  (CB-04), the publication authorization and publication records (CB-03), with
+  (CB-04), the publication authorization and publication records (CB-03), the MCP principal registry (CB-11C), with
   fresh-migration and upgrade tests; PostgreSQL parity is not promised.
 - Runtime changes are limited to: a coordination route profile and read-only
   listener, a bridge ingest surface (if 5b is approved), coordination
-  application services, a retryable busy code and a behavior-preserving
-  transaction refactor in CB-08.
+  application services, a retryable busy code, writer exclusion for the apply transaction and a behavior-preserving transaction refactor in CB-08.
 - A public endpoint on the owner's machine is a new exposure. It is bounded by
   structural read-only access, authentication by an external authorization
   server, per-principal minimization and limits, audit, and a kill switch.
@@ -471,11 +478,10 @@ nothing is stored in SQLite, audit, logs or service definitions.
 
 1. Acceptance of this ADR as a whole.
 2. Decision 5b, the restricted bridge ingest surface.
-3. Decision 9, the transaction-body refactor of two existing services, at CB-08.
+3. Decision 9: the transaction-body refactor of two existing services and the writer-exclusion mechanism (serialize all writers, or connection-level transaction ownership), at CB-08 design review.
 4. The authorization-server product, at CB-11C preflight.
 5. The MCP SDK dependency and pinned version, at CB-11B.
-6. The new persistence of Decision 8 and the aggregate, at CB-03 and CB-04
-   design review (migrations).
+6. The new persistence of Decision 8, the proposal aggregate and the MCP principal registry, at CB-03, CB-04 and CB-11C design reviews (migrations).
 7. The audit `actorType` handling.
 8. Acceptance of Cloudflare as a third party that, when the tunnel is used, terminates TLS, so it sees planning data (P and T), the bearer access tokens and the OAuth and metadata exchanges in clear text and could replay a token within its lifetime, and of administrator rights for the system-level service install on macOS.
 9. Optionally, an evaluation of OpenAI's Secure MCP Tunnel as an alternative to a public hostname.

@@ -85,8 +85,7 @@ user's own domain and `UserName` applies only to system-domain services), so CB-
 is enforced by the program, not assumed: in non-isolated mode the protected
 resource URI must be loopback (so public tokens fail audience binding), non-loopback
 `Host` or `Origin` and any forwarding header are rejected, and a public resource
-URI refuses to start unless isolation verification passes, so a tunnel pointed at
-a development instance serves nothing.
+URI refuses to start unless isolation verification passes, so a request through the supported tunnel and Nginx templates to a development instance is refused (a proxy deliberately configured to rewrite Host and strip forwarding headers is outside this guarantee; on a public endpoint the isolation requirement is the protection).
 
 ## 3. Data exposure
 
@@ -123,7 +122,7 @@ ChatGPT                Proxy            MCP server               Runtime (read l
   |===== user signs in at the external authorization server ============> access token (aud, scope, exp)
   | POST /mcp  Authorization: Bearer <token>  tools/call ai_office_get_milestones
   |---------------------->|---------------->| verify issuer, aud, exp, scope;
-  |                       |                 | principal (iss,sub) enabled; project allowed; rate limit
+  |                       |                 | principal (iss,sub) enabled in the Runtime projection; project allowed; rate limit
   |                       |                 |-- GET /api/coordination/v1/milestones?project=… -->|
   |                       |                 |<-- P,T projection built Runtime-side ----------------|
   |                       |                 | per-principal project scope; paginate; bound size

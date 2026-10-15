@@ -280,7 +280,7 @@ is not merge order.
 - **Remote Read Gate (CB-11F).** From a remote, authenticated MCP client over
   HTTPS, `ai_office_get_milestones` returns authoritative Runtime data with no
   manual export; unauthenticated, expired, revoked and wrong-scope requests are
-  refused; stopping the MCP service leaves Runtime and dashboard unaffected; access to the authoritative Runtime socket is refused from the MCP context, also with arbitrary code executed there; a tunnel or proxy pointed at a non-isolated instance serves nothing; no mutating tool exists.
+  refused; stopping the MCP service leaves Runtime and dashboard unaffected; access to the authoritative Runtime socket is refused from the MCP context, also with arbitrary code executed there; a request through the supported tunnel and Nginx templates (which forward `Host` and forwarding headers) to a non-isolated instance is refused; no mutating tool exists.
 - **V1 gate (CB-04).** AI Office → GitHub → ChatGPT → GitHub → AI Office with a
   published snapshot, a received proposal and a returned assessment, and no
   authoritative mutation.
@@ -309,10 +309,8 @@ is not merge order.
 The mechanisms are specified in ADR-0036 (Decisions 5 to 8) and summarized
 here. The owner decided on 2026-10-15 that capability isolation is mandatory for
 any public exposure (section 3.4). Points the ADR still asks the owner to
-approve: the restricted bridge ingest surface, the transaction-body refactor of
-two existing services (CB-08), the authorization-server product (CB-11C
-preflight), the MCP SDK dependency (CB-11B), the new persistence (CB-03, CB-04
-design reviews), the audit actor type, Cloudflare as a TLS-terminating third
+approve: the restricted bridge ingest surface, the transaction-body refactor of two existing services and the writer-exclusion mechanism (CB-08), the authorization-server product (CB-11C
+preflight), the MCP SDK dependency (CB-11B), the new persistence (CB-03, CB-04, CB-11C design reviews), the audit actor type, Cloudflare as a TLS-terminating third
 party and administrator rights for the system-level service install on macOS,
 and optionally an evaluation of OpenAI's Secure MCP Tunnel.
 
@@ -331,8 +329,7 @@ and optionally an evaluation of OpenAI's Secure MCP Tunnel.
   configuration restriction and exists for local development only.
 - **D10 mechanism.** Resource-server role only: protected-resource metadata,
   401 and 403 challenges, local JWT validation of issuer, audience, expiry and
-  scope, introspection behind the same verifier port, a host-configuration
-  principal allowlist for instant revocation. ChatGPT does not accept static API
+  scope, introspection behind the same verifier port, a Runtime-owned principal registry, served as a cached projection, for fast revocation. ChatGPT does not accept static API
   keys, so a bearer-token scheme is not an option for the first client.
 - **D11 mechanism.** Data classes P, T, D and A, an exposure registry, explicit
   mappers, field-set contract tests, scope per project, limits (page 50 and 200,
