@@ -157,8 +157,9 @@ Runtime                          Bridge                         GitHub (private 
 ```text
 proposal (assessed) -> plan {operations, preconditions, digest} -> preview
    -> local operator approve (digest, expiry) -> apply:
-        one transaction (only with writer exclusion, ADR-0036 Decision 9): recheck preconditions -> UpdateTask / ManageTaskDependencies
-        -> plan applied + receipt + audit
+        one transaction (only with writer exclusion and the transaction-body refactor, ADR-0036 Decision 9):
+        recheck preconditions -> transactional bodies of UpdateTask / ManageTaskDependencies
+        -> plan applied + receipt + publication intent + audit
    -> receipt publication order -> GitHub
 on any mismatch: refuse the whole plan as stale, no change
 ```

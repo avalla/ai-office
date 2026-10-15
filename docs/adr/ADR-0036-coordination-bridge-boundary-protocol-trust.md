@@ -396,7 +396,9 @@ The protocol document specifies the contract; the decisions are:
   fallback through the existing services.
 - **Apply prerequisites, no degraded mode.** Apply is available only when both
   the transaction-body refactor and the writer exclusion are delivered and
-  approved, or an alternative that demonstrates the same guarantees. They apply
+  approved, or an alternative that demonstrates the same guarantees as both
+  (one transaction, no applied change without a recoverable receipt, and no
+  unrelated writer joining it). They apply
   to every plan, one operation included: the services commit on their own, so a
   crash between that commit and the plan bookkeeping would leave a change
   applied with no recoverable authoritative receipt (the retry would be refused
@@ -404,8 +406,8 @@ The protocol document specifies the contract; the decisions are:
   either prerequisite is missing, declined or not yet delivered, apply fails
   without any mutation and the plan stays at its approved state until it
   expires. Nothing may silently weaken the all-or-nothing guarantee. The
-  authoritative changes, the plan state, the internal receipt and the audit
-  events commit in one transaction. Publishing the receipt to GitHub is a later
+  authoritative changes, the plan state, the internal receipt, the
+  receipt-publication intent and the audit events commit in one transaction. Publishing the receipt to GitHub is a later
   effect through the outbox and its reconciliation, never part of that
   transaction.
 - **Approval.** Bound to the plan digest, the approving principal, an expiry

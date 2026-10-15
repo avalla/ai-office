@@ -352,7 +352,8 @@ after a restart.
   both are delivered and approved: the transaction-body refactor of Decision 9
   (so the operations, the plan state, the receipt, the publication intent and
   the audit events commit in one transaction) and the writer exclusion of 8.4
-  (or an alternative that demonstrably gives the same guarantees). Both apply to
+  (or an alternative that demonstrably gives the same guarantees, including one
+  transaction and a recoverable receipt). Both apply to
   every plan, a one-operation plan included. If either is missing, declined or
   not yet delivered, apply fails with no mutation and the plan stays at its
   approved state until it expires. No fallback exists: an apply through a
