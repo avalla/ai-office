@@ -49,6 +49,16 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Adaptive Agent Learning & Experience Governance](adr/ADR-0034-adaptive-agent-learning-experience-governance.md):
   proposed decision gate separating advisory knowledge, authoritative Runtime
   state and trained model weights; not accepted current architecture.
+- [M23 Coordination Bridge plan](development/coordination-bridge.md): planned
+  coordination protocol, minimized planning snapshots, a remote read-only MCP
+  server over Streamable HTTP behind a Cloudflare Tunnel or Nginx exposure layer with mandatory capability isolation, an optional GitHub
+  Issues transport, a proposal inbox and governed priority and dependency
+  changes with digest-bound local approval; GitHub and MCP are never an
+  authority; nothing implemented.
+- [Coordination Bridge boundary, protocol and trust model](adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md),
+  [architecture](architecture/coordination-bridge.md) and
+  [protocol v1](development/coordination-protocol.md): proposed M23 decision
+  gate; not accepted current architecture.
 - [Professional-work verticals](development/professional-work-verticals.md):
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and
