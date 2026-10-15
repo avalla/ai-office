@@ -392,7 +392,22 @@ The protocol document specifies the contract; the decisions are:
   audit events commit in the same transaction; a refusal is recorded in its own
   short transaction after the rollback.
   Rejected: sequential calls with compensation, partial execution with
-  reconciliation, simulated global transactions. Fallback if the refactor is declined: single-operation plans applied through the existing service. Writer exclusion is required for every apply, one operation included, because the shared-connection hazard does not depend on plan size: if it is declined or not yet delivered, apply is disabled and a plan stays at its approved state until it expires.
+  reconciliation, simulated global transactions, and any single-operation
+  fallback through the existing services.
+- **Apply prerequisites, no degraded mode.** Apply is available only when both
+  the transaction-body refactor and the writer exclusion are delivered and
+  approved, or an alternative that demonstrates the same guarantees. They apply
+  to every plan, one operation included: the services commit on their own, so a
+  crash between that commit and the plan bookkeeping would leave a change
+  applied with no recoverable authoritative receipt (the retry would be refused
+  as stale), and the shared-connection hazard does not depend on plan size. If
+  either prerequisite is missing, declined or not yet delivered, apply fails
+  without any mutation and the plan stays at its approved state until it
+  expires. Nothing may silently weaken the all-or-nothing guarantee. The
+  authoritative changes, the plan state, the internal receipt and the audit
+  events commit in one transaction. Publishing the receipt to GitHub is a later
+  effect through the outbox and its reconciliation, never part of that
+  transaction.
 - **Approval.** Bound to the plan digest, the approving principal, an expiry
   (default 24 hours, maximum 72, configurable) and the audit trail. A plan that
   is modified, expired or stale cannot be applied; one approval applies once.
@@ -470,7 +485,7 @@ nothing is stored in SQLite, audit, logs or service definitions.
 
 1. Acceptance of this ADR as a whole.
 2. Decision 5b, the restricted bridge ingest surface.
-3. Decision 9: the transaction-body refactor of two existing services and the writer-exclusion mechanism (serialize all writers, or connection-level transaction ownership), at CB-08 design review.
+3. Decision 9: the transaction-body refactor of two existing services and the writer-exclusion mechanism (serialize all writers, or connection-level transaction ownership), at CB-08 design review. Apply stays disabled, with no fallback, unless both are approved and delivered.
 4. The authorization-server product, at CB-11C preflight.
 5. The MCP SDK dependency and pinned version, at CB-11B.
 6. The new persistence of Decision 8, the proposal aggregate and the MCP principal registry, at CB-03, CB-04 and CB-11C design reviews (migrations).

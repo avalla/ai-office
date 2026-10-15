@@ -67,8 +67,10 @@ Rules enforced by tests, not conventions:
 | Same-user local process               | trusted-local, not a boundary           | acknowledged in ADR-0014 and ADR-0003; M10 owns the remedy                                                                            |
 
 The Runtime read listener serves only the projects and data classes the owner
-enabled, as P and T projections built Runtime-side, so a compromised MCP program
-can read every enabled project at P and T, plus the minimized authorization projection of ADR-0036 Decision 5 point 5, and nothing else through that listener. Per-principal project scope inside that set is an MCP-side check.
+enabled: P and T projections, and the minimized authorization projection of
+ADR-0036 Decision 5 point 5, all built Runtime-side. A compromised MCP program
+can therefore read every enabled project at P and T, plus that projection, and
+nothing else through that listener. Per-principal project scope inside that set is an MCP-side check.
 
 Capability isolation, decided by the owner (ADR-0036 Decision 5, point 4): a
 publicly exposed MCP program must not be able to reach the main socket even if

@@ -56,7 +56,7 @@ documentation only.
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Priority change               | Exists: `UpdateTask` sets one integer `priority`, audited as `task.priority_updated` with from/to (`packages/application/src/commands/update-task.ts`).                                                                                                              | `set_priority` reuses it; no second priority hierarchy.                                                                                                                               |
 | Dependency edit               | Exists: `ManageTaskDependencies.link/unlink/readiness` with cycle check, project ownership, audit; editable only while the task is `pending` or `blocked` with no execution history.                                                                                 | `add/remove_dependency` reuse it; the edit restriction is a first-class conflict in impact analysis (CB-06).                                                                          |
-| Atomic multi-op apply         | Missing: each service opens its own transaction and `TransactionRunner.run` rejects nesting (`TransactionAlreadyActiveError`).                                                                                                                                       | A multi-operation plan is not atomic by composition; CB-08 needs a composing use case, a one-operation limit or an explicit partial-execution contract (D5 detail, decided in CB-01). |
+| Atomic multi-op apply         | Missing: each service opens its own transaction and `TransactionRunner.run` rejects nesting (`TransactionAlreadyActiveError`).                                                                                                                                       | A multi-operation plan is not atomic by composition; CB-08 needs a composing use case over the refactored transactional bodies plus writer exclusion; there is no one-operation or partial-execution fallback, and without both apply stays disabled (ADR-0036 Decision 9). |
 | Optimistic concurrency        | Missing: no revision counter on tasks or edges, only `updatedAt`.                                                                                                                                                                                                    | Per-scope content digests of the affected tasks and edges, not a global counter (CB-02, CB-07).                                                                                       |
 | Plan-hash approval            | Exists as a pattern (`update --approve <planHash>`, `knowledge:plan/admit`).                                                                                                                                                                                         | CB-07 follows the same plan, hash, approve, apply shape.                                                                                                                              |
 | Approval identity             | Trusted-local by design: the Runtime does not authenticate human presence; a same-UID process can call the same CLI (AGENTS.md, ADR-0003, task "M10 — harden approval presence if approved").                                                                        | "Verified approver" is as strong as existing approvals until M10 (D6). Stated openly, not hidden.                                                                                     |
@@ -152,7 +152,9 @@ authenticated, scoped, minimized, rate limited and revocable.
   shared coordination API. Runs, agents and activity are not tools in M23: the
   initial scope `planning:read` carries identifiers, titles, statuses,
   priorities and relationships. No tool creates, approves, applies or mutates.
-- **Minimization.** Data classes P and T only; descriptions need the unissued
+- **Minimization.** Tool data is data classes P and T only (the minimized
+  authorization projection is a separate listener payload, ADR-0036 Decision 5
+  point 5); descriptions need the unissued
   `planning:detail` scope; agent output, knowledge and credentials are never
   exposed (D11).
 - **Authentication.** OAuth 2.1 resource server with an external authorization
@@ -286,7 +288,10 @@ is not merge order.
   authoritative mutation.
 - **V2 gate (CB-09).** One real priority change and one real dependency change
   through proposal → preview → owner approval → apply → GitHub receipt, plus an
-  unauthorized proposal that fails without changing the project.
+  unauthorized proposal that fails without changing the project. The gate
+  requires the writer exclusion and the transaction-body refactor of ADR-0036
+  Decision 9 to be approved and delivered: without them apply is disabled and the
+  gate cannot be reached, which is reported, never degraded.
 - **V3 (CB-12).** The owner understands bridge state without reading GitHub
   threads; adapter parity holds across CLI, GitHub bridge and MCP.
 

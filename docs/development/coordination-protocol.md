@@ -325,7 +325,7 @@ connection, so their writes could be committed or rolled back with the plan.
 Writer exclusion is therefore a precondition of CB-08 (ADR-0036 Decision 9):
 every writer is serialized through one gate that apply also takes, or
 connection-level transaction ownership stops unrelated writes from joining, and
-this touches the daemon and needs owner approval. Until it holds, apply is disabled: even a one-operation apply on the shared connection has the same hazard, so no apply is attempted and a plan stays at its approved state until its expiry. Apply is
+this touches the daemon and needs owner approval. Until it holds, and until the transaction-body refactor is delivered (8.5), apply is disabled: even a one-operation apply on the shared connection has the same hazard, so no apply is attempted and a plan stays at its approved state until its expiry. Apply is
 submitted through the command queue; if it meets an already active transaction it
 returns the retryable `RUNTIME_BUSY` and leaves the approval unconsumed.
 
@@ -346,8 +346,20 @@ after a restart.
   edit of a not-yet-approved request is a new digest and creates a superseding
   revision; an edit of an approved or applied request is ignored and reported as
   drift (CB-09).
-- **Multi-operation plans.** Up to 20 operations apply atomically as above, with the sequential semantics of 8.2; apply of any plan is enabled only once the writer exclusion of 8.4 holds.
-  If the transaction-body refactor of Decision 9 is declined, plans are limited to one operation applied through the existing service, and all other rules are unchanged. In every case apply requires the writer exclusion of 8.4 and is disabled without it.
+- **Multi-operation plans.** Up to 20 operations apply atomically as above, with
+  the sequential semantics of 8.2.
+- **Apply prerequisites and no degraded mode.** Apply is available only when
+  both are delivered and approved: the transaction-body refactor of Decision 9
+  (so the operations, the plan state, the receipt, the publication intent and
+  the audit events commit in one transaction) and the writer exclusion of 8.4
+  (or an alternative that demonstrably gives the same guarantees). Both apply to
+  every plan, a one-operation plan included. If either is missing, declined or
+  not yet delivered, apply fails with no mutation and the plan stays at its
+  approved state until it expires. No fallback exists: an apply through a
+  service that commits on its own cannot be made all-or-nothing, because a
+  crash between that commit and the plan bookkeeping would leave a change
+  applied with no recoverable authoritative receipt, and the retry would be
+  refused as `STALE_PLAN`.
 
 ### 8.6 Proposal lifecycle
 
