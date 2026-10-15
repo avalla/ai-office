@@ -84,12 +84,12 @@ The Runtime remains the only authority and is never exposed publicly. Two new,
 optional, separately supervised programs sit beside it and the existing
 dashboard; each is a Runtime client with the narrowest surface it needs.
 
-| Program                     | Role                                                 | Runtime surface                                                                   | Exposure                         |
-| --------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------- |
-| Runtime (daemon)            | Authority: state, validation, approval, apply, audit | itself                                                                            | none; Unix sockets only          |
-| Dashboard (existing)        | Operations console                                   | query protocol, unprofiled (new profiles apply to the coordination listener only) | loopback                         |
-| MCP server (CB-11B)         | Remote read-only tools                               | coordination read listener only (Decision 5)                                      | loopback, behind a reverse proxy |
-| Coordination bridge (CB-03) | GitHub transport                                     | coordination ingest surface (Decision 5b)                                         | outbound only                    |
+| Program                     | Role                                                 | Runtime surface                                                                   | Exposure                                            |
+| --------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Runtime (daemon)            | Authority: state, validation, approval, apply, audit | itself                                                                            | none; Unix sockets only                             |
+| Dashboard (existing)        | Operations console                                   | query protocol, unprofiled (new profiles apply to the coordination listener only) | loopback                                            |
+| MCP server (CB-11B)         | Remote read-only tools                               | coordination read listener only (Decision 5)                                      | private interface, behind a tunnel or reverse proxy |
+| Coordination bridge (CB-03) | GitHub transport                                     | coordination ingest surface (Decision 5b)                                         | outbound only                                       |
 
 Dependency direction stays `apps/adapters → application → domain`. The new
 programs depend only on application ports and pure protocol modules, on the
@@ -195,6 +195,15 @@ given to the process, not by tool names.
    stops on failure.
    f. A non-isolated mode exists only for local development: no public endpoint,
    no tunnel or proxy enabled, loopback bind, with its limitations printed.
+   g. The mode is enforced by the program, because exposure happens through tools
+   AI Office does not install or watch (a tunnel route, a proxy). In
+   non-isolated mode the canonical protected-resource URI must be a loopback
+   URL, so a token issued for any public resource fails audience binding; the
+   program rejects requests whose `Host` or `Origin` is not loopback and any
+   request carrying forwarding headers (`Forwarded`, `X-Forwarded-*`,
+   `Cf-Connecting-IP`, `CF-Ray` and similar); and it refuses to start with a
+   public resource URI unless the isolation verification passes. CB-11F tests
+   that a tunnel or proxy pointed at a non-isolated instance serves nothing.
    Platform assessment, made in CB-01: on macOS this cannot be achieved with
    LaunchAgents; it needs a system-domain LaunchDaemon with a dedicated
    `UserName` and `GroupName` (administrator rights at install, a group-owned
@@ -202,8 +211,7 @@ given to the process, not by tool names.
    virtual machine with access to the read listener only. Sharing a host Unix
    socket into the Linux virtual machine of common macOS container runtimes is
    not generally available, so the container path may need the read listener
-   reachable on a private interface; that is a design point for CB-10 and CB-11D,
-   to be verified. On Linux it needs a system unit with `User=` and sandboxing
+   reachable on a private interface. That would add a network read listener, which conflicts with this ADR's Unix-socket-only Runtime surfaces and would be reachable by local users or containers on that network, so it needs an ADR amendment and a transport authentication design before CB-10 implements it; it is a design point for CB-10 and CB-11D, to be verified. On Linux it needs a system unit with `User=` and sandboxing
    options, or the user manager of a dedicated user, or a container. The
    existing user-level adapters remain for the non-isolated development mode.
 5. **Runtime-side minimization.** The coordination route profile returns only
@@ -372,9 +380,7 @@ The protocol document specifies the contract; the decisions are:
   concurrent plans: the proposer submits a new request that supersedes the old
   one. Overlapping concurrent plans are flagged at assessment; the first applied
   wins and the others become stale. Correctness rests on the recheck inside the
-  apply transaction (`BEGIN IMMEDIATE`), not on command serialization: the
-  daemon queue does not cover `run:tick` or the queue runtime, which call the
-  Runtime directly. Apply goes through the command queue, and if it meets a
+  apply transaction (`BEGIN IMMEDIATE`), not on command serialization: the daemon queue does not cover `run:tick` or the queue runtime, which call the Runtime directly and share its connection, a pre-existing hazard outside M23 (apply may meet an active transaction, handled as `RUNTIME_BUSY`; their own writes may also be joined by a transaction opened on the shared connection, which the short composing apply keeps minimal and the owner should know about). Apply goes through the command queue, and if it meets a
   transaction already active it returns the retryable `RUNTIME_BUSY` without
   consuming the approval.
 - **Atomicity.** All-or-nothing, in one transaction, through a composing apply
@@ -456,7 +462,7 @@ nothing is stored in SQLite, audit, logs or service definitions.
   structural read-only access, authentication by an external authorization
   server, per-principal minimization and limits, audit, and a kill switch.
 - Residual risks are documented, not removed: same-UID trust (reduced by
-  Decision 5 point 4 once decided), data disclosure through a compromised
+  Decision 5 point 4), data disclosure through a compromised
   principal or MCP program bounded by enabled projects, scope and token
   lifetime, and titles that may contain sensitive text.
 - Cost: an external identity provider dependency and an MCP SDK dependency,
@@ -472,7 +478,7 @@ nothing is stored in SQLite, audit, logs or service definitions.
 6. The new persistence of Decision 8 and the aggregate, at CB-03 and CB-04
    design review (migrations).
 7. The audit `actorType` handling.
-8. Acceptance of Cloudflare as a third party that terminates TLS and sees P and T planning data in clear text when the tunnel is used, and of administrator rights for the system-level service install on macOS.
+8. Acceptance of Cloudflare as a third party that, when the tunnel is used, terminates TLS, so it sees planning data (P and T), the bearer access tokens and the OAuth and metadata exchanges in clear text and could replay a token within its lifetime, and of administrator rights for the system-level service install on macOS.
 9. Optionally, an evaluation of OpenAI's Secure MCP Tunnel as an alternative to a public hostname.
 
 ## References

@@ -24,8 +24,7 @@ decisions and receive verifiable confirmation of what was applied, without
 direct access to the Runtime database. Two complementary channels share one
 application layer:
 
-- a **remote read-only MCP server** (Streamable HTTP behind an HTTPS reverse
-  proxy) for synchronous access to authoritative planning data;
+- a **remote read-only MCP server** (Streamable HTTP behind an HTTPS exposure layer (Cloudflare Tunnel or Nginx)) for synchronous access to authoritative planning data;
 - a **GitHub Issues bridge** to a dedicated private repository for asynchronous,
   persistent communication: snapshots, proposals, decision requests, receipts.
 
@@ -40,8 +39,7 @@ Invariants:
 4. Every bridge component is optional and separately supervised. Disabling the
    MCP service or the GitHub bridge leaves the Runtime, the dashboard and
    existing workflows unchanged; the core never imports GitHub or an MCP SDK.
-5. The Runtime and its database are never publicly reachable. Only a reverse
-   proxy vhost is, and it is a deployment component, not part of the Runtime.
+5. The Runtime and its database are never publicly reachable. Only the exposure layer (a tunnel route or a proxy vhost) is, and it is a deployment component, not part of the Runtime.
 6. Remote approval or application of changes does not exist until an
    authenticated principal model has its own accepted ADR.
 7. Provider-, client- and domain-neutral protocol and application layers.
@@ -69,7 +67,7 @@ documentation only.
 | Runtime access paths          | Two on the daemon Unix socket: the command protocol (`RuntimeClient.execute(args)`, whole CLI surface including mutations) and a separate read-only query protocol (`/api/...`, GET only, `queryApiVersion` 1) consumed by the dashboard, itself a separate process. | The MCP service must use the read-only path so read-only is structural; see D9.                                                                                                       |
 | `RuntimeClient` location      | The port is in `application`; its only implementation `IpcRuntimeClient` is in `apps/cli`.                                                                                                                                                                           | An out-of-process service cannot import `apps/cli`; the transport is extracted into a shared package first (CB-11B).                                                                  |
 | Query API read model          | Covers projects, tasks, graph, pipelines, agents, runs, reviews, approvals, activity, status; no milestone/requirement/dependency planning route.                                                                                                                    | The planning read model of CB-02 is exposed through a new read-only route by CB-10.                                                                                                   |
-| Service management            | Exists: launchd and systemd user services for Runtime and dashboard; the dashboard binds loopback only and waits for the Runtime.                                                                                                                                    | An MCP service is a third managed program (CB-11D); non-loopback bind is refused.                                                                                                     |
+| Service management            | Exists: launchd and systemd user services for Runtime and dashboard; the dashboard binds loopback only and waits for the Runtime.                                                                                                                                    | An MCP service is a third managed program (CB-11D); a wildcard or public bind is refused; an isolated profile may use a designated private interface.                                 |
 | Credential boundary           | Exists (ADR-0020): `<AI_OFFICE_HOME>/credentials/`, 0700/0600, strict loader, only names declared by registered descriptors, "not a general secret store".                                                                                                           | Coordination credentials (the GitHub token) need a declared extension: an ADR amendment decided in CB-01.                                                                             |
 | MCP                           | No MCP server in the repository (only the Claude worker's `--strict-mcp-config` flag). Planned: roadmap M9 bullet "MCP server" and task "M9 — expose selected Runtime tools over MCP" (requirement M9-MCP), blocked by its assessment.                               | Overlap in the plan, not in code; see section 6 for the resolution.                                                                                                                   |
 | M13 GitHub connector          | Planned, none started.                                                                                                                                                                                                                                               | Overlap limited to credentials and external identity; no dependency (D7 note).                                                                                                        |
@@ -142,8 +140,7 @@ authenticated, scoped, minimized, rate limited and revocable.
   Bun, a bearer gate with required scopes and expected resource, and host and
   origin validation helpers against DNS rebinding (verified against the SDK
   documentation on 2026-10-15; the SDK has v1.x and v2.x lines, the version is
-  pinned in CB-11B). The service binds loopback only; the proxy is the sole
-  public endpoint.
+  pinned in CB-11B). The service binds only the designated private interface (loopback by default); the exposure layer is the sole public endpoint.
 - **Runtime access.** A dedicated read-only Runtime listener serving the query
   protocol in a `coordination` profile, reached through a GET-only
   `RuntimeQueryClient`; a dedicated health query. No command client (D9).
@@ -162,7 +159,7 @@ authenticated, scoped, minimized, rate limited and revocable.
   server, scope `planning:read`, a replaceable verifier and a principal
   allowlist (D10). The first client is ChatGPT Pro.
 - **Disablement.** Stop or uninstall the service, disable the principal, revoke
-  at the authorization server, or remove the proxy vhost. None of these touches
+  at the authorization server, or remove the hostname, tunnel route or vhost. None of these touches
   the Runtime or the dashboard.
 
 ### 3.4 HTTPS exposure and capability isolation
@@ -172,8 +169,7 @@ Cloudflare Tunnel (`cloudflared` opens outbound-only connections, no inbound
 port); Nginx is the supported alternative reverse proxy; Caddy is permitted but
 not required. The MCP program binds only the private interface the deployment
 designates and a tunnel or proxy never replaces OAuth 2.1 and scope checks. With
-a tunnel TLS terminates at the provider's edge, which then sees P and T planning
-data in clear text; the owner accepts that trade-off explicitly.
+a tunnel TLS terminates at the provider's edge, which terminates TLS, so it sees planning data (P and T), the bearer access tokens and the OAuth and metadata exchanges in clear text and could replay a token within its lifetime; the owner accepts that trade-off explicitly.
 
 A publicly exposed MCP program must not be able to reach the main Runtime
 socket even if its process is compromised: isolation by a separate operating
@@ -193,25 +189,25 @@ in the Runtime.
 
 ## 4. Requirements and tasks
 
-| Phase          | Task                                            | Requirement            | Depends on     | Priority |
-| -------------- | ----------------------------------------------- | ---------------------- | -------------- | -------- |
-| V1 Foundation  | CB-01 Architecture boundary and protocol ADR    | CB-R01                 | none           | 3        |
-| V1 Foundation  | CB-02 Planning snapshot and read model          | CB-R02                 | CB-01          | 3        |
-| V1 Foundation  | CB-10 Shared coordination application API       | CB-R10                 | CB-02          | 3        |
-| V1 Remote Read | CB-11A MCP tool contract                        | CB-R11                 | CB-10, CB-01   | 3        |
-| V1 Remote Read | CB-11B Streamable HTTP read-only MCP server     | CB-R11                 | CB-11A         | 3        |
-| V1 Remote Read | CB-11C MCP security and authentication          | CB-R13                 | CB-11A         | 3        |
-| V1 Remote Read | CB-11D MCP service management                   | CB-R14                 | CB-11B         | 3        |
-| V1 Remote Read | CB-11E Reverse proxy and deployment             | CB-R14                 | CB-11C, CB-11D | 3        |
-| V1 Remote Read | CB-11F Remote MCP end-to-end acceptance         | CB-R11, CB-R13, CB-R14 | CB-11E         | 3        |
-| V1 GitHub      | CB-03 GitHub Issue transport adapter            | CB-R03                 | CB-10          | 2        |
-| V1 GitHub      | CB-04 Proposal inbox and read-only review       | CB-R04                 | CB-03          | 2        |
-| V2             | CB-05 Planning change contract                  | CB-R05                 | CB-01          | 1        |
-| V2             | CB-06 Dependency and priority impact analysis   | CB-R06                 | CB-05, CB-02   | 1        |
-| V2             | CB-07 Approval and optimistic concurrency       | CB-R07                 | CB-06, CB-04   | 1        |
-| V2             | CB-08 Authoritative apply and receipt           | CB-R08                 | CB-07          | 1        |
-| V2             | CB-09 Reconciliation and drift detection        | CB-R09                 | CB-08          | 1        |
-| V3             | CB-12 Owner coordination view and documentation | CB-R12                 | CB-09, CB-10   | 0        |
+| Phase          | Task                                                                               | Requirement            | Depends on     | Priority |
+| -------------- | ---------------------------------------------------------------------------------- | ---------------------- | -------------- | -------- |
+| V1 Foundation  | CB-01 Architecture boundary and protocol ADR                                       | CB-R01                 | none           | 3        |
+| V1 Foundation  | CB-02 Planning snapshot and read model                                             | CB-R02                 | CB-01          | 3        |
+| V1 Foundation  | CB-10 Shared coordination application API                                          | CB-R10                 | CB-02          | 3        |
+| V1 Remote Read | CB-11A MCP tool contract                                                           | CB-R11                 | CB-10, CB-01   | 3        |
+| V1 Remote Read | CB-11B Streamable HTTP read-only MCP server                                        | CB-R11                 | CB-11A         | 3        |
+| V1 Remote Read | CB-11C MCP security and authentication                                             | CB-R13                 | CB-11A         | 3        |
+| V1 Remote Read | CB-11D MCP service management                                                      | CB-R14                 | CB-11B         | 3        |
+| V1 Remote Read | CB-11E HTTPS exposure and deployment (Runtime title: Reverse proxy and deployment) | CB-R14                 | CB-11C, CB-11D | 3        |
+| V1 Remote Read | CB-11F Remote MCP end-to-end acceptance                                            | CB-R11, CB-R13, CB-R14 | CB-11E         | 3        |
+| V1 GitHub      | CB-03 GitHub Issue transport adapter                                               | CB-R03                 | CB-10          | 2        |
+| V1 GitHub      | CB-04 Proposal inbox and read-only review                                          | CB-R04                 | CB-03          | 2        |
+| V2             | CB-05 Planning change contract                                                     | CB-R05                 | CB-01          | 1        |
+| V2             | CB-06 Dependency and priority impact analysis                                      | CB-R06                 | CB-05, CB-02   | 1        |
+| V2             | CB-07 Approval and optimistic concurrency                                          | CB-R07                 | CB-06, CB-04   | 1        |
+| V2             | CB-08 Authoritative apply and receipt                                              | CB-R08                 | CB-07          | 1        |
+| V2             | CB-09 Reconciliation and drift detection                                           | CB-R09                 | CB-08          | 1        |
+| V3             | CB-12 Owner coordination view and documentation                                    | CB-R12                 | CB-09, CB-10   | 0        |
 
 The original CB-11 "Optional MCP server" was cancelled as superseded by
 CB-11A–CB-11F before it was ever started; it carried no work. Changes against
@@ -223,7 +219,7 @@ the first version of this plan:
 - CB-03 now depends on CB-10 (publishing a snapshot goes through the shared
   API) instead of CB-02 directly.
 - CB-11 was split into six tasks as proposed: contract, server, security,
-  service management, reverse proxy and deployment, end-to-end.
+  service management, HTTPS exposure and deployment, end-to-end.
 - Two requirements were added: CB-R13 (remote authentication, authorization and
   credential handling) and CB-R14 (service management and reverse-proxy
   deployment). CB-R11 now means the remote read-only tool contract and server.
@@ -284,7 +280,7 @@ is not merge order.
 - **Remote Read Gate (CB-11F).** From a remote, authenticated MCP client over
   HTTPS, `ai_office_get_milestones` returns authoritative Runtime data with no
   manual export; unauthenticated, expired, revoked and wrong-scope requests are
-  refused; stopping the MCP service leaves Runtime and dashboard unaffected; access to the authoritative Runtime socket is refused from the MCP context, also with arbitrary code executed there; no mutating tool exists.
+  refused; stopping the MCP service leaves Runtime and dashboard unaffected; access to the authoritative Runtime socket is refused from the MCP context, also with arbitrary code executed there; a tunnel or proxy pointed at a non-isolated instance serves nothing; no mutating tool exists.
 - **V1 gate (CB-04).** AI Office → GitHub → ChatGPT → GitHub → AI Office with a
   published snapshot, a received proposal and a returned assessment, and no
   authoritative mutation.

@@ -232,7 +232,7 @@ filesystem paths or internal identifiers beyond the ones the caller sent.
 | `RUNTIME_BUSY`               | A transaction was already active; retry, nothing was consumed |
 | `INTERNAL_ERROR`             | Anything else, without detail                                 |
 
-Assessment distinguishes errors (the plan cannot be applied) from warnings
+Warning codes: `TASK_TERMINAL`, `REDUNDANT_OPERATION`, `SNAPSHOT_MISMATCH` and `CONFLICTS_WITH`. Assessment distinguishes errors (the plan cannot be applied) from warnings
 (redundant operation, advisory mismatch, overlap with another plan).
 
 ## 7. Limits
