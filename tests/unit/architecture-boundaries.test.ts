@@ -123,13 +123,22 @@ test("M16.5 activation: pipeline-run creation reads the resolved configuration f
   ];
   // No other derived view may influence which pipeline, stage, role or
   // policy runs: activation materializes no role, agent or definition.
-  for (const forbidden of [
-    "configuration.workflows",
-    "configuration.policies",
-    ...otherViews,
+  // Any access form counts: `.`, `?.`, `!.`, or destructuring the views.
+  const viewAccess = (view: string): RegExp =>
+    new RegExp(
+      `configuration[!?]?\\.${view}\\b|\\{[^}]*\\b${view}\\b[^}]*\\}\\s*=\\s*(input\\.)?configuration`,
+      "u",
+    );
+  for (const view of [
+    "workflows",
+    "policies",
+    ...otherViews.map((name) => name.replace("configuration.", "")),
   ])
-    expect(manager).not.toContain(forbidden);
-  for (const forbidden of otherViews) expect(mapper).not.toContain(forbidden);
+    expect(manager).not.toMatch(viewAccess(view));
+  for (const view of otherViews.map((name) =>
+    name.replace("configuration.", ""),
+  ))
+    expect(mapper).not.toMatch(viewAccess(view));
   expect(mapper).toContain("configuration.workflows");
   expect(mapper).toContain("configuration.policies");
 });

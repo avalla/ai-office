@@ -98,6 +98,23 @@ export class ManagePipelineRuns {
     const manifestDefinition = revision.manifest.pipelines.find(
       (value) => value.id === input.pipelineId,
     );
+    // A project with no selected pack has only manifest pipelines: refuse an
+    // unknown or guidance pipeline before any write lock or configuration
+    // read, in the order this command always had. The decision is made again
+    // inside the transaction, where the selection is authoritative.
+    if (
+      input.source !== "pack" &&
+      (this.configuration === undefined ||
+        !(await this.configuration.selectsPacks(input.projectId)))
+    ) {
+      if (manifestDefinition === undefined)
+        throw new OfficePipelineNotFoundError(
+          input.projectId,
+          input.pipelineId,
+        );
+      if (manifestDefinition.enforcement !== "enforced")
+        throw new PipelineDefinitionNotEnforcedError(manifestDefinition.id);
+    }
     const run = await this.transactions.run(async () => {
       if (this.taskDependencies !== undefined)
         await assertTaskPrerequisitesComplete(
@@ -145,7 +162,12 @@ export class ManagePipelineRuns {
         taskId: input.taskId,
         pipelineId: definition.id,
         manifestRevision: revision.revision,
-        ...(selected.source === "pack" ? { definitionSource: "pack" } : {}),
+        ...(selected.source === "pack"
+          ? {
+              definitionSource: "pack",
+              workflowId: selected.workflowId,
+            }
+          : {}),
         ...(input.actorLabel === undefined
           ? {}
           : { actorLabel: input.actorLabel }),
@@ -460,16 +482,20 @@ export class ManagePipelineRuns {
     manifestDefinition: OfficePipeline | undefined;
     configuration: ResolvedProjectConfiguration | undefined;
     source?: "manifest" | "pack";
-  }): Promise<{ definition: OfficePipeline; source: "manifest" | "pack" }> {
+  }): Promise<
+    | { definition: OfficePipeline; source: "manifest" }
+    | { definition: OfficePipeline; source: "pack"; workflowId: string }
+  > {
+    const configuration = input.configuration;
     const workflow =
-      input.configuration === undefined || input.source === "manifest"
+      configuration === undefined || input.source === "manifest"
         ? undefined
-        : findPackWorkflow(input.configuration, input.pipelineId);
+        : findPackWorkflow(configuration, input.pipelineId);
     const manifestDefinition =
       input.source === "pack" ? undefined : input.manifestDefinition;
     if (workflow !== undefined && manifestDefinition !== undefined)
       throw new PipelineDefinitionAmbiguousError(input.pipelineId);
-    if (workflow === undefined) {
+    if (configuration === undefined || workflow === undefined) {
       if (manifestDefinition === undefined)
         throw new OfficePipelineNotFoundError(
           input.projectId,
@@ -477,7 +503,10 @@ export class ManagePipelineRuns {
         );
       return { definition: manifestDefinition, source: "manifest" };
     }
-    const definition = packWorkflowPipeline(input.configuration!, workflow);
+    const definition = packWorkflowPipeline(configuration, workflow);
+    // A guidance workflow is refused as such before any role is demanded.
+    if (definition.enforcement !== "enforced")
+      throw new PipelineDefinitionNotEnforcedError(definition.id);
     const known = new Set(
       (await this.agents.listRoles(input.projectId)).map(
         (role) => role.snapshot().key,
@@ -495,7 +524,7 @@ export class ManagePipelineRuns {
         localDefinitionId(workflow.workflowId),
         missing,
       );
-    return { definition, source: "pack" };
+    return { definition, source: "pack", workflowId: workflow.workflowId };
   }
 
   private requireOperator(actor: OperatorPrincipal): void {

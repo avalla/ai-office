@@ -41,7 +41,7 @@ export function findPackWorkflow(
   if (matches.length > 1)
     throw new PackPipelineUnsupportedError(
       localId,
-      "more than one resolved workflow has this local ID",
+      "more than one resolved workflow has this local ID (a manifest pipeline can still be started with --source manifest)",
     );
   return matches[0];
 }

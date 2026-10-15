@@ -5983,6 +5983,15 @@ local ID, must already exist as a Runtime role of the project, or the start is
 refused with `PipelineRoleUnavailableError` and nothing is written. Agent
 assignment, approval and stage guards are the existing ones.
 
+**Known limitations.** Roles match Runtime roles by local ID only, so pack-owned
+and project-owned roles that share a local ID are satisfied by one Runtime role;
+no authority is gained, since grants and stage guards are unchanged. The
+manifest revision and the manifest pipeline are read before the run-start
+transaction, as for every run, so a concurrent `office:apply` can race the
+ambiguity check. The resolved closure includes workflows of dependency packs of
+a selected pack. A project with no selected pack refuses an unknown or guidance
+manifest pipeline before any transaction opens, as it always did.
+
 **Not delivered here.** Execution parity (`a45ddb12`), GP-10C-2 adoption and
 catalog registration, GP-24, the GP-16 run gate and the two GP-12 follow-ups
 remain separate M16.5 tasks; the production catalog is still empty, so no

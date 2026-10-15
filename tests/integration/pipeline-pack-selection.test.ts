@@ -21,7 +21,14 @@ import {
 import type { Clock } from "@ai-office/application/ports/clock.port.ts";
 import type { IdGenerator } from "@ai-office/application/ports/id-generator.port.ts";
 import { localOperatorPrincipal } from "@ai-office/application/ports/execution-principal.port.ts";
-import { computeArtifactDigest } from "../../packages/domain-pack-contracts/src/index.ts";
+import {
+  computeArtifactDigest,
+  computeManifestDigest,
+  contributionKinds,
+  parseDomainPackManifest,
+} from "../../packages/domain-pack-contracts/src/index.ts";
+import { PipelineDefinitionNotEnforcedError } from "@ai-office/application/pipeline-errors.ts";
+import type { TransactionRunner } from "@ai-office/application/ports/transaction-runner.port.ts";
 import { InMemoryInstalledDomainPackCatalog } from "@ai-office/runtime-host/installed-domain-pack-catalog.ts";
 import { migrate } from "@ai-office/storage-sqlite/database/migrate.ts";
 import { openDatabase } from "@ai-office/storage-sqlite/database/open-database.ts";
@@ -130,6 +137,13 @@ function harness() {
     transactions: storage.transactions,
     catalog,
   });
+  let opened = 0;
+  const transactions: TransactionRunner = {
+    run: (work) => {
+      opened += 1;
+      return storage.transactions.run(work);
+    },
+  };
   const manager = new ManagePipelineRuns(
     storage.officeManifests,
     storage.pipelines,
@@ -138,12 +152,19 @@ function harness() {
     audit,
     ids,
     clock,
-    storage.transactions,
+    transactions,
     storage.jobOutbox,
     storage.taskDependencies,
     configuration,
   );
-  return { database, storage, catalog, configuration, manager };
+  return {
+    database,
+    storage,
+    catalog,
+    configuration,
+    manager,
+    transactionsOpened: () => opened,
+  };
 }
 
 type Harness = ReturnType<typeof harness>;
@@ -385,5 +406,85 @@ describe("pack workflow selection (M16.5 Runtime activation)", () => {
     });
     expect(run.snapshot().configurationPin).toBeUndefined();
     expect(auditPayloads(h)).not.toContain("definitionSource");
+  });
+
+  test("an unknown or guidance manifest pipeline of a project with no pack is refused before any transaction opens", async () => {
+    const h = harness();
+    const { projectId, taskId } = await seed(h, {
+      pipelines: [delivery, { ...manifestMatter, enforcement: "guidance" }],
+      roles: legalRoles,
+      selectLegal: false,
+    });
+    const start = (pipelineId: string) =>
+      h.manager.start({
+        projectId,
+        taskId,
+        pipelineId,
+        principal: localOperatorPrincipal,
+      });
+    await expect(start("typo")).rejects.toBeInstanceOf(
+      OfficePipelineNotFoundError,
+    );
+    await expect(start("matter-workflow")).rejects.toBeInstanceOf(
+      PipelineDefinitionNotEnforcedError,
+    );
+    expect(h.transactionsOpened()).toBe(0);
+  });
+
+  test("a pack workflow with no enforced policy is refused as guidance before any role is demanded", async () => {
+    const h = harness();
+    const { projectId, taskId } = await seed(h, {
+      pipelines: [delivery],
+      roles: [],
+      selectLegal: false,
+    });
+    const encoder = new TextEncoder();
+    const draft = {
+      schemaVersion: 1,
+      id: "org.example.guidance",
+      version: "1.0.0",
+      manifestDigest: `sha256:${"0".repeat(64)}`,
+      coreContract: { minInclusive: 1, maxExclusive: 3 },
+      metadata: { name: "guidance", description: "No policy" },
+      dependencies: [],
+      contributions: {
+        ...Object.fromEntries(contributionKinds.map((kind) => [kind, []])),
+        roles: [{ id: "clerk" }],
+        taskTypes: [{ id: "case" }],
+        workflows: [
+          {
+            id: "case-flow",
+            taskType: "case",
+            stages: [{ id: "open", role: "clerk" }],
+          },
+        ],
+      },
+    };
+    const bytes = encoder.encode(
+      JSON.stringify({
+        ...draft,
+        manifestDigest: computeManifestDigest(
+          parseDomainPackManifest(encoder.encode(JSON.stringify(draft))),
+        ),
+      }),
+    );
+    const pack = h.catalog.register({
+      bytes,
+      artifactDigest: computeArtifactDigest(bytes),
+      provenance: { installerId: "selection", reference: "guidance" },
+    });
+    await h.storage.packBindings.replace(projectId, 0, [pack], now);
+
+    await expect(
+      h.manager.start({
+        projectId,
+        taskId,
+        pipelineId: "case-flow",
+        principal: localOperatorPrincipal,
+      }),
+    ).rejects.toBeInstanceOf(PipelineDefinitionNotEnforcedError);
+    expect(await h.storage.pipelines.findActiveByTask(taskId, projectId)).toBe(
+      null,
+    );
   });
 });

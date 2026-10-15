@@ -25,6 +25,16 @@ export class ReadProjectConfiguration {
     },
   ) {}
 
+  /**
+   * Whether the project's pack selection is nonempty, read outside any
+   * transaction. Advisory only: a caller may use it to keep a cheap, lock-free
+   * pre-check for projects with no pack, and must decide again under its own
+   * transaction.
+   */
+  async selectsPacks(projectId: string): Promise<boolean> {
+    return (await this.ports.bindings.get(projectId)).packs.length > 0;
+  }
+
   async read(projectId: string): Promise<ResolvedProjectConfiguration> {
     const revisions = await this.ports.transactions.run(() =>
       this.readRevisions(projectId),
