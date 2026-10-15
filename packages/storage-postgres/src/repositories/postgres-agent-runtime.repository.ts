@@ -220,6 +220,10 @@ function restoreRun(row: RunRow): AgentRun {
       ? {}
       : { completedAt: toDate(row.completed_at) }),
     updatedAt: toDate(row.updated_at),
+    persistenceToken: {
+      status: row.status,
+      updatedAt: toDate(row.updated_at),
+    },
   });
 }
 
@@ -482,7 +486,11 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
         if (sameMutableState) return;
         throw new AgentRunPersistenceConflictError(run.id);
       }
+      const token = run.persistenceToken;
       if (
+        token === undefined ||
+        token.status !== current.status ||
+        token.updatedAt.getTime() !== toDate(current.updated_at).getTime() ||
         !canPersistAgentRunTransition(current.status, run.status) ||
         toDate(current.updated_at).getTime() > run.updatedAt.getTime()
       )
@@ -512,6 +520,7 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
         throw new AgentRunPersistenceConflictError(run.id);
       await this.appendRunEvent(run, current.status);
     });
+    value.markPersisted();
   }
 
   async findRun(runId: string): Promise<AgentRun | null> {

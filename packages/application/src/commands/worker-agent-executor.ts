@@ -316,6 +316,7 @@ export class WorkerAgentExecutor implements AgentExecutor {
           acceptedAt,
         });
         if (!accepted) throw new WorkerRuntimeError("WORKER_LEASE_LOST");
+        return true;
       },
     };
   }

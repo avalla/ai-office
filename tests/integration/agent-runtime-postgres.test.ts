@@ -758,8 +758,8 @@ describe.skipIf(connectionString === undefined)(
         f.tenantId,
       );
       try {
-        const first = AgentRun.restore(run.snapshot());
-        const second = AgentRun.restore(run.snapshot());
+        const first = (await repositoryA.findRun(run.snapshot().id))!;
+        const second = (await repositoryB.findRun(run.snapshot().id))!;
         const preparingAt = new Date(now.getTime() + 1);
         first.transition("preparing", preparingAt);
         second.transition("preparing", preparingAt);
@@ -792,6 +792,55 @@ describe.skipIf(connectionString === undefined)(
             (event) => event.status,
           ),
         ).toEqual(["queued", "preparing", "running"]);
+      } finally {
+        await clientA.close();
+        await clientB.close();
+      }
+    });
+
+    test("rejects concurrent divergent saves from the same persisted snapshot", async () => {
+      const f = await fixture();
+      const run = AgentRun.create({
+        id: `save-divergent-${randomUUID()}`,
+        projectId: f.projectId,
+        taskId: f.task.snapshot().id,
+        agentId: f.agent.id,
+        now,
+      });
+      await f.runtime.saveRun(run);
+      const clientA = new PostgresClient(connectionString!);
+      const clientB = new PostgresClient(connectionString!);
+      const repositoryA = new PostgresAgentRuntimeRepository(
+        clientA,
+        f.tenantId,
+      );
+      const repositoryB = new PostgresAgentRuntimeRepository(
+        clientB,
+        f.tenantId,
+      );
+      try {
+        const first = (await repositoryA.findRun(run.snapshot().id))!;
+        const second = (await repositoryB.findRun(run.snapshot().id))!;
+        const transitionAt = new Date(now.getTime() + 1);
+        first.transition("preparing", transitionAt);
+        second.transition("cancelled", transitionAt);
+        const results = await Promise.allSettled([
+          repositoryA.saveRun(first),
+          repositoryB.saveRun(second),
+        ]);
+        expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(
+          1,
+        );
+        expect(results.filter((result) => result.status === "rejected")).toHaveLength(
+          1,
+        );
+        const persisted = await f.runtime.findRun(run.snapshot().id);
+        expect(persisted?.snapshot().status).toMatch(/preparing|cancelled/);
+        expect(
+          (await f.runtime.listRunEvents(run.snapshot().id)).map(
+            (event) => event.status,
+          ),
+        ).toEqual(["queued", persisted!.snapshot().status]);
       } finally {
         await clientA.close();
         await clientB.close();

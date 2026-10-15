@@ -205,6 +205,69 @@ export function defineAgentRuntimeRepositoryContracts(
       expect(
         await harness.runtime.releaseTaskLock(owner === undefined ? "" : owner),
       ).toBe(true);
+      expect(
+        await harness.runtime.acquireTaskLock(
+          harness.taskId,
+          first.snapshot().id,
+          harness.now,
+          new Date(harness.now.getTime() + 10_000),
+        ),
+      ).toBe(true);
+      expect(
+        await harness.runtime.acquireTaskLock(
+          harness.taskId,
+          second.snapshot().id,
+          new Date(harness.now.getTime() + 1_000),
+          new Date(harness.now.getTime() + 11_000),
+        ),
+      ).toBe(false);
+      expect(
+        await harness.runtime.acquireTaskLock(
+          harness.taskId,
+          second.snapshot().id,
+          new Date(harness.now.getTime() + 10_000),
+          new Date(harness.now.getTime() + 20_000),
+        ),
+      ).toBe(true);
+      expect((await harness.runtime.findTaskLock(harness.taskId))?.runId).toBe(
+        second.snapshot().id,
+      );
+    });
+
+    test("rejects competing stale transitions even when timestamps are equal", async () => {
+      const run = AgentRun.create({
+        id: `${harness.idPrefix}-same-time`,
+        projectId: harness.projectId,
+        taskId: harness.taskId,
+        agentId: harness.agentId,
+        now: harness.now,
+      });
+      await harness.runtime.saveRun(run);
+      const first = AgentRun.restore(
+        (await harness.runtime.findRun(run.snapshot().id))!.snapshot(),
+      );
+      const second = AgentRun.restore(
+        (await harness.runtime.findRun(run.snapshot().id))!.snapshot(),
+      );
+      first.transition("preparing", harness.now);
+      second.transition("cancelled", harness.now);
+      const results = await Promise.allSettled([
+        harness.runtime.saveRun(first),
+        harness.runtime.saveRun(second),
+      ]);
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(
+        1,
+      );
+      expect(results.filter((result) => result.status === "rejected")).toHaveLength(
+        1,
+      );
+      const persisted = await harness.runtime.findRun(run.snapshot().id);
+      expect(persisted?.snapshot().status).toMatch(/preparing|cancelled/);
+      expect(
+        (await harness.runtime.listRunEvents(run.snapshot().id)).map(
+          (event) => event.status,
+        ),
+      ).toEqual(["queued", persisted!.snapshot().status]);
     });
 
     test("rejects a stale snapshot after a newer status transition", async () => {

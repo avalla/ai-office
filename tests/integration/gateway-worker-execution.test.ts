@@ -588,6 +588,103 @@ describe("gateway worker execution of routed runs", () => {
       ]);
     }
   });
+  test("Anthropic cache creation usage is rejected and charged at the reserved envelope", async () => {
+    const f = await fixture();
+    const runId = await f.schedule(routing(), "claude");
+    for (const [scopeType, scopeId] of [
+      ["project", "p"],
+      ["task", "t1"],
+      ["agent", "agent-claude"],
+    ] as const)
+      await f.costs.saveBudget(
+        {
+          id: `budget-cache-creation-${scopeType}`,
+          projectId: "p",
+          scopeType,
+          scopeId,
+          currency: "USD",
+          limitMicros: 125_000n,
+        },
+        now,
+      );
+
+    const http = transport((body) => ({
+      id: "msg-cache-creation",
+      model: body.model,
+      stop_reason: "end_turn",
+      content: [
+        { type: "text", text: JSON.stringify({ summary: "valid", content: "valid" }) },
+      ],
+      usage: {
+        input_tokens: 10,
+        cache_creation_input_tokens: 3,
+        output_tokens: 5,
+      },
+    }));
+    const result = await f.execute(
+      runId,
+      providers(
+        {
+          OPENAI_API_KEY: apiKey,
+          ANTHROPIC_API_KEY: "anthropic-test-key",
+        },
+        http.fetcher,
+      ),
+    );
+    expect(result).toMatchObject({
+      status: "failed",
+      error: { code: "WORKER_OUTPUT_INVALID" },
+    });
+    expect(http.requests).toHaveLength(1);
+    expect(http.requests[0]).toMatchObject({
+      url: "https://provider.test/v1/messages",
+      body: { model: "client-model", max_tokens: 4000 },
+    });
+    expect(f.usageRows()).toEqual([
+      { provider: "anthropic", model: "client-model", agent_run_id: runId },
+    ]);
+    expect(
+      f.db
+        .query<
+          {
+            input_tokens: number;
+            cached_input_tokens: number;
+            output_tokens: number;
+            reasoning_tokens: number;
+          },
+          [string]
+        >(
+          "SELECT input_tokens, cached_input_tokens, output_tokens, reasoning_tokens FROM model_usage WHERE agent_run_id = ?",
+        )
+        .all(runId),
+    ).toEqual([
+      {
+        input_tokens: 0,
+        cached_input_tokens: 0,
+        output_tokens: 0,
+        reasoning_tokens: 0,
+      },
+    ]);
+
+    const [cost] = f.costRows(runId);
+    expect(cost).toMatchObject({
+      model: "client-model",
+      provider_request_id: null,
+      input_tokens: 0,
+      output_tokens: 0,
+      charge_basis: "reserved_envelope",
+      actual_micros: cost?.reserved_micros,
+      overage_micros: 0,
+      reservation_status: "consumed",
+    });
+    expect(cost?.reserved_micros).toBeGreaterThan(0);
+    expect(f.reservations(runId)).toEqual(
+      Array.from({ length: 4 }, () => ({
+        status: "consumed",
+        amount_micros: cost?.reserved_micros,
+      })),
+    );
+  });
 
   test("uses the persisted model after routing changes and ignores ambient model settings", async () => {
     const f = await fixture();

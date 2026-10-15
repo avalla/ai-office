@@ -101,9 +101,14 @@ export class ExecuteAgentRun {
           throw new DOMException("Execution cancelled", "AbortError");
         const reviewingAt = this.clock.now();
         if (prepared?.accept !== undefined) {
-          await prepared.accept(run, result, reviewingAt);
-          // The acceptance fence persisted this exact transition atomically.
+          const acceptancePersisted = await prepared.accept(
+            run,
+            result,
+            reviewingAt,
+          );
+          // The acceptance fence may have persisted this exact transition atomically.
           run.transition("reviewing", reviewingAt, { result });
+          if (acceptancePersisted === true) run.markPersisted();
         } else {
           run.transition("reviewing", reviewingAt, { result });
           await this.persist(run);

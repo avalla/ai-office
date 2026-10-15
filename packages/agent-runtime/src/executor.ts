@@ -48,11 +48,12 @@ export interface PreparedAgentExecution {
   provenance: AgentExecutionProvenance;
   usesWorktree: boolean;
   execute(signal?: AbortSignal): Promise<AgentExecutionResult>;
+  /** Returns true only when this callback persisted the reviewing transition. */
   accept?(
     run: AgentRun,
     result: AgentExecutionResult,
     acceptedAt: Date,
-  ): Promise<void>;
+  ): Promise<boolean | void>;
 }
 
 export class AgentExecutorNotConfiguredError extends Error {

@@ -27,6 +27,11 @@ export interface AgentRunRoleGuidance {
   text: string;
 }
 
+export interface AgentRunPersistenceToken {
+  status: AgentRunStatus;
+  updatedAt: Date;
+}
+
 export interface AgentRunProps {
   id: string;
   projectId: string;
@@ -48,6 +53,8 @@ export interface AgentRunProps {
   startedAt?: Date;
   completedAt?: Date;
   updatedAt: Date;
+  /** Optimistic-concurrency token returned by a repository after persistence. */
+  persistenceToken?: AgentRunPersistenceToken;
 }
 
 export interface AgentActionIntent {
@@ -154,12 +161,24 @@ export class AgentRun {
       status: "queued",
       createdAt: now,
       updatedAt: now,
+      persistenceToken: {
+        status: "queued",
+        updatedAt: new Date(now),
+      },
     });
   }
 
   static restore(props: AgentRunProps): AgentRun {
     return new AgentRun({
       ...props,
+      ...(props.persistenceToken === undefined
+        ? {}
+        : {
+            persistenceToken: {
+              status: props.persistenceToken.status,
+              updatedAt: new Date(props.persistenceToken.updatedAt),
+            },
+          }),
       ...(props.execution === undefined
         ? {}
         : { execution: parseAgentExecution(props.execution) }),
@@ -173,6 +192,16 @@ export class AgentRun {
         ? {}
         : { modelRouting: parseAgentRunModelRouting(props.modelRouting) }),
     });
+  }
+
+  markPersisted(): void {
+    this.props = {
+      ...this.props,
+      persistenceToken: {
+        status: this.props.status,
+        updatedAt: new Date(this.props.updatedAt),
+      },
+    };
   }
 
   transition(
@@ -228,6 +257,14 @@ export class AgentRun {
         ? {}
         : { completedAt: new Date(this.props.completedAt) }),
       updatedAt: new Date(this.props.updatedAt),
+      ...(this.props.persistenceToken === undefined
+        ? {}
+        : {
+            persistenceToken: {
+              status: this.props.persistenceToken.status,
+              updatedAt: new Date(this.props.persistenceToken.updatedAt),
+            },
+          }),
     };
   }
 }

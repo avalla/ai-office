@@ -145,6 +145,10 @@ const run = (row: RunRow): AgentRun =>
       ? {}
       : { completedAt: new Date(row.completed_at) }),
     updatedAt: new Date(row.updated_at),
+    persistenceToken: {
+      status: row.status,
+      updatedAt: new Date(row.updated_at),
+    },
   });
 const legacyRunColumns =
   "id, project_id, task_id, agent_id, action_intent_json, pipeline_run_id, status, worktree_path, result_json, error_json, created_at, started_at, completed_at, updated_at, execution_json, model_routing_json";
@@ -350,6 +354,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
         this.database
           .query("DELETE FROM task_lock WHERE run_id=?")
           .run(input.runId);
+      value.markPersisted();
       return value;
     })();
   }
@@ -569,7 +574,11 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
         if (sameMutableState) return;
         throw new AgentRunPersistenceConflictError(v.id);
       }
+      const token = v.persistenceToken;
       if (
+        token === undefined ||
+        token.status !== current.status ||
+        token.updatedAt.getTime() !== current.updatedAt.getTime() ||
         !canPersistAgentRunTransition(current.status, v.status) ||
         current.updatedAt.getTime() > v.updatedAt.getTime()
       )
@@ -594,6 +603,7 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
       if (changed !== 1) throw new AgentRunPersistenceConflictError(v.id);
       this.appendRunEvent(v, current.status);
     })();
+    value.markPersisted();
   }
   async acceptWorkerResult(input: {
     fence: WorkerAuthorityFence;
