@@ -82,20 +82,39 @@ envelope for the structured outcome of one stage attempt:
 `version`, `outcome` (`succeeded` | `failed`), `summary`, `producer` (an
 AgentRun id or an operator label), optional bounded canonical-JSON `data`, and
 a typed `error` that is required exactly when the outcome is `failed`.
-`assessStageResultDelivery` in the application layer classifies a delivery as
-`accepted`, `duplicate` (same canonical result), `stale` (AgentRun no longer
-bound to the stage) or `conflict` (a different result already recorded). It is
-a pure decision: it never retries, overwrites or grants anything.
+
+The `producer` inside the payload is a claim, not evidence. The Runtime passes
+the authenticated deliverer to `assessStageResultDelivery`, which classifies a
+delivery with this precedence (first match wins):
+
+1. `producer_mismatch`: the claimed producer differs from the authenticated
+   deliverer, so a superseded run cannot present itself as an operator;
+2. `duplicate`: the same canonical result is already recorded, also after its
+   run is no longer bound (ordinary at-least-once redelivery);
+3. `stale`: the delivering AgentRun is no longer the one bound to the stage;
+4. `conflict`: a different result is already recorded; it is never overwritten;
+5. `accepted`.
+
+The assessment is a pure decision: it never retries, overwrites or grants
+anything, and only `accepted` may be applied by a caller.
 
 Limits: summary 2000 bytes, error message 500 bytes, data 16384 bytes,
-identifiers 128 bytes. Unknown versions, unknown fields, sensitive field names
-and control characters are rejected, and rejection messages never echo the
-rejected value.
+identifiers 128 bytes, data nesting depth 8 and at most 512 data nodes. Size,
+depth and node budget are checked before the payload is normalized, so an
+oversized or hostile shape is refused in bounded work. Unknown versions,
+unknown fields, control and bidi/line-separator characters, line breaks outside
+the summary, credential-looking text (bearer or basic tokens, common provider
+token prefixes, `authorization`/`password`/`token` assignments, private key
+headers) and data keys that contain a sensitive name (for example
+`githubToken`, `client_secret`) are rejected. Rejection messages name the
+failing field and never echo the rejected value. The credential check is
+conservative and is not a complete secret scanner; the containment rule on
+data keys also rejects harmless names such as `totalTokens`.
 
 Compatibility is provisional: this is not a stable public schema and may change
 with a new `version`. It is run evidence only and is not yet wired into the
 AgentRun-to-stage completion path. Not in this contract: a persisted
 Artifact/ArtifactVersion aggregate, review lifecycle, ReviewRequest/ReviewResult
-or approval semantics (M11.6), and automated worker dispatch (M12). M11-2
-consumes the envelope fields in conditions; M12 and M11.6 are the explicit
-consumers of this contract.
+or approval semantics (M11.6), and automated worker dispatch (M12). M11-2 is
+expected to consume the envelope fields in conditions; M12 and M11.6 are the
+explicit consumers of this contract.
