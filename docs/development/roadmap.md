@@ -980,7 +980,9 @@ Focus: user-facing product surfaces, packaging, and operability.
 
 - web UI beyond the local read-only operations console shipped in M7.8;
 - plugin SDK;
-- MCP server;
+- MCP server (the first server, remote and read-only, is proposed by
+  [M23](coordination-bridge.md) CB-11A–CB-11F; the M9 MCP task extends it and
+  does not create a second one);
 - packaged binaries;
 - remote snapshot transport with a deterministic filesystem adapter;
 - optimistic-concurrency push/pull and explicit divergence diagnostics;
@@ -2487,3 +2489,43 @@ Continuity & Handoff (`active`). The roadmap has no dedicated M19 section
 yet; that gap is recorded here rather than silently documenting another
 milestone. No new code, model training or provider commitment is authorized
 by this entry.
+
+## M23 — AI Office Coordination Bridge
+
+Status: planned 2026-10-15; the milestone, requirements CB-R01–CB-R14 and the
+tasks CB-01–CB-12 (CB-11 split into CB-11A–CB-11F) are registered in the
+Runtime. CB-01 delivered the architecture, protocol and trust model as
+[ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md)
+(proposed); nothing is implemented. Numbered M23 because M21 and M22 were
+already registered.
+
+Goal: let users and external AI assistants (ChatGPT first) inspect the planning
+state, propose structured changes, request owner decisions and receive
+verifiable receipts, through a versioned, provider-neutral protocol. The Runtime
+stays the only authority; GitHub and MCP are untrusted channels, never a second
+task tracker. Every bridge component is optional, separately supervised and can
+be disabled without affecting the Runtime or the dashboard.
+
+First verifiable outcome (Remote Read Gate, CB-11F): an authenticated remote
+client calls `ai_office_get_milestones` over HTTPS and receives authoritative
+Runtime data, through a separate read-only MCP server (Streamable HTTP) behind
+a reverse proxy (Caddy preferred), an external OAuth 2.1 authorization server
+and a read-only Runtime listener; no approve or apply tool exists. Then an
+asynchronous GitHub Issues bridge to a dedicated private repository, and the
+governed priority and dependency changes (digest-bound local approval, atomic
+apply, receipts, reconciliation). The first mutable operations reuse
+`UpdateTask` and `ManageTaskDependencies`.
+
+The [M23 plan](coordination-bridge.md), the
+[architecture](../architecture/coordination-bridge.md) and the
+[protocol](coordination-protocol.md) record the gap analysis, trust model,
+data-exposure policy, dependency graph, delivery order and owner decisions
+D1–D11. M23 takes no dependency on M13 or M11.6; the CB-11 series is the single
+MCP server of the project and the M9 MCP task depends on CB-11B. Approval is
+trusted-local like existing approvals; stronger operator presence stays with
+M10. At most two initiatives run at once.
+
+Non-goals: GitHub-owned state or a task-tracker mirror, webhooks, the general
+GitHub connector (M13), remote approval, apply or any mutating MCP tool, a
+proxy embedded in the Runtime, an identity provider, scope or milestone
+mutation in V2, PostgreSQL parity claims.
