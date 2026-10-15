@@ -30,7 +30,7 @@ implements them, with the change recorded here.
   "requestId": "01J9Z7K3Q8W4X2V6B5N1M0TRCP",
   "correlationId": "01J9Z7K0E2R8T4Y6U1I3O5PASD",
   "inReplyTo": "snapshot:sha256:9f2c…",
-  "project": { "identity": "repo:sha256:…" },
+  "project": { "identity": "<portable repository identity>" },
   "createdAt": "2026-10-15T19:00:00Z",
   "author": { "kind": "agent", "claimedId": "chatgpt", "label": "ChatGPT" },
   "payload": {}
@@ -73,9 +73,10 @@ only. The pair (`transport.type`, `transport.locator`, `contentDigest`) makes a
 received message traceable. The Runtime records `author` (claim), `transport`
 (provenance) and the local operator (authority) as three different things.
 
-For a remote MCP caller the provenance is the verified principal
-(`issuer`, `subject`) and scope, recorded the same way; an MCP caller can read
-only and sends no envelope.
+A remote MCP caller sends no envelope and creates no Runtime record. Its
+verified principal (`issuer`, `subject`) and scope live only in the MCP
+program's local access log (ADR-0036 Decision 7); the read listener receives no
+principal and appends no audit row.
 
 ## 3. Message kinds
 
@@ -84,7 +85,7 @@ only and sends no envelope.
 | `status_snapshot`     | Runtime → external | no                     | Minimized planning snapshot                       |
 | `review_request`      | Runtime → external | no                     | Asks an assistant to analyse a snapshot or plan   |
 | `planning_proposal`   | external → Runtime | a proposal record only | Typed planning changes                            |
-| `decision_request`    | either direction   | a record only          | A question the owner must answer locally          |
+| `decision_request`    | either direction   | a record on a proposal | A question the owner must answer locally          |
 | `proposal_feedback`   | both               | notes only             | Assessment (Runtime) or advisory notes (external) |
 | `application_receipt` | Runtime → external | no                     | Outcome of an applied or refused plan             |
 
@@ -102,8 +103,11 @@ dependency by itself.
 prerequisite ids, `ready`, `waiting`), `requirements` (id, key, status,
 milestone id, task ids), `blockers`, `runnable`, `inconsistencies` (typed
 codes), and `derived` (analysis kept apart from authoritative fields). The
-identifier is deterministic: the same state yields the same snapshot bytes.
-There is no revision counter; the digest is the revision.
+identifier is the digest of the canonical projection, which is the list above
+without volatile fields: `generatedAt`, the page cursor and the identifier
+itself are excluded and live in the envelope metadata. The same planning state
+yields the same canonical projection and the same identifier; there is no
+revision counter, the digest is the revision.
 
 ### 3.2 `review_request`
 
@@ -144,7 +148,7 @@ warning at assessment, because the preconditions of section 8.2 are the guard.
 ### 3.4 `decision_request`
 
 `payload`: `question` (Runtime-generated or at most 512 bytes of display text),
-`options` (2 to 5 `{ id, label }`), `subject` (snapshot, plan or task id),
+`options` (2 to 5 `{ id, label }`), `subject` (a proposal or plan identifier; a decision request always attaches to a proposal),
 `deadline`. It is a question, not a vote: the answer is recorded by a local
 operator command. A reply posted on the transport is a `proposal_feedback` note
 and is not an answer.
@@ -153,9 +157,11 @@ and is not an answer.
 
 From the Runtime: `requestId` of the proposal, `state` (`received`, `validated`,
 `assessed`, `rejected`, `superseded`, `expired`), `findings` (code, severity
-`error` or `warning`, target ids), and for an assessed proposal a `preview`
-(human summary) and `planDigest`. From an external party: `notes`, display only,
-stored against the proposal, never part of a plan.
+`error` or `warning`, target ids). `assessed` has two levels, carried as
+`assessmentLevel`: `structural` (V1, CB-04: schema, source, project scope,
+allowed operations, target existence) and `impact` (V2, CB-06: simulation, plan,
+`preview` and `planDigest`). V1 never returns a plan or digest. From an external
+party: `notes`, display only, stored against the proposal, never part of a plan.
 
 ### 3.6 `application_receipt`
 
@@ -174,8 +180,10 @@ contains identifiers, never secrets or internal traces.
   outcome without side effects (`DUPLICATE_REQUEST`, informational). The same
   `requestId` with a different digest is `DUPLICATE_REQUEST_CONFLICT` and is
   rejected; the sender uses a new `requestId` and `supersedes`.
-- Outbound messages derive their identifier from their content digest so a
-  republication after a crash is recognizable as the same message.
+- An outbound message uses the publication intent identifier as its
+  `requestId`, so a retry or crash recovery of the same intent is recognizable as
+  the same message, while a deliberate republication of unchanged content is a
+  new intent. The content digest is recorded beside it, not used as identity.
 - `correlationId` ties a conversation; `inReplyTo` names the specific message.
   Neither grants any authority.
 - Ordering is by Runtime receipt time and the persisted transport cursor, not by
@@ -185,9 +193,11 @@ contains identifiers, never secrets or internal traces.
 
 - The protocol version is an integer major. A reader accepts exactly the majors
   it supports and answers `UNSUPPORTED_VERSION` with the supported list.
-- Within a major, evolution is additive only, through new optional payload
-  fields that a reader of the same major ignores, or through `extensions`. A
-  field that changes meaning, becomes required or changes a limit needs a new
+- Objects are closed, so a reader of a major rejects fields it does not know.
+  Within a major the only additive evolution is the `extensions` map, which every
+  reader ignores and which may never carry data that could weaken validation,
+  authority or a precondition. Any other new field, a new kind or operation, a
+  field that changes meaning or becomes required, or a changed limit needs a new
   major.
 - A new major is supported alongside the previous one for at least two
   releases before the older is removed.
@@ -219,6 +229,7 @@ filesystem paths or internal identifiers beyond the ones the caller sent.
 | `NOT_APPROVED`               | Plan has no valid approval                                    |
 | `DIGEST_MISMATCH`            | Approval digest differs from the plan digest                  |
 | `RATE_LIMITED`               | Limit reached                                                 |
+| `RUNTIME_BUSY`               | A transaction was already active; retry, nothing was consumed |
 | `INTERNAL_ERROR`             | Anything else, without detail                                 |
 
 Assessment distinguishes errors (the plan cannot be applied) from warnings
@@ -235,8 +246,9 @@ snapshot page default 50 and maximum 200 items; one published message at most
 
 ### 8.1 Plan
 
-An assessed proposal yields a plan: the ordered typed operations, the
-preconditions of 8.2 with the values observed at assessment time, a
+From V2 (CB-06 onward) an impact-assessed proposal yields a plan: the ordered
+typed operations, the preconditions of 8.2 with the values observed at
+assessment time, a
 machine-readable impact (cycles, blocked and unblocked tasks, milestone impact,
 redundancy, conflicts) and a human preview. The plan digest is
 `sha256` over the canonical JSON (sorted keys, no insignificant whitespace,
@@ -251,13 +263,23 @@ recorded per operation and checked again at apply time:
 
 | Operation           | Preconditions                                                                                                                             |
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `set_priority`      | task exists in the project; recorded priority equals `expectedPriority`; task is not terminal                                             |
+| `set_priority`      | task exists in the project; recorded priority equals `expectedPriority` (a terminal task only yields the warning `TASK_TERMINAL`)         |
 | `add_dependency`    | both tasks exist in the project; edge absent; task is editable (`pending` or `blocked`, no execution history); adding it creates no cycle |
 | `remove_dependency` | both tasks exist; edge present; task is editable                                                                                          |
 
+Two kinds of check apply. **Initial-state preconditions** (targets exist, the
+expected priority, the scope digest) are compared with the state before any
+operation. **Sequential validity** (edge present or absent, editability, no cycle)
+is evaluated operation by operation against the state produced by the earlier
+operations, at assessment by simulation on an in-memory graph and at apply by
+the services themselves. A plan may not repeat an edge or change one task's
+priority twice (`OPERATION_INVALID`). So `remove A→B; add B→A` is valid, and
+`add A→B; add B→A` fails as `CYCLE_DETECTED` at assessment.
+
 The scope digest is the `sha256` of: for each task referenced by any operation,
 its recorded status, priority and editability, and the sorted edge set inside
-the prerequisite closure of each dependency target. Unrelated edits elsewhere in
+the prerequisite closure of each `dependsOnTaskId` (the tasks reachable by
+following prerequisites from it, which is where a new cycle would appear). Unrelated edits elsewhere in
 the project do not change it, so they do not cause false conflicts. A
 redundant operation (an edge already present, a priority already equal) is a
 warning at assessment and a refusal at apply only if the stored preconditions no
@@ -282,20 +304,29 @@ duplicated:
 
 1. load the plan and its approval; refuse `NOT_APPROVED`, `PLAN_EXPIRED` or
    `DIGEST_MISMATCH` (the digest is recomputed from the stored plan);
-2. recompute every precondition and the scope digest; refuse the whole plan as
-   `STALE_PLAN` on any mismatch, listing sanitized causes;
-3. apply each operation through `UpdateTask` or `ManageTaskDependencies`,
-   which keep their own validation and audit events;
+2. recompute the initial-state preconditions and the scope digest; refuse the
+   whole plan as `STALE_PLAN` on any mismatch, listing sanitized causes;
+3. apply the operations in order through `UpdateTask` or
+   `ManageTaskDependencies`, which keep their own validation and audit events; a
+   service failure in the middle maps to `CYCLE_DETECTED`, `NOT_EDITABLE`,
+   `UNKNOWN_TARGET` or `OPERATION_INVALID` and rolls everything back;
 4. in the same transaction, set the plan to `applied`, store the receipt (with
-   the effective changes and audit event identifiers) and append a plan-level
-   audit event carrying the plan, request, digest and approver.
+   the effective changes and audit event identifiers), record the receipt
+   publication intent for the outbox and append a plan-level audit event
+   carrying the plan, request, digest and approver.
 
 Any failure rolls the whole transaction back: there is no partial application
-and no compensating write. The apply command is idempotent: applying an applied
-plan returns the stored receipt, applying a stale plan returns the stored
-refusal. The daemon's command queue serializes commands, so no other planning
-command interleaves, and preconditions, not locks, close the window between
-preview and apply.
+and no compensating write. A refusal (stale, expired, digest mismatch) is then
+recorded in its own short transaction so it can be returned again. The apply
+command is idempotent: applying an applied plan returns the stored receipt,
+applying a refused plan returns the stored refusal.
+
+Concurrency is closed by the recheck inside the apply transaction
+(`BEGIN IMMEDIATE`), not by command serialization: the daemon queue does not
+cover `run:tick` or the queue runtime, which call the Runtime directly and
+change task status. Apply is submitted through the command queue; if it meets an
+already active transaction it returns the retryable `RUNTIME_BUSY` and leaves
+the approval unconsumed.
 
 Receipt publication is a separate side effect through the publication outbox
 (ADR-0036 Decision 8); it never runs inside the apply transaction and retries
@@ -314,7 +345,7 @@ after a restart.
   edit of a not-yet-approved request is a new digest and creates a superseding
   revision; an edit of an approved or applied request is ignored and reported as
   drift (CB-09).
-- **Multi-operation plans.** Up to 20 operations apply atomically as above.
+- **Multi-operation plans.** Up to 20 operations apply atomically as above, with the sequential semantics of 8.2.
   If the transaction-body refactor of Decision 9 is declined, plans are limited
   to one operation and all other rules are unchanged.
 
@@ -329,7 +360,7 @@ received -> validated -> assessed -> approved -> applied
                                           +-> stale (apply-time precondition failure)
 ```
 
-`received`, `validated` and `assessed` change no planning state (V1 gate).
+`received`, `validated` and a structural `assessed` change no planning state (V1 gate); an impact `assessed` adds the plan and exists from CB-06.
 `approved` and `applied` exist from CB-07 and CB-08. Terminal states are
 `rejected`, `superseded`, `expired`, `stale` and `applied`.
 
@@ -351,8 +382,11 @@ received -> validated -> assessed -> approved -> applied
   honors rate limits with backoff, and treats an outage as a reason to retry,
   never to fail the Runtime.
 - Outbound publication follows the publication lifecycle of ADR-0036 Decision 8:
-  Runtime-issued order, single attempt, outcome report, ambiguity resolved by
-  looking up the idempotency marker in the destination.
+  Runtime-issued order, lease, one attempt, outcome `published`, `failed`
+  (definitive, terminal), `not_sent` (safe to retry) or `ambiguous` (resolved by
+  looking up the intent marker in the destination, never replayed blindly). The
+  Runtime later reads published messages back and compares their content digest
+  with its record, so an edited or forged message is reported as drift (CB-09).
 
 ## 10. MCP read contract (summary)
 

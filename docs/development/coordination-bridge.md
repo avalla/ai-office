@@ -25,7 +25,7 @@ direct access to the Runtime database. Two complementary channels share one
 application layer:
 
 - a **remote read-only MCP server** (Streamable HTTP behind an HTTPS reverse
-  proxy) for synchronous access to authoritative planning and operational data;
+  proxy) for synchronous access to authoritative planning data;
 - a **GitHub Issues bridge** to a dedicated private repository for asynchronous,
   persistent communication: snapshots, proposals, decision requests, receipts.
 
@@ -70,7 +70,7 @@ documentation only.
 | `RuntimeClient` location      | The port is in `application`; its only implementation `IpcRuntimeClient` is in `apps/cli`.                                                                                                                                                                           | An out-of-process service cannot import `apps/cli`; the transport is extracted into a shared package first (CB-11B).                                                                  |
 | Query API read model          | Covers projects, tasks, graph, pipelines, agents, runs, reviews, approvals, activity, status; no milestone/requirement/dependency planning route.                                                                                                                    | The planning read model of CB-02 is exposed through a new read-only route by CB-10.                                                                                                   |
 | Service management            | Exists: launchd and systemd user services for Runtime and dashboard; the dashboard binds loopback only and waits for the Runtime.                                                                                                                                    | An MCP service is a third managed program (CB-11D); non-loopback bind is refused.                                                                                                     |
-| Credential boundary           | Exists (ADR-0020): `<AI_OFFICE_HOME>/credentials/`, 0700/0600, strict loader, only names declared by registered descriptors, "not a general secret store".                                                                                                           | Coordination credentials (GitHub token, MCP token hashes) need a declared extension: an ADR amendment decided in CB-01.                                                               |
+| Credential boundary           | Exists (ADR-0020): `<AI_OFFICE_HOME>/credentials/`, 0700/0600, strict loader, only names declared by registered descriptors, "not a general secret store".                                                                                                           | Coordination credentials (the GitHub token) need a declared extension: an ADR amendment decided in CB-01.                                                                             |
 | MCP                           | No MCP server in the repository (only the Claude worker's `--strict-mcp-config` flag). Planned: roadmap M9 bullet "MCP server" and task "M9 — expose selected Runtime tools over MCP" (requirement M9-MCP), blocked by its assessment.                               | Overlap in the plan, not in code; see section 6 for the resolution.                                                                                                                   |
 | M13 GitHub connector          | Planned, none started.                                                                                                                                                                                                                                               | Overlap limited to credentials and external identity; no dependency (D7 note).                                                                                                        |
 | Existing coordination feature | None.                                                                                                                                                                                                                                                                | No duplicate work found.                                                                                                                                                              |
@@ -93,8 +93,8 @@ Four separately supervised programs, one authority:
      v                                         |   v
  MCP server program                        GitHub bridge program
  (read-only tools, OAuth bearer)            (fine-grained token, outbox)
-     |  read-only query protocol               |  RuntimeClient commands
-     |  + health via RuntimeClient             |  (coordination:* only)
+     |  GET-only query client                  |  typed ingest client
+     |  + dedicated health query               |  (fixed coordination commands)
      +-------------------+---------------------+
                          v  Unix socket, no network
                  Runtime (daemon)  — sole authority
@@ -242,8 +242,9 @@ Runtime tools over MCP` needs CB-11B.
 ### 4.2 Delivery order and the two-initiative limit
 
 M11 and M15 are the active milestones and the PostgreSQL authority line (M22)
-is in flight; M23 adds no active initiative until the owner schedules CB-01.
-When it runs it uses at most two concurrent initiatives:
+is in flight; CB-01 was authorized on 2026-10-15 and is the only M23 work in
+progress; the rest waits for ADR-0036 to be accepted. Once it runs, M23 uses at
+most two concurrent initiatives:
 
 1. **Slot 1, always the priority line.** CB-01 → CB-02 → CB-10 (foundation,
    strictly serial), then CB-11A → CB-11B ‖ CB-11C → CB-11D → CB-11E → CB-11F.
@@ -293,7 +294,11 @@ is not merge order.
 | D11 | Binding                               | Per-project scope, field allowlist, pagination and size limits, minimization rules; readable does not mean exposable.                                                                                                                                                                                                     |
 
 The mechanisms are specified in ADR-0036 (Decisions 5 to 8) and summarized
-here. Points the ADR still asks the owner to approve: the restricted bridge
+here. Open owner decision that blocks acceptance of the ADR: how the MCP
+program is denied the main socket (ADR-0036 Decision 5 point 4; recommended:
+capability isolation as a verified precondition of the public vhost, needing
+system-level service adapters or a container recipe in CB-11D). Points the ADR
+also asks the owner to approve: the restricted bridge
 ingest surface, the transaction-body refactor of two existing services (CB-08),
 the authorization-server product (CB-11C preflight), the MCP SDK dependency
 (CB-11B), the new persistence (CB-03, CB-04 design reviews), the audit actor
@@ -310,8 +315,8 @@ alternative to a public vhost.
   `coordination` route profile (read routes under `/api/coordination/v1` and
   a minimal health route, no `/commands`, no dashboard routes), a GET-only
   `RuntimeQueryClient` over the transport extracted from `apps/cli`, and a
-  hardened deployment that gives the MCP user access to that socket only. The
-  default same-user deployment is a code and configuration restriction, not a
+  capability-isolated deployment (open decision, see above) that gives the MCP
+  program access to that socket only. A default same-user deployment is a code and configuration restriction, not a
   same-UID boundary.
 - **D10 mechanism.** Resource-server role only: protected-resource metadata,
   401 and 403 challenges, local JWT validation of issuer, audience, expiry and
@@ -434,4 +439,5 @@ Requirement keys are `CB-R01`–`CB-R14`. Task dependencies are the Runtime edge
 of section 4. The M9 task `170a6baf-b423-43d1-acad-003884eda07d` depends on
 CB-11B.
 
-Runnable now: CB-01 only. Starting it needs a separate owner mandate.
+Status of work: CB-01 is in review; no other M23 task starts before the owner
+accepts ADR-0036.

@@ -2496,7 +2496,7 @@ Status: planned 2026-10-15; the milestone, requirements CB-R01–CB-R14 and the
 tasks CB-01–CB-12 (CB-11 split into CB-11A–CB-11F) are registered in the
 Runtime. CB-01 delivered the architecture, protocol and trust model as
 [ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md)
-(proposed); nothing is implemented. Numbered M23 because M21 and M22 were
+(proposed); nothing is implemented. Numbered M23 because M21 and M22 (whose roadmap sections are not yet on main) were
 already registered.
 
 Goal: let users and external AI assistants (ChatGPT first) inspect the planning

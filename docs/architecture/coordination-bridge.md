@@ -31,18 +31,18 @@ the [coordination protocol](../development/coordination-protocol.md).
  |  existing services: UpdateTask, ManageTaskDependencies, audit, command queue       |
  +------------------------------------------ SQLite ----------------------------------+
         ^
-        |  query protocol, dashboard profile (loopback)
+        |  query protocol, unprofiled (loopback)
  Dashboard program (existing)       CLI (existing, main socket)
 ```
 
-| Program             | Status               | Surface it receives                      | Network                    |
-| ------------------- | -------------------- | ---------------------------------------- | -------------------------- |
-| Runtime daemon      | exists               | itself                                   | Unix sockets only          |
-| Dashboard           | exists               | `GET /api/...` dashboard profile         | loopback                   |
-| CLI                 | exists               | main socket, command and query protocols | none                       |
-| MCP server          | new, optional        | coordination read listener only          | loopback, behind the proxy |
-| Coordination bridge | new, optional        | ingest surface (5b), otherwise none      | outbound HTTPS to GitHub   |
-| Reverse proxy       | deployment component | none; forwards to the MCP loopback port  | public HTTPS               |
+| Program             | Status               | Surface it receives                                     | Network                    |
+| ------------------- | -------------------- | ------------------------------------------------------- | -------------------------- |
+| Runtime daemon      | exists               | itself                                                  | Unix sockets only          |
+| Dashboard           | exists               | `GET /api/...` (unprofiled; holds the main socket path) | loopback                   |
+| CLI                 | exists               | main socket, command and query protocols                | none                       |
+| MCP server          | new, optional        | coordination read listener only                         | loopback, behind the proxy |
+| Coordination bridge | new, optional        | ingest surface (5b), otherwise none                     | outbound HTTPS to GitHub   |
+| Reverse proxy       | deployment component | none; forwards to the MCP loopback port                 | public HTTPS               |
 
 Rules enforced by tests, not conventions:
 
@@ -66,11 +66,20 @@ Rules enforced by tests, not conventions:
 | Operator on the local machine         | trusted-local                           | approve and apply commands; identity recorded, presence not authenticated                                                             |
 | Same-user local process               | trusted-local, not a boundary           | acknowledged in ADR-0014 and ADR-0003; M10 owns the remedy                                                                            |
 
-A compromised MCP program can read what its principal scopes allow and, in the
-default same-user deployment, could reach the main socket if it discovered the
-path. The hardened deployment (dedicated operating-system user, group-owned
-socket directory, `InaccessiblePaths` or the launchd equivalent) removes that
-reachability and is the recommended configuration for a public endpoint.
+The Runtime read listener serves only the projects and data classes the owner
+enabled, as P and T projections built Runtime-side, so a compromised MCP program
+can read every enabled project at P and T and nothing else through that
+listener. Per-principal project scope inside that set is an MCP-side check.
+
+Capability gap, open owner decision (ADR-0036 Decision 5, point 4): the main
+socket path is fixed (`<runtime home>/daemon.sock`) and today's service
+management installs per-user services only. In a same-user deployment a
+compromised MCP program can therefore open the main socket and post any command,
+including approval and apply. Interface restrictions alone do not close this.
+The recommended option makes capability isolation (a dedicated operating-system
+user or a container or sandbox that mounts only the read socket) a verified
+precondition of enabling the public vhost; it needs system-level launchd and
+systemd adapters or a container recipe that do not exist today.
 
 ## 3. Data exposure
 
@@ -109,8 +118,8 @@ ChatGPT                Proxy            MCP server               Runtime (read l
   |---------------------->|---------------->| verify issuer, aud, exp, scope;
   |                       |                 | principal (iss,sub) enabled; project allowed; rate limit
   |                       |                 |-- GET /api/coordination/v1/milestones?project=… -->|
-  |                       |                 |<-- application read model (classified) -------------|
-  |                       |                 | map P,T fields only; paginate; bound size
+  |                       |                 |<-- P,T projection built Runtime-side ----------------|
+  |                       |                 | per-principal project scope; paginate; bound size
   |<----------------------|<----------------| result (read-only annotated)
 ```
 
@@ -128,7 +137,7 @@ Runtime                          Bridge                         GitHub (private 
   |-- claim + lease ------------->|
   |                               |-- create issue / comment ---->|
   |                               |<-- external reference --------|
-  |<-- outcome (published) -------|   (failed -> retry; ambiguous -> lookup marker)
+  |<-- outcome (published) -------|   (failed: terminal; not_sent: retry; error after send: ambiguous -> marker lookup)
   | receipt + audit recorded      |
   |                               |<-- poll comments (cursor, conditional) -- external proposal
   |<-- submit envelope + provenance (restricted surface)
@@ -150,9 +159,12 @@ on any mismatch: refuse the whole plan as stale, no change
 ## 5. Deployment
 
 - The MCP program is a managed service (launchd on macOS, systemd on Linux)
-  generated by the existing service management, which today renders the Runtime
-  and a loopback dashboard; the MCP service binds loopback only, waits for the
-  Runtime, and installs, stops and uninstalls independently.
+  generated by the existing service management, which today renders per-user
+  services for the Runtime and a loopback dashboard; the MCP service binds
+  loopback only, waits for the Runtime, and installs, stops and uninstalls
+  independently. A capability-isolated profile (system-level service under a
+  dedicated user, or a container) is required before the public vhost is enabled
+  if Decision 5 point 4 is accepted as recommended.
 - The reverse proxy is a documented deployment component; Caddy is the preferred
   and templated choice (vhost, automatic TLS, `reverse_proxy` to the loopback
   port, request-body size limit, optional rate limit, optional client-IP or mTLS
@@ -169,24 +181,25 @@ on any mismatch: refuse the whole plan as stale, no change
 
 Checked on `main` at 375c928 (2026-10-15).
 
-| Claim used by the design                                                     | Evidence                                                                                                                                                    |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| One socket serves health, query and command routes; the socket is mode 0600  | `apps/daemon/src/office-daemon.ts` (`Bun.serve({ unix })`, `chmodSync(…, 0o600)`, `route()` order: `/health`, `queryApi.handle`, `/commands`)               |
-| The query API accepts only GET and is separate from the command protocol     | `apps/daemon/src/query-api.ts` (`handle`: 405 for non-GET); `packages/application/src/protocol/query-protocol.ts` header                                    |
-| Query routes expose descriptions, runs, activity and global memory           | `query-api.ts` `route()` (`/api/memory`, `/api/runs/:id`, `/api/activity`, project detail); `operational-read-models.ts` (`RequirementSummary.description`) |
-| `RuntimeClient.execute` takes any command                                    | `packages/application/src/runtime/runtime-client.port.ts`; `apps/cli/src/daemon-client.ts` (`execute(args)` posts to `/commands`)                           |
-| The IPC transport lives in `apps/cli`                                        | `apps/cli/src/daemon-client.ts`                                                                                                                             |
-| The dashboard is a separate loopback process proxying GET to the query API   | `apps/dashboard/src/dashboard-host.ts` (`loopbackHostnames`, `proxy`)                                                                                       |
-| A task graph read model exists with nodes, edges, ready and waiting          | `operational-read-models.ts` (`TaskGraph`, `TaskGraphNode`, `TaskGraphEdge`)                                                                                |
-| Priority change is audited with from and to                                  | `packages/application/src/commands/update-task.ts` (`task.priority_updated`)                                                                                |
-| Dependency link is idempotent, cycle-checked, editable only before execution | `packages/application/src/commands/manage-task-dependencies.ts` (`link`, `assertEditable`)                                                                  |
-| Transactions do not nest                                                     | `packages/application/src/ports/transaction-runner.port.ts` (`TransactionAlreadyActiveError`)                                                               |
-| Commands are serialized                                                      | `office-daemon.ts` (`this.queue.enqueue(execute)`)                                                                                                          |
-| An executable connector mutation must require approval                       | `packages/connector-sdk/src/connector-registry.ts` (`freezeDefinition`)                                                                                     |
-| Grant shape available for the publication authorization                      | `packages/domain/src/capability/capability.ts` (`CapabilityGrant`)                                                                                          |
-| Service management is loopback-only for the dashboard                        | `packages/service-management/src/service-plan.ts` (`validateOfficeServicePlan`)                                                                             |
-| Credential files are strict and declared                                     | ADR-0020                                                                                                                                                    |
-| Audit actor type is a closed union                                           | `packages/application/src/commands/record-audit-event.ts`                                                                                                   |
+| Claim used by the design                                                                    | Evidence                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One socket serves health, query and command routes; the socket is mode 0600                 | `apps/daemon/src/office-daemon.ts` (`Bun.serve({ unix })`, `chmodSync(…, 0o600)`, `route()` order: `/health`, `queryApi.handle`, `/commands`)               |
+| The query API accepts only GET and is separate from the command protocol                    | `apps/daemon/src/query-api.ts` (`handle`: 405 for non-GET); `packages/application/src/protocol/query-protocol.ts` header                                    |
+| Query routes expose descriptions, runs, activity and global memory                          | `query-api.ts` `route()` (`/api/memory`, `/api/runs/:id`, `/api/activity`, project detail); `operational-read-models.ts` (`RequirementSummary.description`) |
+| `RuntimeClient.execute` takes any command                                                   | `packages/application/src/runtime/runtime-client.port.ts`; `apps/cli/src/daemon-client.ts` (`execute(args)` posts to `/commands`)                           |
+| The IPC transport lives in `apps/cli`                                                       | `apps/cli/src/daemon-client.ts`                                                                                                                             |
+| The dashboard is a separate loopback process proxying GET to the query API                  | `apps/dashboard/src/dashboard-host.ts` (`loopbackHostnames`, `proxy`)                                                                                       |
+| A task graph read model exists with nodes, edges, ready and waiting                         | `operational-read-models.ts` (`TaskGraph`, `TaskGraphNode`, `TaskGraphEdge`)                                                                                |
+| Priority change is audited with from and to                                                 | `packages/application/src/commands/update-task.ts` (`task.priority_updated`)                                                                                |
+| Dependency link is idempotent, cycle-checked, editable only before execution                | `packages/application/src/commands/manage-task-dependencies.ts` (`link`, `assertEditable`)                                                                  |
+| Transactions do not nest                                                                    | `packages/application/src/ports/transaction-runner.port.ts` (`TransactionAlreadyActiveError`)                                                               |
+| Daemon-queue commands are serialized, but `run:tick` and the queue runtime bypass the queue | `office-daemon.ts` (`enqueue`, and the `run:tick` branch that calls `execute()` directly); `apps/daemon/src/queue-runtime.ts` (`runtime.execute`)           |
+| SQLite transactions start `BEGIN IMMEDIATE` and reject nesting by throwing                  | `packages/storage-sqlite/src/database/sqlite-transaction-runner.ts`                                                                                         |
+| An executable connector mutation must require approval                                      | `packages/connector-sdk/src/connector-registry.ts` (`freezeDefinition`)                                                                                     |
+| Grant shape available for the publication authorization                                     | `packages/domain/src/capability/capability.ts` (`CapabilityGrant`)                                                                                          |
+| Service management is loopback-only for the dashboard                                       | `packages/service-management/src/service-plan.ts` (`validateOfficeServicePlan`)                                                                             |
+| Credential files are strict and declared                                                    | ADR-0020                                                                                                                                                    |
+| Audit actor type is a closed union                                                          | `packages/application/src/commands/record-audit-event.ts`                                                                                                   |
 
 Out-of-scope inconsistencies found: none that block this design. The
 `apps/cli` location of the IPC transport is the one structural dependency this
@@ -194,7 +207,8 @@ work must change (CB-11B).
 
 ## 7. Reuse and non-duplication
 
-Reused unchanged: `UpdateTask`, `ManageTaskDependencies`, audit, the command
+Reused: `UpdateTask` and `ManageTaskDependencies` (their transactional
+bodies are exposed by a behavior-preserving refactor in CB-08), audit, the command
 queue, the task graph read model, service management, the capability grant
 vocabulary and the credential boundary pattern. New: the coordination
 application API and read listener, the proposal aggregate and plan workflow, the

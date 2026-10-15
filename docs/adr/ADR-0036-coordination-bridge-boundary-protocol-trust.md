@@ -3,8 +3,10 @@
 - Status: Proposed
 - Date: 2026-10-15
 - Scope: M23 — AI Office Coordination Bridge (CB-R01–CB-R14), delivered by CB-01
-- Owner decisions recorded: D1–D6 approved 2026-10-15; D7, D9, D10, D11
-  confirmed as binding design constraints the same day (see the matrix below)
+- Owner decisions recorded: D1–D6 approved 2026-10-15; D8 revised and D7, D9,
+  D10, D11 confirmed as binding design constraints the same day (see the
+  matrix below). One decision is open and blocks acceptance: Decision 5,
+  point 4.
 
 Companion documents: [architecture](../architecture/coordination-bridge.md),
 [protocol and planning-change semantics](../development/coordination-protocol.md),
@@ -83,12 +85,12 @@ The Runtime remains the only authority and is never exposed publicly. Two new,
 optional, separately supervised programs sit beside it and the existing
 dashboard; each is a Runtime client with the narrowest surface it needs.
 
-| Program                     | Role                                                 | Runtime surface                              | Exposure                         |
-| --------------------------- | ---------------------------------------------------- | -------------------------------------------- | -------------------------------- |
-| Runtime (daemon)            | Authority: state, validation, approval, apply, audit | itself                                       | none; Unix sockets only          |
-| Dashboard (existing)        | Operations console                                   | query protocol, dashboard profile            | loopback                         |
-| MCP server (CB-11B)         | Remote read-only tools                               | coordination read listener only (Decision 5) | loopback, behind a reverse proxy |
-| Coordination bridge (CB-03) | GitHub transport                                     | coordination ingest surface (Decision 5b)    | outbound only                    |
+| Program                     | Role                                                 | Runtime surface                                                                   | Exposure                         |
+| --------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------- | -------------------------------- |
+| Runtime (daemon)            | Authority: state, validation, approval, apply, audit | itself                                                                            | none; Unix sockets only          |
+| Dashboard (existing)        | Operations console                                   | query protocol, unprofiled (new profiles apply to the coordination listener only) | loopback                         |
+| MCP server (CB-11B)         | Remote read-only tools                               | coordination read listener only (Decision 5)                                      | loopback, behind a reverse proxy |
+| Coordination bridge (CB-03) | GitHub transport                                     | coordination ingest surface (Decision 5b)                                         | outbound only                    |
 
 Dependency direction stays `apps/adapters → application → domain`. The new
 programs depend only on application ports and pure protocol modules, on the
@@ -107,7 +109,9 @@ applied only through `UpdateTask` and `ManageTaskDependencies`. Scope, requireme
 and milestone changes are advisory proposals without an apply path. A new
 autonomous coordination aggregate owns only the proposal lifecycle: request,
 assessment, plan, approval, apply outcome and receipt references. It holds no
-principal registry, token, transport cursor or publication state. State machine:
+principal registry, token, transport cursor or publication state. Decision
+requests and advisory notes are entries attached to the lifecycle of a proposal;
+none exists without one. State machine:
 `received → validated → assessed`, terminal `rejected`, `superseded`, `expired`;
 a plan adds `approved → applied` and `stale`. Final state names are fixed by
 CB-04 and CB-07 against the domain model.
@@ -121,7 +125,10 @@ class. No principal is inferred from another, and no string in a comment, label,
 reaction, tool argument or payload is an authorization. Approval strength equals
 existing approvals: it records an operator label and does not authenticate
 presence; the stronger boundary remains M10. A shell-capable same-user process
-can run the approve command; this ADR does not claim otherwise.
+can run the approve command; this ADR does not claim otherwise. A remote MCP
+caller can never approve or apply, and that stays out of scope until a separate
+accepted ADR defines an authenticated principal model with its own approval
+boundary; no later task may add a remote write path without it.
 
 ### Decision 4 — Protocol v1
 
@@ -129,9 +136,11 @@ A versioned, closed-grammar envelope carries six message kinds
 (`status_snapshot`, `review_request`, `planning_proposal`, `decision_request`,
 `proposal_feedback`, `application_receipt`) with identity, provenance,
 idempotency, correlation, compatibility rules and typed sanitized errors, fully
-specified in the protocol document. Only `planning_proposal` creates Runtime
-state, and only a proposal record; `application_receipt` flows from the Runtime
-only. Free text is display-only and never interpreted as a command. Transport
+specified in the protocol document. Objects are closed: unknown fields are
+rejected, ignorable data travels only in `extensions`, and any other addition
+needs a new major version. Only `planning_proposal` creates Runtime state, and
+only a proposal record, to which decision requests and notes attach;
+`application_receipt` flows from the Runtime only. Free text is display-only and never interpreted as a command. Transport
 content is untrusted input validated by the Runtime itself; the bridge's
 provenance assertion is trusted no further than the bridge.
 
@@ -147,8 +156,12 @@ given to the process, not by tool names.
    query API in a new `coordination` route profile: only
    `/api/coordination/v1/...` GET routes and a dedicated health query. It has no
    `/commands` route, no dashboard routes (memory, runs, run output, activity,
-   agents, events) and no wildcard. The dashboard keeps its existing profile.
-   The MCP program is configured with the path of this socket only.
+   agents, events) and no wildcard. The existing query API has no route profiles
+   today and the dashboard, which also holds the main socket path, is
+   unchanged; the profile is new. The MCP program is configured with the path
+   of this socket only. CB-10 delivers the listener, the profile, the routes and
+   the Runtime-side mappers; CB-11B delivers the client extraction and the
+   query client.
 2. **Interface.** A narrow `RuntimeQueryClient` port (GET to a typed route set,
    no arbitrary path, no body) implemented over the same Unix-socket transport,
    extracted from `apps/cli` into a shared runtime-client package without
@@ -156,21 +169,46 @@ given to the process, not by tool names.
 3. **Dedicated health.** `GET /api/coordination/v1/health` returns only the
    contract version, `status` and `startedAt`; it omits queue, knowledge, path
    and version detail.
-4. **Honest scope of the capability.** Under a same-user deployment, the
-   restriction is a code and configuration restriction, not a same-UID security
-   boundary. The documented hardened deployment runs the MCP program as a
-   dedicated operating-system user with access to the read-only socket only and
-   no traversal into the Runtime home (a group-owned socket directory, systemd
-   `InaccessiblePaths` and equivalent launchd practice). A compromised MCP
-   process in the default deployment remains able to reach the main socket if it
-   discovers its path; this residual risk is stated in the operating guide.
+4. **Process capability — open owner decision.** The main socket path is fixed
+   (`<runtime home>/daemon.sock`) and the existing service management installs
+   per-user services only (`systemctl --user`, LaunchAgents), so a same-user
+   MCP program can open the main socket and post any command, including
+   approval and apply under a label it chooses. Interface restrictions and
+   configuration alone therefore do not deliver the capability half of D9: a
+   remote-code-execution flaw in the public program, or in its SDK dependency,
+   would be full Runtime authority reachable from the internet. Options:
+   - **Option 1 (recommended): capability isolation as a hard precondition of
+     public exposure.** The requirement is a verifiable property: the MCP
+     program's identity cannot connect to the main socket. CB-11D and CB-11E
+     refuse to enable the public vhost until a startup capability probe proves
+     it. Two implementations qualify: a system-level service under a dedicated
+     operating-system user with a group-owned read-socket directory and the
+     Runtime home closed to that user, or a container or sandbox that mounts
+     only the read socket. Both are new work (system-level launchd and systemd
+     adapters, or a container recipe) and are added to the scope of CB-11D.
+   - **Option 2: separate machine.** The MCP program runs on another host and
+     reaches only the read listener over a restricted channel. Strongest
+     separation, more operations, and the channel itself needs a design.
+   - **Option 3: accept the interface-only guarantee** for the first release,
+     with the residual risk above stated in the operating guide and the owner's
+     explicit acceptance recorded, and D9 downgraded to its interface half;
+     suitable for loopback-only or tunnel testing, not for a public vhost.
+5. **Runtime-side minimization.** The coordination route profile returns only
+   classified P and T projections built by Runtime-side mappers, so D and A data
+   can never leave the listener. The owner enables the listener per project and
+   per data class in Runtime configuration; a project not enabled there is not
+   served at all. Per-principal scope inside the enabled set is checked by the
+   MCP program, so a compromised MCP program can read every enabled project at
+   P and T, not more.
 
 **Decision 5b (proposed, needs approval).** The bridge cannot be read-only: it
 submits proposals and reports publication outcomes. It receives a third,
 equally dedicated surface limited to a fixed set of coordination commands
 (submit proposal, claim and complete publication) rather than the full command
-dispatcher. Without approval of 5b the bridge would hold general command
-access, which this ADR advises against.
+dispatcher, through a typed, narrow ingest client over that surface; the bridge
+never receives the general command client. If 5b is declined, CB-03 is blocked
+until another narrow design is approved; it is not degraded to general command
+access.
 
 ### Decision 6 — Remote authentication (D10)
 
@@ -201,10 +239,12 @@ not issue tokens and is not an identity provider.
   `operations:read` are reserved and unissued.
 - **Principals.** The authorization server authenticates; the owner authorizes.
   A host-configuration allowlist maps `(issuer, subject)` to enabled flag,
-  scopes and projects, managed by local CLI commands and re-read within seconds.
-  Disabling an entry cuts access on the next request regardless of token
-  lifetime. Principal configuration is host configuration, not Runtime state,
-  so the MCP program does not need the Runtime to authenticate.
+  scopes and projects, managed by local CLI commands and cached for at most ten
+  seconds. Disabling an entry cuts access within that interval regardless of
+  token lifetime. Principal configuration is host configuration, not Runtime
+  state, so the MCP program does not need the Runtime to authenticate. Principal
+  changes are audited in the Runtime by the CLI command that makes them; the
+  verified principal never crosses into the Runtime on a read.
 - **Renewal and revocation.** Short-lived access tokens, refresh handled between
   client and authorization server, immediate local principal disablement,
   authorization-server revocation, and service stop as the kill switch.
@@ -230,17 +270,22 @@ and per channel; an unclassified field is not exposed.
   anything produced by an agent. Initially MCP and publication may carry P and
   T only; D needs `planning:detail`; A is never exposed by M23.
 - **Mechanism.** An exposure registry classifies each field; responses are built
-  by explicit mappers from the application read models, never by passing or
-  spreading an existing read-model object; contract tests assert the exact field
+  in the Runtime application layer by explicit mappers from the read models,
+  never by passing or spreading an existing read-model object, so the MCP
+  program only ever receives P and T; contract tests assert the exact field
   set per tool and per published message; a best-effort scrubber replaces
   strings that match credential patterns.
-- **Scope.** Access is per principal and per project; a project absent from the
-  principal's allowlist answers as not found.
+- **Scope.** Two layers. The Runtime enables a project and its data classes on
+  the read listener. The MCP program restricts each principal to a subset of the
+  enabled projects, and a project absent from the principal's allowlist answers
+  as not found.
 - **Limits.** Pagination default 50, maximum 200 items; response at most
   256 KiB; strings truncated at 256 characters with a flag; request arguments at
   most 4 KiB; per-principal rate limit and concurrency cap, with a second limit
-  at the proxy. Audited access records the tool, principal, project and sizes,
-  never payload content.
+  at the proxy. The MCP program writes a local, sanitized access log (tool,
+  principal, project, sizes, outcome; never payload content). It is an
+  operational log, not authoritative Runtime audit: the read listener appends no
+  audit rows and receives no principal.
 - **GitHub.** A publication authorization lists the content classes it allows
   (default P; T only when listed). The same mappers and classes apply.
 
@@ -253,6 +298,14 @@ the controlled-action gateway, which stays unchanged.
   capability grant: grantor, reason, target repository, allowed operations,
   allowed content classes, maximum payload size, rate limit, `expiresAt`,
   `revokedAt`. Deny by default; no human approval per report.
+- **Who enforces what.** The closed operation set and the content limits are
+  enforced by Runtime-issued orders and bridge code. The credential's own limit
+  is "Issues on one dedicated private repository": a fine-grained token cannot
+  stop a compromised bridge from commenting on or editing any issue there.
+  Receipts are therefore checkable, not trusted: CB-09 reads published messages
+  back and compares their content digest with the Runtime's publication record,
+  so an edited or forged receipt is reported as drift. A GitHub App with narrower
+  permissions is a possible later tightening, not a substitute.
 - **Closed operation set.** `publish_snapshot`, `publish_receipt`,
   `publish_diagnostic`, `create_coordination_issue`, plus reads of coordination
   issues and comments. No other operation exists; no generic mutation, label or
@@ -260,13 +313,20 @@ the controlled-action gateway, which stays unchanged.
 - **Content.** Produced only by Runtime serializers from classified projections.
   The bridge executes Runtime-issued publication orders and cannot compose its
   own content.
-- **Lifecycle.** The Runtime persists the intent (idempotency key, destination,
-  content digest) before the side effect, the bridge claims a lease, executes
-  once, and reports the outcome (`published`, `failed`, `ambiguous`) with an
-  external reference; the Runtime records a receipt and audit events at each
-  step. An ambiguous outcome is reconciled by looking up the idempotency marker
-  on the destination, never replayed blindly. The authorization is re-checked at
-  claim time, so revocation is immediate.
+- **Lifecycle.** The Runtime persists the intent (intent identifier, destination,
+  content digest) before the side effect, the bridge claims a lease (default
+  five minutes), attempts once, and reports the outcome with an external
+  reference; the Runtime records a receipt and audit events at each step.
+  Outcomes: `published`; `failed`, a definitive rejection by GitHub, terminal,
+  and a retry needs a new intent; `not_sent`, an error before any request bytes
+  left, safely retried under the same intent; `ambiguous`, any error after the
+  request may have been delivered. An ambiguous outcome, and an expired lease
+  whose result was never reported, are reconciled by looking up the intent marker
+  on the destination: found means published, proven absent allows a new
+  attempt, otherwise it stays ambiguous for the operator. Nothing is replayed
+  blindly. The authorization is re-checked at claim time, so revocation is
+  immediate. The intent identifier, not the content, is the idempotency key, so a
+  legitimate republication of an unchanged state is a new intent.
 - **Boundary.** The connector rule that an executable mutation requires approval
   is untouched. The identifier namespace `coordination` is reserved so no
   connector or grant can reuse it. Changes to authoritative state keep the full
@@ -285,21 +345,36 @@ The protocol document specifies the contract; the decisions are:
 - **Revision model.** There is no global revision counter. A plan records
   preconditions and a scope digest: the recorded status, priority and
   editability of each referenced task, and the edge set within the prerequisite
-  closure of each dependency target. Snapshot identity is the content digest of
-  the minimized projection; an expected snapshot is advisory.
+  closure of each `dependsOnTaskId` (the tasks reachable by following
+  prerequisites from it, which is where a new cycle would appear). Snapshot
+  identity is the content digest of the canonical minimized projection,
+  excluding volatile fields such as `generatedAt`; an expected snapshot is
+  advisory.
+- **Sequential semantics.** Preconditions on the initial state (targets exist,
+  expected priority, scope digest) are checked first. Whether each operation is
+  valid is then evaluated in order against the state produced by the earlier
+  ones, at assessment by simulation on an in-memory graph and at apply through
+  the services themselves. A plan may not repeat an edge or give one task two
+  priority changes. So `remove A→B; add B→A` is valid and `add A→B; add B→A`
+  fails as a cycle at assessment.
 - **Conflicts.** Apply recomputes every precondition; any mismatch refuses the
   whole plan as stale, with sanitized causes. No automatic rebase and no merge of
   concurrent plans: the proposer submits a new request that supersedes the old
   one. Overlapping concurrent plans are flagged at assessment; the first applied
-  wins and the others become stale. The daemon's command queue already
-  serializes commands, and preconditions, not locks, close the preview-to-apply
-  window.
+  wins and the others become stale. Correctness rests on the recheck inside the
+  apply transaction (`BEGIN IMMEDIATE`), not on command serialization: the
+  daemon queue does not cover `run:tick` or the queue runtime, which call the
+  Runtime directly. Apply goes through the command queue, and if it meets a
+  transaction already active it returns the retryable `RUNTIME_BUSY` without
+  consuming the approval.
 - **Atomicity.** All-or-nothing, in one transaction, through a composing apply
   use case that reuses the existing services' transactional bodies. This needs a
   behavior-preserving refactor of `UpdateTask` and `ManageTaskDependencies` to
   expose their bodies without opening a transaction (their public methods keep
-  their behavior and tests), delivered in CB-08 and approved as part of this
-  ADR. Plan state, receipt row and audit events commit in the same transaction.
+  their behavior and tests), delivered in CB-08 and submitted for approval at
+  its design review. Plan state, the receipt, the receipt-publication intent and
+  audit events commit in the same transaction; a refusal is recorded in its own
+  short transaction after the rollback.
   Rejected: sequential calls with compensation, partial execution with
   reconciliation, simulated global transactions. Fallback if the refactor is
   declined: single-operation plans.
@@ -321,7 +396,8 @@ Runtime not publicly exposed; MCP server a separate Streamable HTTP program
 binding loopback only; reverse proxy HTTPS, Caddy preferred, configurable and
 documented (TLS, vhost, request-body limit, rate limit, optional client
 restriction, health, rollback); launchd on macOS and systemd on Linux through
-the existing service management, extended with an MCP service; MCP read-only
+the existing service management, extended with an MCP service and, subject to
+Decision 5 point 4, with a capability-isolated deployment profile; MCP read-only
 initially and independently disableable without affecting the Runtime or the
 dashboard. The CB-11 series delivers the project's single MCP server; the M9 MCP
 task extends it and depends on CB-11B. Initial tools use the `ai_office_`
@@ -336,8 +412,9 @@ declared credentials per program. The bridge declares one: the fine-grained
 GitHub token (Issues read and write on the coordination repository only), held
 in the credential directory with the existing strict checks. The MCP program
 holds no secret for JWT validation (public keys); an introspection client secret,
-if ever used, is declared the same way. Agents never reach these files by
-configuration; as in ADR-0020 there is no same-user technical barrier, and
+if ever used, is declared the same way. How the managed and foreground
+credential-source markers of ADR-0020 apply to a separate bridge program is
+settled at CB-03 design. Agents never reach these files by configuration; as in ADR-0020 there is no same-user technical barrier, and
 nothing is stored in SQLite, audit, logs or service definitions.
 
 ## Alternatives considered
@@ -365,19 +442,22 @@ nothing is stored in SQLite, audit, logs or service definitions.
   fresh-migration and upgrade tests; PostgreSQL parity is not promised.
 - Runtime changes are limited to: a coordination route profile and read-only
   listener, a bridge ingest surface (if 5b is approved), coordination
-  application services and a behavior-preserving transaction refactor in CB-08.
+  application services, a retryable busy code and a behavior-preserving
+  transaction refactor in CB-08.
 - A public endpoint on the owner's machine is a new exposure. It is bounded by
   structural read-only access, authentication by an external authorization
   server, per-principal minimization and limits, audit, and a kill switch.
-- Residual risks are documented, not removed: same-UID trust, data disclosure
-  through a compromised principal bounded by scope and token lifetime, and the
-  titles that may contain sensitive text.
+- Residual risks are documented, not removed: same-UID trust (reduced by
+  Decision 5 point 4 once decided), data disclosure through a compromised
+  principal or MCP program bounded by enabled projects, scope and token
+  lifetime, and titles that may contain sensitive text.
 - Cost: an external identity provider dependency and an MCP SDK dependency,
   each requiring explicit approval when introduced.
 
 ## Points that need further approval
 
-1. Acceptance of this ADR as a whole.
+1. Acceptance of this ADR as a whole, which requires the choice in Decision 5
+   point 4 (capability isolation option).
 2. Decision 5b, the restricted bridge ingest surface.
 3. Decision 9, the transaction-body refactor of two existing services, at CB-08.
 4. The authorization-server product, at CB-11C preflight.
