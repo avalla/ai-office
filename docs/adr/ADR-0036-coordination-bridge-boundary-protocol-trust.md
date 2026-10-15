@@ -215,8 +215,7 @@ given to the process, not by tool names.
 5. **Runtime-side minimization.** The coordination route profile returns exactly two kinds of payload, both built by Runtime-side mappers with an explicit field set: classified P and T projections for tool data, and one minimized authorization projection for the MCP program, which is not tool output and carries only issuer, subject, enabled flag, scopes, project identifiers and a version tag (no names, emails or descriptions). D and A data can never leave the listener. The owner enables the listener per project and
    per data class in Runtime configuration; a project not enabled there is not
    served at all. Per-principal scope inside the enabled set is checked by the
-   MCP program, so a compromised MCP program can read every enabled project at
-   P and T, not more.
+   MCP program, so a compromised MCP program can read every enabled project at P and T, plus the minimized authorization projection, and not more.
 
 **Decision 5b (proposed, needs approval).** The bridge cannot be read-only: it
 submits proposals and reports publication outcomes. It receives a third,
@@ -393,7 +392,7 @@ The protocol document specifies the contract; the decisions are:
   audit events commit in the same transaction; a refusal is recorded in its own
   short transaction after the rollback.
   Rejected: sequential calls with compensation, partial execution with
-  reconciliation, simulated global transactions. Fallback if the refactor or the writer exclusion is declined: single-operation plans.
+  reconciliation, simulated global transactions. Fallback if the refactor is declined: single-operation plans applied through the existing service. Writer exclusion is required for every apply, one operation included, because the shared-connection hazard does not depend on plan size: if it is declined or not yet delivered, apply is disabled and a plan stays at its approved state until it expires.
 - **Approval.** Bound to the plan digest, the approving principal, an expiry
   (default 24 hours, maximum 72, configurable) and the audit trail. A plan that
   is modified, expired or stale cannot be applied; one approval applies once.

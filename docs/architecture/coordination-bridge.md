@@ -68,8 +68,7 @@ Rules enforced by tests, not conventions:
 
 The Runtime read listener serves only the projects and data classes the owner
 enabled, as P and T projections built Runtime-side, so a compromised MCP program
-can read every enabled project at P and T and nothing else through that
-listener. Per-principal project scope inside that set is an MCP-side check.
+can read every enabled project at P and T, plus the minimized authorization projection of ADR-0036 Decision 5 point 5, and nothing else through that listener. Per-principal project scope inside that set is an MCP-side check.
 
 Capability isolation, decided by the owner (ADR-0036 Decision 5, point 4): a
 publicly exposed MCP program must not be able to reach the main socket even if
@@ -156,7 +155,7 @@ Runtime                          Bridge                         GitHub (private 
 ```text
 proposal (assessed) -> plan {operations, preconditions, digest} -> preview
    -> local operator approve (digest, expiry) -> apply:
-        one transaction: recheck preconditions -> UpdateTask / ManageTaskDependencies
+        one transaction (only with writer exclusion, ADR-0036 Decision 9): recheck preconditions -> UpdateTask / ManageTaskDependencies
         -> plan applied + receipt + audit
    -> receipt publication order -> GitHub
 on any mismatch: refuse the whole plan as stale, no change

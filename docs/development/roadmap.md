@@ -2512,7 +2512,7 @@ Runtime data, through a separate read-only MCP server (Streamable HTTP) behind
 a Cloudflare Tunnel or Nginx exposure layer, an external OAuth 2.1 authorization server
 and a read-only Runtime listener; no approve or apply tool exists. Then an
 asynchronous GitHub Issues bridge to a dedicated private repository, and the
-governed priority and dependency changes (digest-bound local approval, apply that is atomic once writer exclusion holds, receipts, reconciliation). The first mutable operations reuse
+governed priority and dependency changes (digest-bound local approval, apply enabled only once writer exclusion holds, receipts, reconciliation). The first mutable operations reuse
 `UpdateTask` and `ManageTaskDependencies`.
 
 The [M23 plan](coordination-bridge.md), the

@@ -325,8 +325,7 @@ connection, so their writes could be committed or rolled back with the plan.
 Writer exclusion is therefore a precondition of CB-08 (ADR-0036 Decision 9):
 every writer is serialized through one gate that apply also takes, or
 connection-level transaction ownership stops unrelated writes from joining, and
-this touches the daemon and needs owner approval. Until it holds, plans are
-limited to one operation and no atomicity beyond that is claimed. Apply is
+this touches the daemon and needs owner approval. Until it holds, apply is disabled: even a one-operation apply on the shared connection has the same hazard, so no apply is attempted and a plan stays at its approved state until its expiry. Apply is
 submitted through the command queue; if it meets an already active transaction it
 returns the retryable `RUNTIME_BUSY` and leaves the approval unconsumed.
 
@@ -347,8 +346,8 @@ after a restart.
   edit of a not-yet-approved request is a new digest and creates a superseding
   revision; an edit of an approved or applied request is ignored and reported as
   drift (CB-09).
-- **Multi-operation plans.** Up to 20 operations apply atomically as above, with the sequential semantics of 8.2, once the writer exclusion of 8.4 holds.
-  If the transaction-body refactor or the writer exclusion of Decision 9 is declined, plans are limited to one operation and all other rules are unchanged.
+- **Multi-operation plans.** Up to 20 operations apply atomically as above, with the sequential semantics of 8.2; apply of any plan is enabled only once the writer exclusion of 8.4 holds.
+  If the transaction-body refactor of Decision 9 is declined, plans are limited to one operation applied through the existing service, and all other rules are unchanged. In every case apply requires the writer exclusion of 8.4 and is disabled without it.
 
 ### 8.6 Proposal lifecycle
 
