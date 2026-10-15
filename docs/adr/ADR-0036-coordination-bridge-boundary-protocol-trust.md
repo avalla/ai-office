@@ -407,9 +407,13 @@ The protocol document specifies the contract; the decisions are:
   without any mutation and the plan stays at its approved state until it
   expires. Nothing may silently weaken the all-or-nothing guarantee. The
   authoritative changes, the plan state, the internal receipt, the
-  receipt-publication intent and the audit events commit in one transaction. Publishing the receipt to GitHub is a later
-  effect through the outbox and its reconciliation, never part of that
-  transaction.
+  receipt-publication intent and the audit events commit in one transaction,
+  and every precondition is revalidated inside that transaction while the
+  writer exclusion is in effect. Both prerequisites are mandatory for CB-08.
+  Publishing the receipt to GitHub is a later effect through the outbox, made
+  idempotent by a stable publication marker and converged by reconciliation
+  (CB-09); it is never part of that transaction. This decision is Proposed and
+  does not become accepted by being specified here.
 - **Approval.** Bound to the plan digest, the approving principal, an expiry
   (default 24 hours, maximum 72, configurable) and the audit trail. A plan that
   is modified, expired or stale cannot be applied; one approval applies once.

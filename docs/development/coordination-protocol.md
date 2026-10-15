@@ -330,8 +330,9 @@ submitted through the command queue; if it meets an already active transaction i
 returns the retryable `RUNTIME_BUSY` and leaves the approval unconsumed.
 
 Receipt publication is a separate side effect through the publication outbox
-(ADR-0036 Decision 8); it never runs inside the apply transaction and retries
-after a restart.
+(ADR-0036 Decision 8); it never runs inside the apply transaction, is idempotent
+through the publication marker, retries after a restart and is converged by
+reconciliation (CB-09).
 
 ### 8.5 Conflicts
 
