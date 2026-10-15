@@ -58,8 +58,40 @@ the separate `ai-office` skill; `skills/README.md` states the independence of
 - The CLI never falls back to an embedded writer. Step 1's `delivery:validate` is a Runtime-routed read that adds no offline path; that is an owner decision and an existing `AGENTS.md` invariant, not a consequence of this ADR, and it stands if this ADR is rejected.
 - Any caller-local path argument is resolved by the CLI against its own working directory and sent as an absolute path, as `AGENTS.md` already requires; the Runtime rejects relative paths and never infers the caller's working directory.
 
+## Owner decisions on the open questions (2026-10-15)
+
+The owner agreed to the following answers. The ADR itself remains Proposed
+until it is explicitly accepted.
+
+- **Aggregate.** A delivery run is a new aggregate with an optional reference
+  to a pipeline run. It does not extend a task or a pipeline run: extending the
+  pipeline run would bind the portable workflow to enforced pipelines (the
+  rejected alternative above), and a task is not the right owner of gate
+  results. When a delivery run is linked to a pipeline run, its gate state is
+  read from the pipeline instead of copied, so the two records cannot drift.
+- **Evidence.** Only a reference and a content hash are stored, never the
+  evidence itself, consistent with the gate evidence references of the
+  file-based checkpoints.
+- **Head commit.** `delivery:record` does not reject a head commit the Runtime
+  cannot see. The Runtime does not infer client-local repository context, and
+  recording authorizes nothing. It validates the commit identifier format and
+  records the head as claimed by the client, not verified.
+
+## Relation to existing delivery state
+
+Two pieces of delivery state already exist and predate this decision:
+
+- Task-delivery setup is stored by the Runtime (migration
+  `0050_task_delivery_setup`, `delivery:setup:show` and `delivery:setup:set`;
+  M19-T4).
+- Checkpoints are stored in a local file store with atomic, immutable
+  publication (M19-T2). Per point 3 above the skill keeps working without a
+  Runtime, so that store stays as the offline path.
+
 ## Open questions
 
-- Is a delivery run a new aggregate, or an extension of a task or pipeline run?
-- Which evidence is stored (reference and hash only is the proposal)?
-- Does the Runtime reject `delivery:record` for a head commit it cannot see?
+- Does the delivery run extend the existing `delivery:setup:*` storage or sit
+  beside it as a separate aggregate?
+- When a Runtime is available, does the delivery run replace the file-based
+  checkpoint store or complement it (for example, a checkpoint is published
+  to the file store and its reference is recorded on the delivery run)?
