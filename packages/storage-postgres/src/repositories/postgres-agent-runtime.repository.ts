@@ -465,6 +465,9 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
         toDate(current.created_at).getTime() !== run.createdAt.getTime()
       )
         throw new AgentRunPersistenceConflictError(run.id);
+      // An identical replay is idempotent and does not consult the token:
+      // saveRun does not decide who owns an execution (admitQueuedRun and the
+      // task lock do), it only refuses to move or rewrite a diverged row.
       if (current.status === run.status) {
         const sameMutableState =
           current.worktree_path === (run.worktreePath ?? null) &&

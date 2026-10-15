@@ -53,7 +53,13 @@ export interface AgentRunProps {
   startedAt?: Date;
   completedAt?: Date;
   updatedAt: Date;
-  /** Optimistic-concurrency token returned by a repository after persistence. */
+  /**
+   * Optimistic-concurrency token: the status and updatedAt a repository last
+   * read or wrote for this run. It is absent on a run that was never read from
+   * or written to a repository; a repository refuses to update a stored run
+   * through an object whose token does not match the stored row. Its value is
+   * only meaningful once the enclosing transaction has committed.
+   */
   persistenceToken?: AgentRunPersistenceToken;
 }
 
@@ -161,10 +167,6 @@ export class AgentRun {
       status: "queued",
       createdAt: now,
       updatedAt: now,
-      persistenceToken: {
-        status: "queued",
-        updatedAt: new Date(now),
-      },
     });
   }
 
@@ -194,6 +196,11 @@ export class AgentRun {
     });
   }
 
+  /**
+   * Records the current status and updatedAt as the state a repository has
+   * persisted. Repositories call it after their write; callers may only do so
+   * when something else has persisted this exact transition atomically.
+   */
   markPersisted(): void {
     this.props = {
       ...this.props,

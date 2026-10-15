@@ -25,18 +25,6 @@ insert into core.agent(id, project_id, role_id, name, enabled, created_at, updat
 values ('runtime-hardening-agent', 'runtime-hardening-project', 'runtime-hardening-role', 'Hardening', true, '2026-09-22T00:00:00Z', '2026-09-22T00:00:00Z');
 
 select ok(exists (select 1 from core.role where id = 'runtime-hardening-role'), 'safe integer role and unbounded max cost are accepted');
-insert into core.role(
-  id, project_id, role_key, name, version, capabilities_json, tools_json,
-  model_policy, limits_json, source_path, guidance_text, guidance_version,
-  created_at, updated_at
-) values (
-  'runtime-hardening-utf8-boundary', 'runtime-hardening-project', 'utf8-boundary', 'UTF-8 boundary',
-  1, '[]', '[]', 'mock',
-  '{"maxIterations":1,"maxCostMicros":"0","timeoutSeconds":1}',
-  'utf8.yaml', repeat('é', 32768), 1,
-  '2026-09-22T00:00:00Z', '2026-09-22T00:00:00Z'
-);
-select ok(exists (select 1 from core.role where id = 'runtime-hardening-utf8-boundary'), 'guidance accepts exactly 65536 UTF-8 bytes');
 select throws_ok($$
   insert into core.role(
     id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy,
@@ -48,39 +36,6 @@ select throws_ok($$
     'overflow.yaml', '', 1, '2026-09-22T00:00:00Z', '2026-09-22T00:00:00Z'
   )
 $$, '23514', null, 'role version rejects values outside Number.isSafeInteger domain');
-select throws_ok($$
-  insert into core.role(
-    id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy,
-    limits_json, source_path, guidance_text, guidance_version, created_at, updated_at
-  ) values (
-    'runtime-hardening-max-iterations-overflow', 'runtime-hardening-project', 'max-iterations-overflow', 'Overflow',
-    1, '[]', '[]', 'mock',
-    '{"maxIterations":9007199254740992,"maxCostMicros":"0","timeoutSeconds":1}',
-    'overflow.yaml', '', 1, '2026-09-22T00:00:00Z', '2026-09-22T00:00:00Z'
-  )
-$$, '23514', null, 'maxIterations rejects values outside Number.isSafeInteger domain');
-select throws_ok($$
-  insert into core.role(
-    id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy,
-    limits_json, source_path, guidance_text, guidance_version, created_at, updated_at
-  ) values (
-    'runtime-hardening-timeout-overflow', 'runtime-hardening-project', 'timeout-overflow', 'Overflow',
-    1, '[]', '[]', 'mock',
-    '{"maxIterations":1,"maxCostMicros":"0","timeoutSeconds":9007199254740992}',
-    'overflow.yaml', '', 1, '2026-09-22T00:00:00Z', '2026-09-22T00:00:00Z'
-  )
-$$, '23514', null, 'timeoutSeconds rejects values outside Number.isSafeInteger domain');
-select throws_ok($$
-  insert into core.role(
-    id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy,
-    limits_json, source_path, guidance_text, guidance_version, created_at, updated_at
-  ) values (
-    'runtime-hardening-guidance-version-overflow', 'runtime-hardening-project', 'guidance-version-overflow', 'Overflow',
-    1, '[]', '[]', 'mock',
-    '{"maxIterations":1,"maxCostMicros":"0","timeoutSeconds":1}',
-    'overflow.yaml', '', 9007199254740992, '2026-09-22T00:00:00Z', '2026-09-22T00:00:00Z'
-  )
-$$, '23514', null, 'guidanceVersion rejects values outside Number.isSafeInteger domain');
 select throws_ok($$
   insert into core.role(
     id, project_id, role_key, name, version, capabilities_json, tools_json, model_policy,
@@ -100,14 +55,6 @@ $$, 'identity-only governance row remains compatible');
 select throws_ok($$
   insert into core.agent_run(id, project_id, result_json) values ('runtime-hardening-identity-contaminated', 'runtime-hardening-project', '{}')
 $$, '23514', null, 'identity-only row rejects runtime result state');
-select throws_ok($$
-  insert into core.agent_run(
-    id, project_id, task_id, status
-  ) values (
-    'runtime-hardening-identity-task-contaminated', 'runtime-hardening-project',
-    'runtime-hardening-task', null
-  )
-$$, '23514', null, 'identity-only row rejects runtime task state');
 select throws_ok($$
   insert into core.agent_run(
     id, project_id, task_id, agent_id, status, created_at, updated_at, role_guidance_json

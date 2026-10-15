@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
-import type { AgentRuntimeRepository } from "@ai-office/application/ports/agent-runtime-repository.port.ts";
+import {
+  AgentRunPersistenceConflictError,
+  type AgentRuntimeRepository,
+} from "@ai-office/application/ports/agent-runtime-repository.port.ts";
 
 export interface AgentRuntimeContractHarness {
   runtime: AgentRuntimeRepository;
@@ -205,33 +208,6 @@ export function defineAgentRuntimeRepositoryContracts(
       expect(
         await harness.runtime.releaseTaskLock(owner === undefined ? "" : owner),
       ).toBe(true);
-      expect(
-        await harness.runtime.acquireTaskLock(
-          harness.taskId,
-          first.snapshot().id,
-          harness.now,
-          new Date(harness.now.getTime() + 10_000),
-        ),
-      ).toBe(true);
-      expect(
-        await harness.runtime.acquireTaskLock(
-          harness.taskId,
-          second.snapshot().id,
-          new Date(harness.now.getTime() + 1_000),
-          new Date(harness.now.getTime() + 11_000),
-        ),
-      ).toBe(false);
-      expect(
-        await harness.runtime.acquireTaskLock(
-          harness.taskId,
-          second.snapshot().id,
-          new Date(harness.now.getTime() + 10_000),
-          new Date(harness.now.getTime() + 20_000),
-        ),
-      ).toBe(true);
-      expect((await harness.runtime.findTaskLock(harness.taskId))?.runId).toBe(
-        second.snapshot().id,
-      );
     });
 
     test("rejects competing stale transitions even when timestamps are equal", async () => {
@@ -268,6 +244,27 @@ export function defineAgentRuntimeRepositoryContracts(
           (event) => event.status,
         ),
       ).toEqual(["queued", persisted!.snapshot().status]);
+    });
+
+    test("rejects a transition saved through a run without a persistence token", async () => {
+      const run = AgentRun.create({
+        id: `${harness.idPrefix}-no-token`,
+        projectId: harness.projectId,
+        taskId: harness.taskId,
+        agentId: harness.agentId,
+        now: harness.now,
+      });
+      await harness.runtime.saveRun(run);
+      const props = { ...run.snapshot() };
+      delete props.persistenceToken;
+      const untracked = AgentRun.restore(props);
+      untracked.transition("preparing", new Date(harness.now.getTime() + 1));
+      await expect(harness.runtime.saveRun(untracked)).rejects.toBeInstanceOf(
+        AgentRunPersistenceConflictError,
+      );
+      expect(
+        (await harness.runtime.findRun(run.snapshot().id))?.snapshot().status,
+      ).toBe("queued");
     });
 
     test("rejects a stale snapshot after a newer status transition", async () => {

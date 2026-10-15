@@ -110,7 +110,7 @@ test("live cancellation waits for executor acknowledgment and records owner prov
         await gate;
         return { summary: "stopped", artifacts: [] };
       },
-      accept: async () => undefined,
+      accept: async () => false,
     }),
     execute: async () => ({ summary: "unused", artifacts: [] }),
   });

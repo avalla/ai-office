@@ -106,9 +106,11 @@ export class ExecuteAgentRun {
             result,
             reviewingAt,
           );
-          // The acceptance fence may have persisted this exact transition atomically.
+          // When the acceptance fence persisted this exact transition
+          // atomically, the run's token must follow it; otherwise the
+          // completion save is rightly refused as stale.
           run.transition("reviewing", reviewingAt, { result });
-          if (acceptancePersisted === true) run.markPersisted();
+          if (acceptancePersisted) run.markPersisted();
         } else {
           run.transition("reviewing", reviewingAt, { result });
           await this.persist(run);

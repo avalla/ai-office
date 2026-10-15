@@ -559,6 +559,9 @@ export class SqliteAgentRuntimeRepository implements AgentRuntimeRepository {
         current.createdAt.getTime() !== v.createdAt.getTime()
       )
         throw new AgentRunPersistenceConflictError(v.id);
+      // An identical replay is idempotent and does not consult the token:
+      // saveRun does not decide who owns an execution (admitQueuedRun and the
+      // task lock do), it only refuses to move or rewrite a diverged row.
       if (current.status === v.status) {
         const sameMutableState =
           current.worktreePath === v.worktreePath &&

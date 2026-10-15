@@ -129,6 +129,7 @@ test("a configured prepared worker records provenance and invokes its acceptance
       },
       accept: async () => {
         events.push("accept");
+        return false;
       },
     }),
     execute: async () => ({ summary: "unexpected", artifacts: [] }),
