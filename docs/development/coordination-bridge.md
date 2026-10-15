@@ -169,7 +169,7 @@ Cloudflare Tunnel (`cloudflared` opens outbound-only connections, no inbound
 port); Nginx is the supported alternative reverse proxy; Caddy is permitted but
 not required. The MCP program binds only the private interface the deployment
 designates and a tunnel or proxy never replaces OAuth 2.1 and scope checks. With
-a tunnel TLS terminates at the provider's edge, which terminates TLS, so it sees planning data (P and T), the bearer access tokens and the OAuth and metadata exchanges in clear text and could replay a token within its lifetime; the owner accepts that trade-off explicitly.
+a tunnel the provider's edge terminates TLS, so it sees planning data (P and T), the bearer access tokens and the OAuth and metadata exchanges in clear text and could replay a token within its lifetime; the owner accepts that trade-off explicitly.
 
 A publicly exposed MCP program must not be able to reach the main Runtime
 socket even if its process is compromised: isolation by a separate operating
@@ -221,7 +221,7 @@ the first version of this plan:
 - CB-11 was split into six tasks as proposed: contract, server, security,
   service management, HTTPS exposure and deployment, end-to-end.
 - Two requirements were added: CB-R13 (remote authentication, authorization and
-  credential handling) and CB-R14 (service management and reverse-proxy
+  credential handling) and CB-R14 (isolated deployment, service management and HTTPS
   deployment). CB-R11 now means the remote read-only tool contract and server.
 - The M9 MCP task was given a dependency on CB-11B and a note that it extends
   the single MCP server (section 6).

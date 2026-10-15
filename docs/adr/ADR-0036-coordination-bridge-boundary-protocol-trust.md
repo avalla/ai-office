@@ -202,8 +202,7 @@ given to the process, not by tool names.
    program rejects requests whose `Host` or `Origin` is not loopback and any
    request carrying forwarding headers (`Forwarded`, `X-Forwarded-*`,
    `Cf-Connecting-IP`, `CF-Ray` and similar); and it refuses to start with a
-   public resource URI unless the isolation verification passes. CB-11F tests
-   that a tunnel or proxy pointed at a non-isolated instance serves nothing.
+   public resource URI unless the isolation verification passes. CB-11F tests that a tunnel or proxy pointed at a non-isolated instance serves nothing. This is defence in depth, not a guarantee: a proxy that rewrites `Host` and strips forwarding headers passes the header checks, and the loopback-resource audience binding holds only if the client validates the RFC 9728 `resource` value and the authorization server will not issue a token for a loopback resource; it is adequate for a deliberate development mode and never a substitute for isolation on a public endpoint.
    Platform assessment, made in CB-01: on macOS this cannot be achieved with
    LaunchAgents; it needs a system-domain LaunchDaemon with a dedicated
    `UserName` and `GroupName` (administrator rights at install, a group-owned
