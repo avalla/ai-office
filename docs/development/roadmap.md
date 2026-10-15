@@ -2211,8 +2211,10 @@ proposal:
 - Runtime activation, Runtime task `aa10a111-9658-4f11-b99f-7074fe522588`
   (requirement M165-ACT): Runtime execution consumes the generic resolved
   configuration, and a new run persists its configuration digest and exact
-  source pack tuples with its existing pins. The pin is delivered; selection
-  from the pack is not.
+  source pack tuples with its existing pins. The pin and, for a project with a
+  selected pack, selection of the run's pipeline from a resolved pack workflow
+  are delivered (the latter on 2026-10-15); no role or agent is
+  materialized.
 - GP-24: block a pack removal while an active run pins that pack. Whether
   it also blocks a workflow change on such a run is set by its scope
   proposal. It needs the persisted pins, which activation is expected to

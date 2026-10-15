@@ -155,7 +155,10 @@ import {
   ActivePipelineRunExistsError,
   ConcurrentPipelineTransitionError,
   PipelineActorUnauthorizedError,
+  PackPipelineUnsupportedError,
+  PipelineDefinitionAmbiguousError,
   PipelineDefinitionNotEnforcedError,
+  PipelineRoleUnavailableError,
   PipelineRunNotFoundError,
 } from "@ai-office/application/pipeline-errors.ts";
 import { PipelineTransitionError } from "@ai-office/domain/pipeline/pipeline-run.ts";
@@ -534,6 +537,9 @@ function formatKnownError(error: unknown): string | null {
     error instanceof ConcurrentPipelineTransitionError ||
     error instanceof PipelineActorUnauthorizedError ||
     error instanceof PipelineDefinitionNotEnforcedError ||
+    error instanceof PipelineDefinitionAmbiguousError ||
+    error instanceof PipelineRoleUnavailableError ||
+    error instanceof PackPipelineUnsupportedError ||
     error instanceof PipelineRunNotFoundError ||
     error instanceof PipelineTransitionError ||
     error instanceof PortableProjectArchiveError ||
@@ -668,7 +674,8 @@ export async function executeRuntimeCommand(
         definitions: projectStorage.definitions,
         transactions: projectStorage.transactions,
         catalog:
-          options.installedPacks ?? new InMemoryInstalledDomainPackCatalog(1, []),
+          options.installedPacks ??
+          new InMemoryInstalledDomainPackCatalog(1, []),
         providers: operationProviders,
       }),
       agentClients: options.agentClients ?? new DefaultAgentClientCatalog(),

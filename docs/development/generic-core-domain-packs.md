@@ -5947,3 +5947,43 @@ instead), no pipeline/stage/role selection from a pack.
 `tests/integration/office-pipeline-sqlite-contracts.test.ts`,
 `tests/integration/office-pipeline-postgres-contracts.test.ts`, and the
 migration-list updates across the affected upgrade tests.
+
+## Runtime activation — pack workflow selection (2026-10-15 addendum)
+
+**Status.** Implemented for task `aa10a111`, under the owner decisions of
+2026-10-15 recorded in the
+[M16.5 scope proposal](m16-5-domain-pack-runtime-activation-scope.md#owner-rulings-2026-10-15).
+ADR-0026 is implemented as accepted; no ADR change was needed.
+
+**Behavior.** A project whose pack selection is nonempty may start a run from a
+resolved pack workflow: `pipeline:start --pipeline <local id>` matches the local
+ID of a workflow in the resolved configuration, and the run freezes the mapped
+definition in the same short transaction that reads the configuration pin.
+Projects with an empty selection are unchanged: they resolve only manifest
+pipelines and record no pin. The run still pins the latest manifest revision, so
+the manifest remains required.
+
+**Mapping.** `packWorkflowPipeline` is a pure function. Stage ID, role, title,
+objective and checks come from the resolved workflow. Approval, independent
+approval, separation of agents and stage operations (as stage `capabilities`)
+come only from the workflow's active pack policy (GP-25); a stage the policy
+does not name is ungoverned. A workflow with an active enforced policy maps to
+an enforced pipeline. Any other workflow maps to guidance, which `pipeline:start`
+refuses, as it does a guidance manifest pipeline. Two active policies on one
+workflow, or two workflows with one local ID, are refused rather than merged.
+
+**Source.** An ID that is both a manifest pipeline and a pack workflow is
+refused with `PipelineDefinitionAmbiguousError`; `--source manifest|pack`
+chooses. `--source pack` never falls back to the manifest. The `pipeline.started`
+audit event carries `definitionSource: "pack"` for a pack run and is unchanged
+for a manifest run.
+
+**Roles.** Activation materializes no role or agent. Every stage role, by its
+local ID, must already exist as a Runtime role of the project, or the start is
+refused with `PipelineRoleUnavailableError` and nothing is written. Agent
+assignment, approval and stage guards are the existing ones.
+
+**Not delivered here.** Execution parity (`a45ddb12`), GP-10C-2 adoption and
+catalog registration, GP-24, the GP-16 run gate and the two GP-12 follow-ups
+remain separate M16.5 tasks; the production catalog is still empty, so no
+production project selects a pack yet.

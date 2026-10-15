@@ -19,6 +19,37 @@ export class PipelineDefinitionNotEnforcedError extends Error {
   }
 }
 
+/**
+ * A pipeline ID names both a manifest pipeline and a pack workflow of a project
+ * that selected packs (M16.5). The operator picks the source explicitly.
+ */
+export class PipelineDefinitionAmbiguousError extends Error {
+  constructor(id: string) {
+    super(
+      `Pipeline ${id} is both a manifest pipeline and a pack workflow; pass --source manifest or --source pack`,
+    );
+    this.name = "PipelineDefinitionAmbiguousError";
+  }
+}
+
+/** A pack workflow cannot start a run because the Runtime lacks a stage role. */
+export class PipelineRoleUnavailableError extends Error {
+  constructor(id: string, roles: readonly string[]) {
+    super(
+      `Pack workflow ${id} needs Runtime roles that do not exist: ${roles.join(", ")}`,
+    );
+    this.name = "PipelineRoleUnavailableError";
+  }
+}
+
+/** A pack workflow cannot be expressed as an enforced pipeline unambiguously. */
+export class PackPipelineUnsupportedError extends Error {
+  constructor(id: string, reason: string) {
+    super(`Pack workflow ${id} cannot start a run: ${reason}`);
+    this.name = "PackPipelineUnsupportedError";
+  }
+}
+
 export class ConcurrentPipelineTransitionError extends Error {
   constructor(id: string) {
     super(`Pipeline run ${id} changed concurrently`);

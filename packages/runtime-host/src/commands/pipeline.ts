@@ -28,8 +28,8 @@ function service(context: CommandContext): ManagePipelineRuns {
     context.transactions,
     context.jobOutbox,
     context.taskDependencies,
-    // M16.5 Runtime activation, first slice: consulted only for a new run's
-    // pack-configuration pin, never for pipeline/stage/role selection.
+    // M16.5 Runtime activation: a new run's pack-configuration pin, and the
+    // pack workflow a project with a nonempty pack selection may start from.
     context.projectConfiguration,
   );
 }
@@ -115,12 +115,23 @@ export async function handlePipelineCommand(
   if (command === "pipeline:start") {
     const parsed = parseArguments(
       args,
-      new Set(["project", "task", "pipeline", "actor", "actor-label"]),
+      new Set([
+        "project",
+        "task",
+        "pipeline",
+        "source",
+        "actor",
+        "actor-label",
+      ]),
     );
+    const source = parsed.options.get("source");
+    if (source !== undefined && source !== "manifest" && source !== "pack")
+      throw new CliUsageError("--source must be manifest or pack");
     const run = await manager.start({
       projectId: requiredOption(parsed, "project"),
       taskId: requiredOption(parsed, "task"),
       pipelineId: requiredOption(parsed, "pipeline"),
+      ...(source === undefined ? {} : { source }),
       principal: operatorPrincipal(context),
       ...labelOption(parsed),
     });
