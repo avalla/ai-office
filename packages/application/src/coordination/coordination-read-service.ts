@@ -200,11 +200,16 @@ function exposedProjection(
   ) as Record<CoordinationExposedCollection, CoordinationExposedItem[]>;
   // Requirements are ordered by key in the read model. A scrubbed or cut key
   // must not reveal where its stored value sorts, so they are ordered by the
-  // exposed key here; every other order uses class P values only.
+  // exposed key here. Milestones are ordered by creation time, which is not
+  // exposed, so they are ordered by id; every other order uses exposed class
+  // P values only.
   exposed.requirements.sort(
     (a, b) =>
       compareText(String(a.key), String(b.key)) ||
       compareText(String(a.requirementId), String(b.requirementId)),
+  );
+  exposed.milestones.sort((a, b) =>
+    compareText(String(a.milestoneId), String(b.milestoneId)),
   );
   return {
     snapshotId: `snapshot:sha256:${sha256({

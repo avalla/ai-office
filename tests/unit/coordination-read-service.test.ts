@@ -286,6 +286,29 @@ describe("coordination read service", () => {
     ).toEqual(["r2", "r1"]);
   });
 
+  test("milestones are ordered by id, not by their unexposed creation time", async () => {
+    const withTimes = (first: number, second: number) =>
+      service(() => ({
+        ...state(),
+        milestones: [
+          { id: "m1", title: "One", status: "active", createdAt: new Date(first) },
+          { id: "m2", title: "Two", status: "active", createdAt: new Date(second) },
+        ],
+      }));
+    // Swapping only the creation times changes nothing that is exposed, so
+    // the order, the snapshotId and the pageDigest must all match.
+    for (const operation of ["milestones", "status"]) {
+      const early = await withTimes(0, 1).execute({ projectId: "p", operation });
+      const late = await withTimes(1, 0).execute({ projectId: "p", operation });
+      expect(JSON.stringify(early)).toBe(JSON.stringify(late));
+    }
+    const page = (await withTimes(1, 0).execute({
+      projectId: "p",
+      operation: "milestones",
+    })) as CoordinationCollectionResponse;
+    expect(page.items.map((item) => item.milestoneId)).toEqual(["m1", "m2"]);
+  });
+
   test("pages and status served from the cached projection match a fresh service", async () => {
     let reads = 0;
     const counting = new CoordinationReadService(
