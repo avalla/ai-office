@@ -442,23 +442,12 @@ export class ManagePipelineRuns {
   }
 
   /**
-   * M16.5 Runtime activation, first slice. Reads only the `pin` field of
-   * the resolved configuration (digest, revisions, exact pack tuples) --
-   * never `workflows`, `roles`, `agents`, `policies` or any other derived
-   * view -- so this stays identity pinning and cannot influence which
-   * pipeline, stage or role the run above selects.
-   *
-   * Must be called from inside `this.transactions.run(...)` (see `start`):
-   * it uses `readPinWithinActiveTransaction`, which reads through the same
-   * open transaction instead of opening its own, so the pin reflects the
-   * binding/definition revisions exactly as of the run insertion that
-   * follows -- no commit boundary in between for a concurrent pack-binding
-   * or project-definition mutation to land in.
-   */
-  /**
    * The resolved configuration of a project that selected at least one pack,
    * read inside the active transaction; `undefined` for every other project,
-   * which keeps manifest selection and no pin.
+   * which keeps manifest selection and no pin. Must be called from inside
+   * `this.transactions.run(...)`: it reads through the open transaction, so
+   * the pin and the selected definition reflect the binding and definition
+   * revisions exactly as of the run insertion that follows.
    */
   private async readActiveConfiguration(
     projectId: string,

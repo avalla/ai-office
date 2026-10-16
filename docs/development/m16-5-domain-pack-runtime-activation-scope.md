@@ -36,7 +36,7 @@ document:
 | Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`                        | GP-10B-1, GP-10B-2, GP-25, activation | Execution parity: compare execution from a resolved configuration with legacy execution.                                                                            |
 | GP-14B — evidence and validator enforcement (moved to M11.6 on 2026-10-15) | GP-14A, M11.6 Phase B                 | Stale evidence and invalid validator output fail closed, with version-bound review.                                                                                 |
 | GP-10C-2 — development pack adoption                                       | GP-10C-1, activation                  | Previewed explicit adoption of the development pack and its catalog registration, preserving old bindings.                                                          |
-| GP-16 run gate (task `f8d75709`)                                                             | GP-16, activation                     | Bind registered providers at bootstrap; reject a missing required provider before runs.                                                                             |
+| GP-16 run gate (task `f8d75709`)                                                             | GP-16, activation, GP-24                   | Bind registered providers at bootstrap; reject a missing required provider before runs.                                                                             |
 
 ADR-0026 (`docs/adr/ADR-0026-core-domain-pack-boundary.md`) already describes
 the target for most of this: Runtime consumption of generic effective
@@ -64,8 +64,8 @@ At the user's request, this narrows "Runtime activation" to the smallest
 piece that is both coherent and independently approvable: satisfy only
 ADR-0026's run-pinning clause. It deliberately leaves pipeline/stage/role
 _selection_ on its current legacy path, and leaves `officeTaskKinds`, the
-GP-16 run gate, GP-24 and GP-14B for later slices (the decisions below, now resolved;
-they applied to those, not to this one).
+GP-16 run gate and GP-24 for later slices (GP-14B left M16.5 for M11.6; the
+decisions below are now resolved).
 
 **As-is, grounded in code (file:line):**
 
