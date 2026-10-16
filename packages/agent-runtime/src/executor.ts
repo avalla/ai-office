@@ -48,17 +48,21 @@ export interface PreparedAgentExecution {
   provenance: AgentExecutionProvenance;
   usesWorktree: boolean;
   execute(signal?: AbortSignal): Promise<AgentExecutionResult>;
+  /**
+   * Resolves true when this callback persisted the reviewing transition (the
+   * run's persistence token is then refreshed), false when it left the stored
+   * run untouched.
+   */
   accept?(
     run: AgentRun,
     result: AgentExecutionResult,
     acceptedAt: Date,
-  ): Promise<void>;
+  ): Promise<boolean>;
 }
 
 export class AgentExecutorNotConfiguredError extends Error {
   constructor(
-    message =
-      "No real worker selected. Select a worker or explicitly request simulation.",
+    message = "No real worker selected. Select a worker or explicitly request simulation.",
   ) {
     super(message);
     this.name = "AgentExecutorNotConfiguredError";
@@ -102,7 +106,9 @@ export class AuthoritativeWorkerAgentExecutor implements AgentExecutor {
       (() => {
         try {
           const provenance = parseAgentExecution(prepared.provenance);
-          return provenance.kind !== "worker" || provenance.inputHash === undefined;
+          return (
+            provenance.kind !== "worker" || provenance.inputHash === undefined
+          );
         } catch {
           return true;
         }
@@ -121,9 +127,7 @@ export class AuthoritativeWorkerAgentExecutor implements AgentExecutor {
 }
 
 export class SimulatedAgentExecutor implements AgentExecutor {
-  async prepare(
-    run: AgentRun,
-  ): Promise<PreparedAgentExecution | undefined> {
+  async prepare(run: AgentRun): Promise<PreparedAgentExecution | undefined> {
     return {
       provenance: {
         kind: "simulation",

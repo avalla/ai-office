@@ -27,6 +27,11 @@ export interface AgentRunRoleGuidance {
   text: string;
 }
 
+export interface AgentRunPersistenceToken {
+  status: AgentRunStatus;
+  updatedAt: Date;
+}
+
 export interface AgentRunProps {
   id: string;
   projectId: string;
@@ -48,6 +53,14 @@ export interface AgentRunProps {
   startedAt?: Date;
   completedAt?: Date;
   updatedAt: Date;
+  /**
+   * Optimistic-concurrency token: the status and updatedAt a repository last
+   * read or wrote for this run. It is absent on a run that was never read from
+   * or written to a repository; a repository refuses to update a stored run
+   * through an object whose token does not match the stored row. Its value is
+   * only meaningful once the enclosing transaction has committed.
+   */
+  persistenceToken?: AgentRunPersistenceToken;
 }
 
 export interface AgentActionIntent {
@@ -160,6 +173,14 @@ export class AgentRun {
   static restore(props: AgentRunProps): AgentRun {
     return new AgentRun({
       ...props,
+      ...(props.persistenceToken === undefined
+        ? {}
+        : {
+            persistenceToken: {
+              status: props.persistenceToken.status,
+              updatedAt: new Date(props.persistenceToken.updatedAt),
+            },
+          }),
       ...(props.execution === undefined
         ? {}
         : { execution: parseAgentExecution(props.execution) }),
@@ -173,6 +194,21 @@ export class AgentRun {
         ? {}
         : { modelRouting: parseAgentRunModelRouting(props.modelRouting) }),
     });
+  }
+
+  /**
+   * Records the current status and updatedAt as the state a repository has
+   * persisted. Repositories call it after their write; callers may only do so
+   * when something else has persisted this exact transition atomically.
+   */
+  markPersisted(): void {
+    this.props = {
+      ...this.props,
+      persistenceToken: {
+        status: this.props.status,
+        updatedAt: new Date(this.props.updatedAt),
+      },
+    };
   }
 
   transition(
@@ -228,6 +264,14 @@ export class AgentRun {
         ? {}
         : { completedAt: new Date(this.props.completedAt) }),
       updatedAt: new Date(this.props.updatedAt),
+      ...(this.props.persistenceToken === undefined
+        ? {}
+        : {
+            persistenceToken: {
+              status: this.props.persistenceToken.status,
+              updatedAt: new Date(this.props.persistenceToken.updatedAt),
+            },
+          }),
     };
   }
 }
