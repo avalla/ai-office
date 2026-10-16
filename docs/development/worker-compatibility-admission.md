@@ -199,8 +199,11 @@ each open a recertification: detect → report the unaudited subject and its
 nearest decision → run the offline suite → request a live authorization if the
 tier requires it → assemble the proposed decision → owner review → publish a new
 manifest generation → verify in shadow. The previous version keeps its decision
-until the owner revokes or supersedes it; the new version stays refused until its
-own decision exists. WC-06 supplies the detection and report, WC-02 the
+until the owner revokes or supersedes it; for a subject that needs an exact
+certification the new version stays refused until its own decision exists. The
+labelled Claude `legacy_policy` is the one exception: a newer Claude version
+that satisfies its predicate stays admitted for implicit dispatch until WC-07's
+proposed transition is decided. WC-06 supplies the detection and report, WC-02 the
 registration, WC-08 the operator documentation.
 
 ### Rollout without regression

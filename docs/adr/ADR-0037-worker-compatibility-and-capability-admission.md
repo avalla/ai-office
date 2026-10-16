@@ -227,9 +227,13 @@ unaffected.
   its predecessor lists is invalid. A revocation is in force when a committed
   manifest, that is the current manifest or one in its retained chain, lists it;
   a revocation object that no committed manifest lists, left by a writer that
-  stopped before publishing, is ignored. The retained chain makes reordering, rollback and silent removal
-  evident to the Runtime and to a later verifier; it does not prevent them for a
-  process that can write the directory and the Runtime state (decision 7).
+  stopped before publishing, is ignored. The retained chain and the recorded
+  generation make reordering, rollback and silent removal of a single part
+  detectable as an inconsistency while the recorded state is intact. They do not
+  prevent or detect a coordinated rewrite by a process that can write both the
+  directory and the Runtime state: restoring an older coherent registry together
+  with its matching state leaves no inconsistency. Detecting that needs an
+  independently protected anchor, which is M10 scope (decision 7).
 - **Loading.** At Runtime start, and on a reload that registration and
   revocation trigger and an operator may also request, the registry is read into
   an immutable snapshot after verifying every digest, every sufficiency check
@@ -306,7 +310,10 @@ Steps, in this order, each deterministic:
    under the observed mode, and the run's persisted parameters lie within that
    record's parameter scope. If none, refuse `model_mismatch`; this reproduces
    today's `supportsModel` refusals, which also cover an output-token cap and a
-   reasoning effort the worker does not execute. For the predicate the model
+   reasoning effort the worker does not execute. A subject blocked by an
+   invalid committed decision (decision 4, Loading) counts as named here, so it
+   is refused at step 4 with `registry_unreadable` rather than here. For the
+   predicate the model
    clause is its provider and model-name pattern and its parameter clause is
    decision 10's.
 3. Per-dispatch observations: a failed observation refuses with `probe_failed`
@@ -418,9 +425,11 @@ implies the other.
   does provide is that no Runtime-mediated path exists for a dispatched worker or
   for tooling the Runtime exposes, and that digests, the retained manifest chain,
   the recorded last accepted generation, re-verification and the recorded
-  approval authentication class make tampering and approvals evident to a later
-  verifier. Tamper-resistance against a hostile same-user process, signed
-  approvals and unforgeable harness provenance are M10 scope.
+  approval authentication class make inconsistent tampering, and the class of an
+  approval, detectable by a later verifier while the recorded state is intact.
+  Tamper-resistance and detection of a coordinated rewrite by a hostile
+  same-user process, signed approvals, an independently protected anchor and
+  unforgeable harness provenance are M10 scope.
 
 ### 8. Probes, live certification, monitoring and recertification
 
@@ -446,8 +455,12 @@ implies the other.
   authorization; assemble the proposed decision; owner review; approve or
   reject; publish a new manifest generation; verify admission in shadow before
   relying on it. The previous version's decision keeps admitting the previous
-  version until it is revoked or superseded by the owner; the new version stays
-  refused until its own decision exists.
+  version until it is revoked or superseded by the owner; for a subject that
+  needs an exact certification the new version stays refused until its own
+  decision exists. The labelled Claude `legacy_policy` of decision 10 is the one
+  exception: a newer Claude version that satisfies its predicate keeps being
+  admitted for implicit dispatch, so installing or detecting a release does not
+  tighten that admission; WC-07 proposes how that ends.
 
 ### 9. Baseline import and no regression
 
@@ -574,7 +587,11 @@ Provenance never contains registry paths, credentials or raw probe output.
 
 WC-02 may start only after this ADR is accepted. It must confirm the catalogue,
 record schemas and canonical digest, the manifest and generation protocol, the
-operator command shapes (register, revoke, reload, verify and state reset), and where the pure function, the registry port and the
+operator command shapes (register, revoke, reload, verify and state reset), that
+the blocked-subject rule of decision 4 applies to decisions that are in the
+current manifest's active set and not revoked (an invalid, superseded
+predecessor that only a retained older manifest lists must not block its valid
+successor), and where the pure function, the registry port and the
 snapshot live (types in `packages/domain`, port and admission in
 `packages/application`, the file registry in an infrastructure package, with the
 dependency direction unchanged).
