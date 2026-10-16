@@ -1999,9 +1999,8 @@ deliberately not delivered as written.
   scheduler or run gate. The Runtime does not consume the resolved
   configuration, runs do not pin it and the production pack catalog is empty,
   so a run cannot be refused by a pack contract today, and no run is. The run
-  gate belongs to the execution parity task
-  `a45ddb12-3159-4b60-9b8b-c26516720834`, together with GP-24, which persists
-  the pins a gate would check.
+  gate is M16.5 task `f8d75709` (owner decision 2026-10-15), after Runtime
+  activation and GP-24, which persists the pins a gate would check.
 - **Abstract operations.** An operation is a concrete connector operation
   name, not a provider-independent contract ID (decision 2). The registry
   namespaces every operation by its connector, so two providers cannot offer
@@ -2012,7 +2011,7 @@ deliberately not delivered as written.
 
 ### Limitations and non-goals
 
-- No scheduler gate, run gate or run pin (`a45ddb12`, GP-24).
+- No scheduler gate, run gate or run pin (`f8d75709`, GP-24).
 - No stage, workflow or policy semantics (GP-25) and no validator adapters
   (GP-14A declares them as data, GP-14B checks and runs them).
 - No pack-granted authority and no credentials. A binding creates no
@@ -5153,17 +5152,18 @@ GP-06 + GP-07 → GP-23 pack manifest U+0000 policy assessment (hardening)
 
 Planned for the successor milestone M16.5, outside the M16 exit (see
 [M16 exit re-scope](#m16-exit-re-scope-owner-decision-2026-10-06)). The
-edges in this block are provisional: they record the expected order, none is
-owner-approved, and each is set by the scope proposal of its item:
+edges in this block record the expected order. The owner ruled on 2026-10-15
+that GP-14B moved to M11.6 (its edge below is kept for reference only) and that
+the run gate is its own task `f8d75709` after activation and GP-24:
 
 ```text
 GP-10B-2 + GP-25 → Runtime activation: execution from the resolved configuration, persisted run pins
 Runtime activation → GP-24 block pack removal on active pack-pinned runs
 GP-10B-1 + GP-10B-2 + GP-25 → Runtime task a45ddb12 execution parity
 Runtime activation → Runtime task a45ddb12 execution parity
-GP-14A + M11.6 Phase B → GP-14B fail-closed evidence/validators, version-bound review
+GP-14A + M11.6 Phase B → GP-14B (now M11.6) fail-closed evidence/validators, version-bound review
 GP-10C-1 + Runtime activation → GP-10C-2 previewed adoption/registration
-GP-16 + Runtime activation → GP-16 run gate
+GP-16 + Runtime activation + GP-24 → GP-16 run gate (task f8d75709)
 ```
 
 GP-14A has no M11.6 dependency. The M11.6 Phase B artifact contract is a
