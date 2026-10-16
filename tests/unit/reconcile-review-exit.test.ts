@@ -36,6 +36,7 @@ import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-e
 import {
   ReconcileTasks,
   TaskReconciliationApprovalError,
+  TaskReconciliationStalePlanError,
 } from "@ai-office/application/commands/reconcile-tasks.ts";
 import type {
   AgentRunEvent,
@@ -88,8 +89,18 @@ class InMemoryProjects implements ProjectRepository {
 
 class InMemoryTasks implements TaskRepository {
   readonly values = new Map<TaskId, Task>();
+  /**
+   * Statuses a point read reports instead of the stored value. Plan
+   * derivation reads `listByProject` while apply-time revalidation reads
+   * `findById`, so an override here models a concurrent write that committed
+   * between the two.
+   */
+  readonly findByIdOverrides = new Map<TaskId, TaskStatus>();
   async findById(id: TaskId): Promise<Task | null> {
-    return this.values.get(id) ?? null;
+    const stored = this.values.get(id) ?? null;
+    const override = this.findByIdOverrides.get(id);
+    if (stored === null || override === undefined) return stored;
+    return TaskAggregate.restore({ ...stored.snapshot(), status: override });
   }
   async listByProject(projectId: ProjectId): Promise<Task[]> {
     // The same deterministic order both storage adapters guarantee.
@@ -699,6 +710,34 @@ describe("review-exit repairs", () => {
         actorId: "operator",
       }),
     ).rejects.toBeInstanceOf(TaskReconciliationApprovalError);
+    expect(context.taskStore.values.get("dependent")?.snapshot().status).toBe(
+      "running",
+    );
+    expect(context.events.events).toEqual([]);
+  });
+
+  test("refuses the batch when a prerequisite recovered between derivation and apply", async () => {
+    const context = await reviewExitFixture("blocked", "running");
+    const report = await context.reconcile.inspect("project-1");
+
+    // Plan derivation reads listByProject, which keeps seeing the recorded
+    // exit; only the apply-time findById re-read sees the recovery, exactly
+    // the READ COMMITTED race this guards.
+    context.taskStore.findByIdOverrides.set("upstream", "waiting_review");
+
+    const rejection = context.reconcile.repair({
+      projectId: "project-1",
+      approvedPlanHash: report.planHash!,
+      actorId: "operator",
+    });
+    await expect(rejection).rejects.toBeInstanceOf(
+      TaskReconciliationStalePlanError,
+    );
+    // Stale-plan refusal shares the approval-error contract: re-inspect and
+    // approve the plan that describes the current state.
+    await expect(rejection).rejects.toBeInstanceOf(
+      TaskReconciliationApprovalError,
+    );
     expect(context.taskStore.values.get("dependent")?.snapshot().status).toBe(
       "running",
     );

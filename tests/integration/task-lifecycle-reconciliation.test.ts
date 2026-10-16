@@ -26,7 +26,7 @@ import { SqliteTaskRequirementRepository } from "@ai-office/storage-sqlite/repos
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Role } from "@ai-office/domain/agent/role.ts";
 import type { Agent } from "@ai-office/domain/agent/agent.ts";
-import { Task } from "@ai-office/domain/task/task.ts";
+import { Task, type TaskStatus } from "@ai-office/domain/task/task.ts";
 import { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import { PipelineRun } from "@ai-office/domain/pipeline/pipeline-run.ts";
 import type { OfficeManifest } from "@ai-office/domain/office/office-manifest.ts";
@@ -51,6 +51,7 @@ import { ListTaskBoard } from "@ai-office/application/queries/list-task-board.ts
 import {
   ReconcileTasks,
   TaskReconciliationApprovalError,
+  TaskReconciliationStalePlanError,
   type TaskReconciliationReport,
 } from "@ai-office/application/commands/reconcile-tasks.ts";
 import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
@@ -142,6 +143,36 @@ class SequenceIds implements IdGenerator {
   generate(): string {
     this.next += 1;
     return `generated-${this.next}`;
+  }
+}
+
+/**
+ * Task reads that report a recovered status for chosen ids on point reads.
+ *
+ * Plan derivation reads `listByProject` while apply-time revalidation reads
+ * `findById`, so the divergence models a concurrent recovery committed between
+ * the two reads — without touching the stored rows the rest of the fixture
+ * (lifecycle included) still sees.
+ */
+class RecoveredOnReadTasks implements TaskRepository {
+  constructor(
+    private readonly inner: TaskRepository,
+    private readonly recovered: ReadonlyMap<string, TaskStatus>,
+  ) {}
+
+  async findById(id: string): Promise<Task | null> {
+    const stored = await this.inner.findById(id);
+    const status = this.recovered.get(id);
+    if (stored === null || status === undefined) return stored;
+    return Task.restore({ ...stored.snapshot(), status });
+  }
+
+  async listByProject(projectId: string): Promise<Task[]> {
+    return this.inner.listByProject(projectId);
+  }
+
+  async save(task: Task): Promise<void> {
+    return this.inner.save(task);
   }
 }
 
@@ -2126,6 +2157,99 @@ describe("task reconciliation", () => {
       const after = await context.reconcile.inspect("project-1");
       expect(after.issues).toEqual([]);
       expect(after.planHash).toBeNull();
+    });
+
+    test("rolls back the whole batch when a prerequisite recovers mid-repair", async () => {
+      const context = await fixture();
+      await seedProject(context, "project-1");
+      for (const id of [
+        "upstream-x",
+        "upstream-y",
+        "dependent-a",
+        "dependent-b",
+      ])
+        await seedTask(context, "project-1", id);
+      const task = (taskId: string) => ({
+        projectId: "project-1",
+        taskId,
+        actorId: "operator",
+      });
+      for (const [dependent, upstream] of [
+        ["dependent-a", "upstream-x"],
+        ["dependent-b", "upstream-y"],
+      ] as const) {
+        await context.dependencyCommands.link({
+          projectId: "project-1",
+          taskId: dependent,
+          dependsOnTaskId: upstream,
+          actorId: "operator",
+        });
+        await context.lifecycle.start(task(upstream));
+        await context.lifecycle.submitForReview(task(upstream));
+        await context.lifecycle.start(task(dependent));
+      }
+      await context.lifecycle.fail({
+        ...task("upstream-x"),
+        reason: "Review rejected the change",
+      });
+      await context.lifecycle.block({
+        ...task("upstream-y"),
+        reason: "Review found a blocker",
+      });
+
+      // Reconciliation reads through the wrapper: derivation (listByProject)
+      // keeps seeing the recorded exit, while the apply-time revalidation
+      // (findById) sees upstream-y back in review. The lifecycle keeps the
+      // real repository — it never re-reads prerequisites for block/cancel,
+      // which is exactly the gap the revalidation closes.
+      const reads = new RecoveredOnReadTasks(
+        context.tasks,
+        new Map([["upstream-y", "waiting_review"]]),
+      );
+      const reconcile = new ReconcileTasks(
+        context.projects,
+        reads,
+        context.pipelines,
+        context.runtime,
+        context.links,
+        context.lifecycle,
+        context.clock,
+        context.transactions,
+        context.governance,
+        context.dependencies,
+      );
+
+      const report = await reconcile.inspect("project-1");
+      expect(
+        report.issues
+          .filter((issue) => issue.repairable)
+          .map((issue) => [issue.taskId, issue.repairOperation]),
+      ).toEqual([
+        ["dependent-a", "cancel"],
+        ["dependent-b", "block"],
+      ]);
+      const eventsBefore = auditEvents(context, "task.status_changed").length;
+
+      await expect(
+        reconcile.repair({
+          projectId: "project-1",
+          approvedPlanHash: report.planHash!,
+          actorId: "local-operator",
+        }),
+      ).rejects.toBeInstanceOf(TaskReconciliationStalePlanError);
+
+      // One plan is one transaction: dependent-a's cancel, already applied
+      // inside the batch, rolled back with dependent-b's refusal, audit
+      // record included.
+      expect(
+        (await context.tasks.findById("dependent-a"))?.snapshot().status,
+      ).toBe("running");
+      expect(
+        (await context.tasks.findById("dependent-b"))?.snapshot().status,
+      ).toBe("running");
+      expect(auditEvents(context, "task.status_changed")).toHaveLength(
+        eventsBefore,
+      );
     });
   });
 });

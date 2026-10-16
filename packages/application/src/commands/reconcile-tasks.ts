@@ -159,6 +159,19 @@ export class TaskReconciliationApprovalError extends Error {
   }
 }
 
+/**
+ * The plan matched at derivation, but a fact it was derived from changed
+ * before the mutation landed. Same recovery as a mismatched approval:
+ * re-inspect and approve the plan that describes the current state.
+ */
+export class TaskReconciliationStalePlanError extends TaskReconciliationApprovalError {
+  constructor(taskId: string) {
+    super();
+    this.name = "TaskReconciliationStalePlanError";
+    this.message = `Reconciliation plan went stale: prerequisite ${taskId} no longer holds the recorded review exit; re-run task:reconcile and approve the new plan`;
+  }
+}
+
 const activeRunStatuses = new Set([
   "queued",
   "preparing",
@@ -645,7 +658,11 @@ export class ReconcileTasks {
    *
    * The plan is re-derived *inside* that transaction and the approval is
    * checked against it, because the hash must describe the state actually being
-   * mutated rather than a reading taken before the transaction opened.
+   * mutated rather than a reading taken before the transaction opened. A
+   * review-exit repair is additionally revalidated at apply time: the reads
+   * the plan was derived from take no locks, so a prerequisite that recovered
+   * between derivation and this write refuses the whole batch instead of
+   * being overwritten from stale evidence.
    *
    * Every mutation still goes through the lifecycle service, so the domain
    * guard and the audit event are the same ones a manual command would use;
@@ -682,6 +699,21 @@ export class ReconcileTasks {
         operation: TaskLifecycleOperation;
       }[] = [];
       for (const { issue, operation } of repairs) {
+        // A review-exit repair is valid only while the exits it answers
+        // still hold. READ COMMITTED does not lock the reads the plan was
+        // derived from, so a prerequisite may recover between derivation and
+        // this write; this re-read is a fresh statement and sees the latest
+        // committed state. A recovered exit refuses the whole batch — the
+        // operator re-inspects — rather than mutating from stale evidence.
+        if (issue.reviewExits !== undefined)
+          for (const exit of issue.reviewExits) {
+            const prerequisite = await this.tasks.findById(exit.taskId);
+            if (
+              prerequisite === null ||
+              prerequisite.snapshot().status !== exit.to
+            )
+              throw new TaskReconciliationStalePlanError(exit.taskId);
+          }
         // `block` mandates a reason and `cancel` accepts one; a review-exit
         // repair names the exits it answers, a pipeline repair names its
         // evidence.

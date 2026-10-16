@@ -9,7 +9,10 @@ import { RecordAuditEvent } from "@ai-office/application/commands/record-audit-e
 import {
   ReconcileTasks,
   TaskReconciliationApprovalError,
+  TaskReconciliationStalePlanError,
 } from "@ai-office/application/commands/reconcile-tasks.ts";
+import type { TaskRepository } from "@ai-office/application/ports/task-repository.port.ts";
+import { PostgresClient } from "@ai-office/storage-postgres/database/postgres-client.ts";
 import { PostgresTransactionRunner } from "@ai-office/storage-postgres/database/postgres-transaction-runner.ts";
 import { PostgresAgentRuntimeRepository } from "@ai-office/storage-postgres/repositories/postgres-agent-runtime.repository.ts";
 import { PostgresAuditEventRepository } from "@ai-office/storage-postgres/repositories/postgres-audit-event.repository.ts";
@@ -39,6 +42,49 @@ const connectionString = process.env.AI_OFFICE_TEST_POSTGRES_URL;
 const epoch = new Date("2026-10-15T00:00:00.000Z");
 const clock: Clock = { now: () => new Date(epoch) };
 const ids: IdGenerator = { generate: () => randomUUID() };
+
+/**
+ * Task reads that commit a prerequisite recovery on a second connection just
+ * after the repair transaction re-derives its plan.
+ *
+ * Under READ COMMITTED neither the derivation reads nor the plan-hash check
+ * take row locks, so the recovery's UPDATE commits while the repair
+ * transaction is open; the apply-time revalidation read then sees it. The raw
+ * UPDATE bypassing domain transitions follows the run-tick e2e precedent —
+ * it models a concurrent writer, not application behavior.
+ */
+class RecoveringTaskReads implements TaskRepository {
+  private inspections = 0;
+
+  constructor(
+    private readonly inner: TaskRepository,
+    private readonly prerequisiteId: string,
+    private readonly recovery: PostgresClient,
+  ) {}
+
+  async findById(id: string): Promise<Task | null> {
+    return this.inner.findById(id);
+  }
+
+  async listByProject(projectId: string): Promise<Task[]> {
+    const tasks = await this.inner.listByProject(projectId);
+    this.inspections += 1;
+    // The first listByProject is the operator's inspection; the second is
+    // repair()'s in-transaction re-derivation. Recovering after it keeps the
+    // derived plan matching the approved hash, so only the apply-time
+    // revalidation can still refuse.
+    if (this.inspections === 2)
+      await this.recovery.query(
+        "UPDATE core.task SET status = 'running', updated_at = $2 WHERE id = $1",
+        [this.prerequisiteId, new Date(epoch.getTime() + 1)],
+      );
+    return tasks;
+  }
+
+  async save(task: Task): Promise<void> {
+    return this.inner.save(task);
+  }
+}
 
 describe.skipIf(connectionString === undefined)(
   "task:reconcile PostgreSQL end-to-end",
@@ -74,6 +120,10 @@ describe.skipIf(connectionString === undefined)(
         db.client,
         tenantId,
       );
+      const pipelines = new PostgresPipelineRunRepository(db.client, tenantId);
+      const runtime = new PostgresAgentRuntimeRepository(db.client, tenantId);
+      const links = new PostgresTaskRequirementRepository(db.client, tenantId);
+      const governance = new PostgresGovernanceRepository(db.client, tenantId);
       const transactions = new PostgresTransactionRunner(db.client);
       const audit = new RecordAuditEvent(
         new PostgresAuditEventRepository(db.client, tenantId),
@@ -92,13 +142,13 @@ describe.skipIf(connectionString === undefined)(
       const reconcile = new ReconcileTasks(
         projects,
         tasks,
-        new PostgresPipelineRunRepository(db.client, tenantId),
-        new PostgresAgentRuntimeRepository(db.client, tenantId),
-        new PostgresTaskRequirementRepository(db.client, tenantId),
+        pipelines,
+        runtime,
+        links,
         lifecycle,
         clock,
         transactions,
-        new PostgresGovernanceRepository(db.client, tenantId),
+        governance,
         dependencies,
       );
       await projects.save(
@@ -132,6 +182,14 @@ describe.skipIf(connectionString === undefined)(
         dependentId,
         lifecycle,
         reconcile,
+        projects,
+        tasks,
+        pipelines,
+        runtime,
+        links,
+        governance,
+        dependencies,
+        transactions,
       };
     }
 
@@ -321,6 +379,83 @@ describe.skipIf(connectionString === undefined)(
           reason: `reconciled: prerequisite ${f.prerequisiteId} exited review to blocked`,
         },
       });
+    });
+
+    test("refuses the repair when the prerequisite recovers between plan derivation and apply", async () => {
+      const f = await seedProject();
+      const input = (taskId: string) => ({
+        projectId: f.projectId,
+        taskId,
+        actorId: "operator",
+      });
+      await f.lifecycle.start(input(f.prerequisiteId));
+      await f.lifecycle.submitForReview(input(f.prerequisiteId));
+      await f.lifecycle.start(input(f.dependentId));
+      await f.lifecycle.block({
+        ...input(f.prerequisiteId),
+        reason: "Review found a blocker",
+      });
+
+      // Reconciliation reads through the decorator; the lifecycle keeps the
+      // original repository — which is the gap under test, since block/cancel
+      // never re-read prerequisites.
+      const recovery = new PostgresClient(db.connectionString);
+      const reads = new RecoveringTaskReads(
+        f.tasks,
+        f.prerequisiteId,
+        recovery,
+      );
+      const reconcile = new ReconcileTasks(
+        f.projects,
+        reads,
+        f.pipelines,
+        f.runtime,
+        f.links,
+        f.lifecycle,
+        clock,
+        f.transactions,
+        f.governance,
+        f.dependencies,
+      );
+      try {
+        const report = await reconcile.inspect(f.projectId);
+        expect(report.planHash).not.toBeNull();
+        const auditBefore = await auditEvents(f.projectId);
+
+        // The recovery commits on the second connection just after the repair
+        // transaction re-derived the matching plan; the apply-time
+        // revalidation read then sees it and refuses the whole batch.
+        await expect(
+          reconcile.repair({
+            projectId: f.projectId,
+            approvedPlanHash: report.planHash!,
+            actorId: "operator",
+          }),
+        ).rejects.toBeInstanceOf(TaskReconciliationStalePlanError);
+
+        // The refusal wrote nothing: no status change, no audit record.
+        expect(await taskStatus(f.dependentId)).toBe("running");
+        expect(await auditEvents(f.projectId)).toEqual(auditBefore);
+
+        // Re-inspection describes the recovered state: the repairless
+        // warning, no plan to approve.
+        const after = await f.reconcile.inspect(f.projectId);
+        const issue = after.issues.find(
+          (value) =>
+            value.finding === "blocking_prerequisite_incomplete" &&
+            value.taskId === f.dependentId,
+        );
+        expect(issue).toMatchObject({
+          severity: "warning",
+          repairable: false,
+          repairOperation: null,
+          suggestedCommand: null,
+        });
+        expect(issue?.reviewExits).toBeUndefined();
+        expect(after.planHash).toBeNull();
+      } finally {
+        await recovery.close();
+      }
     });
   },
 );

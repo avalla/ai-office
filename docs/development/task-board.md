@@ -369,6 +369,19 @@ applied. When a terminal pipeline and a review exit both point at the same
 task, the plan carries the dependency repair and the pipeline finding is
 reported as covered by it.
 
+**Review-exit repairs are revalidated at apply time.** Immediately before each
+review-exit `block`/`cancel`, the prerequisites named in `reviewExits` are
+re-read inside the plan's transaction; if any named exit no longer holds — the
+prerequisite recovered or moved on — the whole batch is refused with
+`TaskReconciliationStalePlanError` and rolls back, and the operator re-inspects
+and approves the new plan. Under PostgreSQL READ COMMITTED this re-read sees
+the latest committed state, shrinking the stale-repair race to the window
+between that final read and the status write itself; the task port takes no
+row locks, so a recovery committing inside that last window is still
+overwritten by the repair. The pre-existing terminal-pipeline repair has the
+same characteristic. Today's production topology — the single-writer SQLite
+runtime host — serializes all writers, so the race cannot occur there at all.
+
 Everything else is reported and refused:
 
 ```text
