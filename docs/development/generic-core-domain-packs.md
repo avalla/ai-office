@@ -3817,7 +3817,8 @@ Criteria 10 and 11 belong to the second pull request.
 
 - Runtime enforcement from a pack policy, and any change to the pipeline
   engine, runs, pins, approvals, guards, grants or controlled-action
-  authorization (`a45ddb12`).
+  authorization. Runtime activation (`aa10a111`) owns pack-policy consumption;
+  `a45ddb12` only proves execution parity.
 - Project-authored policies, a `default`/`mandatory` level and any override
   operation on a policy.
 - Capability contracts and provider binding (GP-16), and any relation between
@@ -3830,9 +3831,12 @@ Criteria 10 and 11 belong to the second pull request.
 
 ### Known limitations
 
-Nothing is enforced from a policy yet, so none of these has an effect today.
-Each is an input for Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834` and
-must be decided before a pack policy is enforced.
+At GP-25 delivery nothing was enforced from a policy. The limitations below
+were recorded as inputs to the later Runtime consumer. Under the 2026-10-15
+owner rulings, activation (`aa10a111`) owns pack-policy consumption and must
+account for these limitations in its scoped slices; `a45ddb12` owns only
+execution parity, including the representability gap noted below. The
+current activation delivery is recorded in the M16.5 addenda.
 
 - Two selection changes can replace a policy without a policy-level audit
   record. The `project:pack:apply` guard compares the two closures of one
@@ -4152,7 +4156,8 @@ fit the data.
 - No contract, schema or archive change, and no Runtime consumption.
 - No enforcement, approval, separation or admitted-operation behavior from a
   pack policy, and no change to the pipeline engine, runs, pins, approvals,
-  guards, grants or controlled-action authorization (`a45ddb12`).
+  guards, grants or controlled-action authorization. Pack-policy consumption
+  belongs to activation (`aa10a111`), with execution parity in `a45ddb12`.
 - No knowledge entry (typed by GP-15, declared in the pack by GP-10C-1), no
   evidence or professional-decision clause (GP-14, GP-17, GP-18) and no
   capability or provider vocabulary (GP-16).
@@ -5157,7 +5162,8 @@ the run gate is its own task `f8d75709` after activation and GP-24:
 
 ```text
 GP-10B-2 + GP-25 → Runtime activation (aa10a111): execution from the resolved configuration, persisted run pins
-GP-10B-1 + GP-10B-2 + GP-25 + Runtime activation → Runtime task a45ddb12 execution parity
+GP-10B-1 + GP-10B-2 + GP-25 → Runtime task a45ddb12 execution parity
+Runtime activation → Runtime task a45ddb12 execution parity
 GP-10C-1 + Runtime activation + execution parity → GP-10C-2 previewed adoption/registration
 Runtime activation + GP-10C-2 → GP-24 block pack removal on active pack-pinned runs
 GP-16 + Runtime activation + GP-24 → GP-16 run gate (task f8d75709)
