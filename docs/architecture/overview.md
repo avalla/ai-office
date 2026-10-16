@@ -139,7 +139,8 @@ pack contract can express (expressible-subset parity). GP-10B-1 adds the four
 development workflows to that manifest as data. They are compared with the
 legacy default pipelines over the same kind of subset; the
 development pack is not in the Runtime's catalog or adopted by any project, so
-no run starts from its workflows until its adoption is delivered. The GP-10B-2 contract adds descriptive vocabulary to manifest schema 1
+nothing is scheduled from one of its workflows until its adoption is delivered.
+The GP-10B-2 contract adds descriptive vocabulary to manifest schema 1
 without a schema or core contract version change: a workflow stage may carry
 a `title`, an `objective` and ordered `checks`, a role ordered
 `responsibilities`, a prompt its `text`, and a workflow `additionalTaskTypes`
