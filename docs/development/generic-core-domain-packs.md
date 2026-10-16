@@ -5121,9 +5121,11 @@ a core lifecycle from a pack is M16.5 (see
    expressible-subset parity and removes nothing (see the GP-10B-2 PR 2 section).
 5. **Opt-in adoption:** preview and audit an explicit development-pack binding;
    preserve project edits and in-flight pinned runs. Support old snapshots.
-   This stage is not part of the M16 exit. Adoption is planned together with
-   Runtime execution from the resolved configuration and run pinning, in
-   M16.5, as task GP-10C-2; its dependencies are set by its scope proposal.
+   This stage is not part of the M16 exit. M16.5 task GP-10C-2 owns adoption,
+   after Runtime activation and execution parity. Runtime activation owns
+   execution from resolved configuration and run pinning (the pin shipped in
+   PR #168); GP-10C-2 consumes those capabilities rather than delivering them.
+   The accepted M16.5 scope proposal sets this order.
    M16 delivers only the declarative content an adoption would bind
    (GP-10C-1).
 6. **New projects:** decide separately whether explicit pack selection is the
