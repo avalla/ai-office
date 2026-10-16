@@ -1395,6 +1395,12 @@ integration.
   handling consistent with the M6 connector boundary;
 - correlation between external GitHub identities/events and internal pipeline,
   stage, artifact, action, and audit identities;
+- software-delivery provenance correlating internal Tasks and AgentRuns with
+  repository commits, Pull Requests, exact PR versions/head SHAs, and merge
+  evidence through generic Artifact/Evidence contracts. GitHub-specific identity
+  stays in the software/GitHub adapter boundary; each relationship preserves
+  how it was established, and external delivery state never becomes Task
+  lifecycle authority;
 - GitHub Actions evaluated as an optional execution backend, check producer, or
   integration point, never as AI Office's primary orchestrator.
 
@@ -1405,9 +1411,12 @@ does not decide who develops, who reviews, when QA or security is required, or
 whether merge policy is satisfied.
 
 The implementation assessment must decide the exact boundary between local Git
-worktree/commit operations, remote Git transport, and GitHub API operations.
-That split must preserve the current rule that agents do not receive direct
-repository, shell, credential, or connector authority.
+worktree/commit production and capture, remote Git transport, and GitHub API
+operations, including Pull Request correlation. That split must preserve the
+current rule that agents do not receive direct repository, shell, credential,
+or connector authority. The provenance contract may be designed before M11.6
+Artifact Runtime exists, but production persistence must reuse that generic
+foundation rather than create a parallel software-only authority.
 
 Depends on: M6 connector and controlled-action foundations and M11 pipeline
 orchestration. M12 workers may consume the connector through those boundaries;
@@ -1472,7 +1481,10 @@ A software-delivery pipeline may coordinate assessment, plan approval,
 branch/worktree preparation, implementation, test, push, pull request, structured
 review, bounded fix loops, QA, conditional security review, human approval, and
 merge. The engine owns this lifecycle; GitHub only reflects and performs the
-external repository operations it is authorized to expose.
+external repository operations it is authorized to expose. The pipeline consumes
+M13 delivery provenance from Task and AgentRun through commits and exact Pull
+Request versions to merge and review evidence; it does not reconstruct
+authoritative relationships from branch names or commit messages.
 
 Agent reviews should be able to return machine-interpretable artifacts in
 addition to human-readable text. A provisional shape may contain `decision` and
@@ -1501,6 +1513,9 @@ Exit direction:
   text as authorization;
 - separation-of-duties violations fail closed;
 - merge is impossible until all effective policy gates are satisfied;
+- every software delivery is traceable from Task and AgentRun through the exact
+  commits and Pull Request version reviewed and merged, without treating GitHub
+  state as Task lifecycle authority;
 - changing the selected worker runtime does not change workflow semantics.
 
 ## M15 — Domain-neutral professional work and vertical profiles
