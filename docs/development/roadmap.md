@@ -2506,7 +2506,7 @@ change with the page window, a per-page digest, and the read-only
 read API over that read model: `CoordinationReadService` with the operations
 `status`, `milestones`, `tasks`, `requirements`, `dependencies`, `blockers` and
 `runnable`, the exposure registry and explicit P/T mappers (credential scrubber,
-256-character truncation, 256 KiB response cap), the `coordination:read` CLI
+256-character text and 100-entry list cuts, 256 KiB response cap), the `coordination:read` CLI
 command and the optional read-only coordination listener: a second Unix socket,
 disabled by default and enabled per project and data class in
 `<runtime home>/coordination-listener.json`, serving only GET
