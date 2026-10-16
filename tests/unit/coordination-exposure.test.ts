@@ -274,6 +274,13 @@ describe("credential scrubber", () => {
         ["sec", "ret='two words here\nNext line stays"].join(""),
       ),
     ).toBe(`${redactionMarker}\nNext line stays`);
+    // A trailing backslash at the end of the line or text is redacted too.
+    expect(
+      scrubCredentials(["pass", 'word: "correct horse battery\\'].join("")),
+    ).toBe(redactionMarker);
+    expect(
+      scrubCredentials(["tok", 'en: "longsecretvalue\\\nkept'].join("")),
+    ).toBe(`${redactionMarker}\nkept`);
     // A short closed quote is not a credential value by this rule.
     expect(scrubCredentials('pwd="short" plan')).toBe('pwd="short" plan');
   });

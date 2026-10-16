@@ -339,9 +339,13 @@ export class CoordinationReadService {
       section: page.section,
       page: page.page,
     };
-    const items = exposed.collections[collection].slice(
-      page.page.offset,
-      page.page.offset + page.items.length,
+    // Detached copies: a caller changing a returned item or its lists must
+    // not change the cached projection that later reads are served from.
+    const items = structuredClone(
+      exposed.collections[collection].slice(
+        page.page.offset,
+        page.page.offset + page.items.length,
+      ),
     );
     return {
       ...header,

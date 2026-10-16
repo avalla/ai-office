@@ -310,6 +310,23 @@ describe("coordination read service", () => {
     );
   });
 
+  test("changing a returned item cannot change later responses", async () => {
+    const reads = service();
+    const before = JSON.stringify(
+      await reads.execute({ projectId: "p", operation: "tasks" }),
+    );
+    const first = (await reads.execute({
+      projectId: "p",
+      operation: "tasks",
+    })) as CoordinationCollectionResponse;
+    first.items[0]!.title = "tampered";
+    (first.items[0]!.requirementIds as string[]).push("tampered");
+    first.items.pop();
+    expect(
+      JSON.stringify(await reads.execute({ projectId: "p", operation: "tasks" })),
+    ).toBe(before);
+  });
+
   test("a caller cannot receive a class that is not allowed", async () => {
     const reads = service();
     const onlyP = {
