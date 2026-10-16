@@ -2496,7 +2496,14 @@ Status: planned 2026-10-15; the milestone, requirements CB-R01–CB-R14 and the
 tasks CB-01–CB-12 (CB-11 split into CB-11A–CB-11F) are registered in the
 Runtime. CB-01 delivered the architecture, protocol and trust model as
 [ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md)
-(proposed); nothing is implemented. Numbered M23 because M21 and M22 (whose roadmap sections are not yet on main) were
+(accepted 2026-10-15). CB-02 delivers the planning read model: a
+deterministic, minimized (classes P and T only), paginated projection of
+milestones, tasks, requirements and dependencies, with derived runnable,
+active, blocker, open-decision and inconsistency collections kept apart, a
+`snapshot:sha256:` identity over the complete scoped projection that does not
+change with the page window, a per-page digest, and the read-only
+`planning:snapshot` CLI command. The coordination listener, exposure registry
+and MCP server are not implemented yet. Numbered M23 because M21 and M22 (whose roadmap sections are not yet on main) were
 already registered.
 
 Goal: let users and external AI assistants (ChatGPT first) inspect the planning

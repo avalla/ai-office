@@ -99,7 +99,7 @@ dependency by itself.
 (id, title if `T`, recorded and operational status, priority, milestone ids,
 prerequisite ids, `ready`, `waiting`), `requirements` (id, key, status,
 milestone id, task ids), `blockers`, `runnable`, `inconsistencies` (typed
-codes), and `derived` (analysis kept apart from authoritative fields). The identifier is the digest of the complete, scoped, canonical projection computed before pagination, without volatile fields: `generatedAt`, the page window (`page`) and the identifier itself are excluded and live in the envelope metadata, so changing `offset` or `limit` over unchanged state yields the same identifier; each page also carries `pageDigest`, the digest of that page's content. The same planning state
+codes), and `derived` (analysis kept apart from authoritative fields). The identifier is the digest of the complete, scoped, canonical projection computed before pagination, without volatile fields: `generatedAt`, the page window (`page`) and the identifier itself are excluded and live in the envelope metadata, so changing `offset` or `limit` over unchanged state yields the same identifier; each page also carries `pageDigest`, the digest of the canonical page response excluding `pageDigest` itself (metadata such as `total`, `truncated` and `counts` included, as well as the items), so no field of a page can change under an unchanged digest. The same planning state
 yields the same canonical projection and the same identifier; there is no
 revision counter, the digest is the revision.
 

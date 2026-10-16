@@ -100,6 +100,7 @@ Commands:
   task:link-requirement --project <id> --task <id> --requirement <id>
   task:unlink-requirement --project <id> --task <id> --requirement <id>
   task:reconcile --project <id> [--json]  # read-only; add --fix --approve <planHash> to repair
+  planning:snapshot --project <id> [--milestone <id>] [--collection <milestones|tasks|requirements|dependencies|runnable|active|blockers|decisions|inconsistencies>] [--offset <n>] [--limit <1-200>] [--classes <P|P,T>]  # read-only JSON page of the minimized planning read model; snapshotId is stable across pages
   agent:sync --project <id> [--directory <path>]
   agent:list --project <id>
   agent:models --project <id> [--json]  # read-only; policy, profile and model each agent would be scheduled with
