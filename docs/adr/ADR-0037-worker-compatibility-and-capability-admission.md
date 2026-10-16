@@ -223,16 +223,23 @@ unaffected.
 - **Rollback and tampering.** The Runtime records the last accepted generation
   and manifest digest in its own state and refuses a pointer that names a lower
   generation or a manifest whose chain does not contain the recorded one.
-  Revocation objects are honored whether or not the current manifest lists
-  them. The retained chain makes reordering, rollback and silent removal
+  Manifests are cumulative for revocations: a manifest that omits a revocation
+  its predecessor lists is invalid. A revocation is in force when a committed
+  manifest, that is the current manifest or one in its retained chain, lists it;
+  a revocation object that no committed manifest lists, left by a writer that
+  stopped before publishing, is ignored. The retained chain makes reordering, rollback and silent removal
   evident to the Runtime and to a later verifier; it does not prevent them for a
   process that can write the directory and the Runtime state (decision 7).
 - **Loading.** At Runtime start, and on a reload that registration and
   revocation trigger and an operator may also request, the registry is read into
   an immutable snapshot after verifying every digest, every sufficiency check
-  and every approval class. An invalid object is excluded and reported. A valid
-  snapshot stays in force until a verified newer one replaces it, except that a
-  failed reload after a revocation was published refuses the revoked subjects.
+  and every approval class. An invalid evidence bundle or decision listed by a
+  committed manifest is excluded and reported, which admits less. A committed
+  manifest or revocation that is missing, unreadable or invalid, at start or on
+  reload, cannot be skipped, because skipping it could readmit a revoked
+  subject: the snapshot is refused with `registry_unreadable`. A valid snapshot
+  stays in force until a verified newer one replaces it, except that a failed
+  reload after a revocation was published refuses the revoked subjects.
   The last accepted generation and manifest digest are kept in a state file in
   the Runtime home, outside the registry directory. An absent registry is an
   empty registry only while that state records no accepted generation. Once a
@@ -299,10 +306,14 @@ Steps, in this order, each deterministic:
    decision 10's.
 3. Per-dispatch observations: a failed observation refuses with `probe_failed`
    or `credential_not_admitted`.
-4. Match the subject. An exact decision for the observed subject, active or
-   revoked, takes precedence; a revoked exact match refuses with `audit_revoked`
-   and never falls back to the `legacy_policy` predicate. With no exact match,
-   the predicate of decision 10 applies where it holds and its implicit-dispatch condition is met. If neither: refuse
+4. Match the subject. Among the exact decisions for the observed subject, the
+   active one (there is at most one) is used. If none is active but a revoked
+   exact decision exists, refuse with `audit_revoked`, never falling back to the
+   `legacy_policy` predicate; a decision revoked as `superseded` therefore does
+   not block its active successor. With no exact decision at all, the predicate
+   of decision 10 applies where it holds and its implicit-dispatch condition is
+   met and the predicate record itself is not revoked; a revoked predicate
+   refuses with `audit_revoked`. If none of this applies: refuse
    `no_matching_audit` and report the _nearest_ record by number of differing
    dimensions, with the differing dimensions named (`version_mismatch`,
    `model_mismatch`, `configuration_mismatch`, `protocol_mismatch`,
@@ -313,8 +324,9 @@ Steps, in this order, each deterministic:
    parameter scope of _that_ record (step 2 only established that some record
    names the model); otherwise refuse `model_mismatch`. Parameters are not part
    of the subject, so a scope never extends to another subject's runs.
-5. Expiry: where the matched decision opted in to expiry and has expired, refuse
-   with `decision_expired`.
+5. Validity window: a matched decision before its `notBefore` is refused with
+   `decision_not_yet_valid`; one that opted in to expiry and has expired is
+   refused with `decision_expired`. `notBefore` is always enforced.
 6. Drift. For each required guarantee, every metadata dependency is compared
    with the audited projection digest. A mismatch refuses
    (`metadata_drift_invalidates_guarantee`) for new runs of that subject. A
@@ -330,15 +342,17 @@ Steps, in this order, each deterministic:
 7. Each required guarantee must be satisfied by the asserted state
    (`guarantee_unverified`, `guarantee_unsupported`).
 
-Expiry is opt-in per decision and is evaluated only in step 5. It can only add a
-refusal; it never admits what any other step refuses, and it never overrides a
+Expiry is opt-in per decision and is evaluated only in step 5 (the lower bound
+`notBefore` is always enforced there). Neither can admit anything: each can only
+add a refusal; it never admits what any other step refuses, and it never overrides a
 drift or revocation result. A time-based condition therefore cannot prevail over
 a security check in either direction.
 
 Reasons are a closed set: `registry_unreadable`, `platform_unsupported`,
 `mode_unsupported`, `probe_failed`, `credential_not_admitted`,
 `no_matching_audit`, the six `*_mismatch` values, `audit_revoked`,
-`decision_expired`, `metadata_drift_invalidates_guarantee`,
+`decision_not_yet_valid`, `decision_expired`,
+`metadata_drift_invalidates_guarantee`,
 `guarantee_unverified` and `guarantee_unsupported`. A refusal carries its
 reasons, the nearest record and bounded, secret-free detail.
 
@@ -359,8 +373,9 @@ implies the other.
   cannot see. It implies the named guarantee set `bounded_profile@1` (the T1
   guarantees that ADR-0017 and the agent runtime guide describe: no host
   modification, no shell or process execution, no native sub-agent execution, no
-  managed-workspace login, credential unchanged, MCP and plugin surface closed),
-  plus `single_routed_model_recorded`.
+  managed-workspace login, credential unchanged, MCP and plugin surface closed,
+  and the T2 guarantee `single_routed_model_recorded`). The implicit requirement
+  set of the mode is exactly this named set and nothing else.
 - `governed_delegation`: child executions the Runtime creates, identifies,
   routes, budgets, fences and can cancel (M21). It has its own guarantee
   namespace (child identity and parentage, model routing per child, aggregated
