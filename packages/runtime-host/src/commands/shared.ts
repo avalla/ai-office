@@ -63,7 +63,8 @@ export interface CommandContext extends ProjectStorage {
    * One resolver built from this same composition's ports (GP-06). Built
    * here, not in `commands/pipeline.ts`, so a scheduling file never holds
    * `definitions`/`packBindings` directly (GP-07's scheduling boundary);
-   * `ManagePipelineRuns` reads only its `.pin` field for run identity.
+   * `ManagePipelineRuns` uses it inside the start transaction for selected-pack
+   * workflow/policy selection and the immutable configuration pin.
    */
   projectConfiguration: ReadProjectConfiguration;
 }

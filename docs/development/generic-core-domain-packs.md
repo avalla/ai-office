@@ -5691,16 +5691,17 @@ the GP-15 pull request); read the GP-16 and GP-25 rows as follows.
 **M16.5 contents, updated after the 2026-10-15 owner rulings.** These are
 outside M16. The order and prerequisites below reflect those rulings; each
 task retains its own scope and acceptance criteria. The activation pin-only
-slice is delivered; the remaining items are not.
+slice and selected-pack workflow selection are delivered; the remaining
+items are not.
 
-| Item                                                       | Depends on                              | Scope                                                                                                                                                                                         |
-| ---------------------------------------------------------- | --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Runtime activation (task `aa10a111`, requirement M165-ACT) | GP-10B-2, GP-25                         | Consume the resolved configuration. The configuration digest and exact source pack tuples are already pinned by PR #168; pipeline, stage and role selection is the remaining activation work. |
-| Execution parity (task `a45ddb12`)                         | GP-10B-1, GP-10B-2, GP-25, activation   | Compare execution from a resolved configuration with legacy execution.                                                                                                                        |
-| GP-10C-2 — development pack adoption                       | GP-10C-1, activation; after parity      | Preview explicit adoption and catalog registration, preserving old bindings.                                                                                                                  |
-| GP-24 — block pack removal on active pack-pinned runs      | Runtime activation; after GP-10C-2      | Use activation's persisted pins to block removal. Its own scope determines whether workflow changes are also blocked.                                                                         |
-| GP-16 run gate (task `f8d75709`)                           | GP-16, activation, GP-24                | Bind registered providers at bootstrap and reject a missing required provider before runs. Neither parity nor GP-24 owns this gate.                                                           |
-| GP-12 follow-ups (`57a1833f`, `e003843f`; M165-GP12-FU)    | After the run gate in the owner's order | Each follow-up retains its own task scope.                                                                                                                                                    |
+| Item                                                       | Depends on                              | Scope                                                                                                                                                                                           |
+| ---------------------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime activation (task `aa10a111`, requirement M165-ACT) | GP-10B-2, GP-25                         | Consume the resolved configuration. PR #168 delivered configuration pins; the 2026-10-15 slice delivered selected-pack workflow, stage and role selection. It creates no Runtime role or agent. |
+| Execution parity (task `a45ddb12`)                         | GP-10B-1, GP-10B-2, GP-25, activation   | Compare execution from a resolved configuration with legacy execution.                                                                                                                          |
+| GP-10C-2 — development pack adoption                       | GP-10C-1, activation; after parity      | Preview explicit adoption and catalog registration, preserving old bindings.                                                                                                                    |
+| GP-24 — block pack removal on active pack-pinned runs      | Runtime activation; after GP-10C-2      | Use activation's persisted pins to block removal. Its own scope determines whether workflow changes are also blocked.                                                                           |
+| GP-16 run gate (task `f8d75709`)                           | GP-16, activation, GP-24                | Bind registered providers at bootstrap and reject a missing required provider before runs. Neither parity nor GP-24 owns this gate.                                                             |
+| GP-12 follow-ups (`57a1833f`, `e003843f`; M165-GP12-FU)    | After the run gate in the owner's order | Each follow-up retains its own task scope.                                                                                                                                                      |
 
 GP-14B moved to M11.6 on 2026-10-15 (requirement GP-14B-M116, task
 `d991b5be`). It depends on GP-14A and M11.6 Phase B's artifact, evidence and
@@ -5750,8 +5751,9 @@ still pass.
 M16 delivered Domain Packs as a definition, customization and upgrade
 layer with reference fixtures. At the M16 exit, runs were created from the
 OfficeManifest without pack pins. PR #168 subsequently added configuration
-pins for nonempty selections; selection remains manifest-driven at this
-stage, and production pack registration and adoption remain GP-10C-2 work.
+pins for nonempty selections. M16.5's later activation slice also selects
+resolved workflows for projects with selected packs; production pack
+registration and adoption remain GP-10C-2 work.
 Runtime execution that consumes
 the generic resolved configuration leaves the M16 exit and is expected to
 become the exit of M16.5. An accepted ADR alone does not satisfy the M16
@@ -5888,8 +5890,9 @@ would still be required before any of this pack content could execute.
 [`m16-5-domain-pack-runtime-activation-scope.md`](m16-5-domain-pack-runtime-activation-scope.md)
 is implemented, at the user's explicit request. The owner rulings of
 2026-10-15 settle the remaining task order and architecture; each task
-retains its own scope. Pipeline selection, GP-24 and the GP-16 run gate
-remain later slices. Opening `officeTaskKinds` shipped separately, and
+retains its own scope. Selected-pack pipeline selection was subsequently
+delivered by the 2026-10-15 activation slice below; GP-24 and the GP-16 run
+gate remain future tasks. Opening `officeTaskKinds` shipped separately, and
 GP-14B moved to M11.6.
 
 **Decision.** `ManagePipelineRuns.start` additionally reads
@@ -5974,3 +5977,52 @@ instead), no pipeline/stage/role selection from a pack.
 `tests/integration/office-pipeline-sqlite-contracts.test.ts`,
 `tests/integration/office-pipeline-postgres-contracts.test.ts`, and the
 migration-list updates across the affected upgrade tests.
+
+## Runtime activation — pack workflow selection (2026-10-15 addendum)
+
+**Status.** Implemented for task `aa10a111`, under the owner decisions of
+2026-10-15 recorded in the
+[M16.5 scope proposal](m16-5-domain-pack-runtime-activation-scope.md#owner-rulings-2026-10-15).
+ADR-0026 is implemented as accepted; no ADR change was needed.
+
+**Behavior.** A project whose pack selection is nonempty may start a run from a
+resolved pack workflow: `pipeline:start --pipeline <local id>` matches the local
+ID of a workflow in the resolved configuration, and the run freezes the mapped
+definition in the same short transaction that reads the configuration pin.
+Projects with an empty selection are unchanged: they resolve only manifest
+pipelines and record no pin. The run still pins the latest manifest revision, so
+the manifest remains required.
+
+**Mapping.** `packWorkflowPipeline` is a pure function. Stage ID, role, title,
+objective and checks come from the resolved workflow. Approval, independent
+approval, separation of agents and stage operations (as stage `capabilities`)
+come only from the workflow's active pack policy (GP-25); a stage the policy
+does not name is ungoverned. A workflow with an active enforced policy maps to
+an enforced pipeline. Any other workflow maps to guidance, which `pipeline:start`
+refuses, as it does a guidance manifest pipeline. Two active policies on one
+workflow, or two workflows with one local ID, are refused rather than merged.
+
+**Source.** An ID that is both a manifest pipeline and a pack workflow is
+refused with `PipelineDefinitionAmbiguousError`; `--source manifest|pack`
+chooses. `--source pack` never falls back to the manifest. The `pipeline.started`
+audit event carries `definitionSource: "pack"` for a pack run and is unchanged
+for a manifest run.
+
+**Roles.** Activation materializes no role or agent. Every stage role, by its
+local ID, must already exist as a Runtime role of the project, or the start is
+refused with `PipelineRoleUnavailableError` and nothing is written. Agent
+assignment, approval and stage guards are the existing ones.
+
+**Known limitations.** Roles match Runtime roles by local ID only, so pack-owned
+and project-owned roles that share a local ID are satisfied by one Runtime role;
+no authority is gained, since grants and stage guards are unchanged. The
+manifest revision and the manifest pipeline are read before the run-start
+transaction, as for every run, so a concurrent `office:apply` can race the
+ambiguity check. Workflows of a dependency pack of a selected pack are resolved
+but never startable, with or without `--source pack`: only a workflow of a selected pack (or a project-owned one) starts, and a project override of a dependency-only pack's workflow does not make it startable either. A project with no selected pack refuses an unknown or guidance
+manifest pipeline before any transaction opens, as it always did.
+
+**Not delivered here.** Execution parity (`a45ddb12`), GP-10C-2 adoption and
+catalog registration, GP-24, the GP-16 run gate and the two GP-12 follow-ups
+remain separate M16.5 tasks; the production catalog is still empty, so no
+production project selects a pack yet.

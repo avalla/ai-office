@@ -25,6 +25,16 @@ export class ReadProjectConfiguration {
     },
   ) {}
 
+  /**
+   * Whether the project's pack selection is nonempty, read outside any
+   * transaction. Advisory only: a caller may use it to keep a cheap, lock-free
+   * pre-check for projects with no pack, and must decide again under its own
+   * transaction.
+   */
+  async selectsPacks(projectId: string): Promise<boolean> {
+    return (await this.ports.bindings.get(projectId)).packs.length > 0;
+  }
+
   async read(projectId: string): Promise<ResolvedProjectConfiguration> {
     const revisions = await this.ports.transactions.run(() =>
       this.readRevisions(projectId),
@@ -33,10 +43,11 @@ export class ReadProjectConfiguration {
   }
 
   /**
-   * The staleness-checked configuration pin, for a caller that already holds
-   * an active transaction opened by the same `TransactionRunner` as
-   * `this.ports.transactions` (for example a service pinning a run inside its
-   * own write transaction). Opening a second transaction here would throw
+   * The staleness-checked resolved configuration, including its pin and
+   * workflow/policy views, for a caller that already holds an active transaction
+   * opened by the same `TransactionRunner` as `this.ports.transactions`.
+   * Run start uses this to freeze its definition and pin together.
+   * Opening a second transaction here would throw
    * `TransactionAlreadyActiveError`, and reading outside that transaction
    * would reopen the race the staleness check exists to close.
    *

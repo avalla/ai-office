@@ -3,9 +3,14 @@
 This guide describes the implemented **definition layer**. A Domain Pack is an
 immutable, versioned manifest of defaults. A project explicitly selects exact
 pack tuples and owns its definitions and overrides. Resolution produces a
-read-only effective configuration; the Runtime still executes its legacy
-office, roles, agents and pipelines. Pack-driven execution and persisted pack
-run pins belong to M16.5.
+read-only effective configuration. M16.5 activation lets a project with a
+nonempty selection start a resolved workflow from a selected pack, freezing
+its definition and configuration pin together. Its active pack policy must
+enforce the workflow, and every referenced role must already exist in the
+Runtime; no role or agent is created automatically. Projects without packs
+keep manifest pipelines. IDs shared by a manifest pipeline and a pack
+workflow require `--source manifest|pack`; `--source pack` never falls back
+to the manifest. Production adoption remains separate GP-10C-2 work.
 
 There is no pack marketplace, remote registry, `pack:install` command or
 `pack:validate` command. The production Runtime currently composes an empty

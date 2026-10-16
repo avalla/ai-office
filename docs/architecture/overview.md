@@ -75,9 +75,11 @@ composition with `pack_definition_collision` before they commit, and GP-06
 rejects it when it reaches storage otherwise, for example through a restore
 onto a host where the packs are not installed. Portable
 archive format 6 carries only this authoritative semantic state. Runtime
-scheduling still uses the existing office, role, agent and pipeline state.
+scheduling still uses the existing office, role and agent state; a pipeline run
+is the one place a resolved configuration is consumed (see below).
 GP-06 resolves the exact packs and project definitions into a derived,
-digest-pinned, read-only effective configuration; nothing is scheduled from it.
+digest-pinned, read-only effective configuration. Only `pipeline:start`
+reads it, for a project with a selected pack.
 GP-08 reconciles a selection change with the project overrides that name the
 changed packs: a read-only report, then a digest-approved apply that writes the
 selection and the retargeted overrides in one audited transaction and blocks
@@ -98,8 +100,18 @@ GP-13 gives pack workflows the same stable identity
 workflow with a complete envelope (name, task type and ordered stages that
 name roles of the same pack), extend its description or disable it; stage
 order is preserved as given. A workflow override is carried by portable
-archive format 9. The pipeline engine, pipeline runs, pins, approvals and
-guards are neither read nor written, and runs do not pin pack configuration.
+archive format 9. M16.5 Runtime activation lets `pipeline:start` select a pack workflow of a
+project that selected a pack: the workflow's stages and roles come from the
+resolved configuration, and approval, independent approval, separation of
+agents and stage operations come only from its single active enforced policy
+(GP-25). A workflow of a pack that is only a dependency of a selected pack is
+never startable, with or without `--source pack`, a workflow without an active enforced policy is
+refused as guidance, and every stage role must already exist in the Runtime:
+activation materializes no role or agent. A run of a project with a selected
+pack, from a pack workflow or a manifest pipeline, pins the resolved
+configuration (migration 0051). A project without a selected pack keeps
+manifest selection and no pin. Pack removal is not yet blocked by an active
+pinned run.
 GP-16 lets a pack capability declare the connector operations it needs, by
 name and mode, as required or optional. The Runtime host exposes the
 descriptors of its composed connector registry through the read-only
@@ -125,9 +137,10 @@ it, the Runtime's catalog does not hold it and nothing is scheduled from it;
 tests compare it with the legacy development defaults over the subset the
 pack contract can express (expressible-subset parity). GP-10B-1 adds the four
 development workflows to that manifest as data. They are compared with the
-legacy default pipelines over the same kind of subset; no pipeline, run, pin,
-approval or guard is created from a pack workflow and nothing is scheduled from
-one. The GP-10B-2 contract adds descriptive vocabulary to manifest schema 1
+legacy default pipelines over the same kind of subset; the
+development pack is not in the Runtime's catalog or adopted by any project, so
+nothing is scheduled from one of its workflows until its adoption is delivered.
+The GP-10B-2 contract adds descriptive vocabulary to manifest schema 1
 without a schema or core contract version change: a workflow stage may carry
 a `title`, an `objective` and ordered `checks`, a role ordered
 `responsibilities`, a prompt its `text`, and a workflow `additionalTaskTypes`
@@ -135,9 +148,11 @@ beside its `taskType`. Project-owned definitions and `replace` overrides
 carry the same fields, `extend` does not, and the resolved configuration
 reports them. They are stored in the existing JSON payload columns with no
 migration and are carried by portable archive format 10; format 9 rejects
-them. They are declarative text and references: the Runtime reads none of
-them, generates no instruction file from them and sends no pack prompt to a
-provider.
+them. M16.5 activation copies workflow and stage titles, objectives, checks
+and task-type routes into the frozen pipeline definition when a selected-pack
+workflow starts. Role responsibilities and prompt text remain declarative;
+activation generates no instruction file from them and sends no pack prompt
+to a provider.
 Development pack `0.3.0` (the second GP-10B-2 pull request) carries them as
 data: role responsibilities, stage titles, objectives and checks, the
 `maintenance` route of `delivery`, the role guidance prompts that each agent
@@ -152,9 +167,12 @@ admitted operation names per stage. The declaration is pack-owned and
 mandatory: a project has no operation on a policy, a workflow replacement
 must keep the governed stages and their separation order, and the policy of
 an existing workflow changes only through the reviewed upgrade plan. The
-derived view lists the policies; they are declarations only, the pipeline
-engine, runs, approvals, guards, grants and controlled-action authorization
-do not read them, and a policy without a target workflow still fails closed.
+derived view lists the policies. M16.5 activation maps the selected workflow's
+active pack policy into its frozen enforcement, approval, agent-separation
+and stage-operation requirements; the existing pipeline engine enforces them.
+A workflow without an active enforced policy cannot start. These requirements
+grant no capability and do not bypass controlled-action authorization.
+A policy without a target workflow still fails closed.
 Development pack `0.4.0` (the second GP-25 pull request) declares the legacy
 governance defaults as three such policies: `delivery` enforced, and an
 approval on `delivery/review`, `bugfix/review` and `release/verification`,

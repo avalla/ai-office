@@ -60,7 +60,9 @@ Commands:
   office:pipeline --project <id> --task-kind <kind>
     kind must match a task kind the project's own office manifest declares a
     default pipeline for; shipped defaults are feature|bugfix|maintenance|research|release
-  pipeline:start --project <id> --task <id> --pipeline <id> [--actor-label <label>]
+  pipeline:start --project <id> --task <id> --pipeline <id> [--source <manifest|pack>] [--actor-label <label>]
+    a project with a selected pack may start a pack workflow by its local ID; --source is
+    required only when the ID is both a manifest pipeline and a pack workflow
   pipeline:status --project <id> [--run <id>]
   pipeline:assign --project <id> --run <id> --agent <id> [--actor-label <label>]
   pipeline:transition --project <id> [--run <id>] --event <complete|approve|reject|cancel> [--agent-run <id>] [--actor-label <label>] [--rationale <text>]

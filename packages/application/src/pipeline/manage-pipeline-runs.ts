@@ -1,9 +1,16 @@
 import {
   PipelineRun,
   type PipelineOverrideRecord,
-  type PipelineRunConfigurationPin,
 } from "@ai-office/domain/pipeline/pipeline-run.ts";
+import type { OfficePipeline } from "@ai-office/domain/office/office-manifest.ts";
 import type { ReadProjectConfiguration } from "../domain-pack/read-project-configuration.ts";
+import type { ResolvedProjectConfiguration } from "../domain-pack/resolve-project-configuration.ts";
+import {
+  findPackWorkflow,
+  isDependencyOnlyWorkflow,
+  localDefinitionId,
+  packWorkflowPipeline,
+} from "./pack-pipeline-definition.ts";
 import {
   OfficeManifestNotFoundError,
   OfficePipelineNotFoundError,
@@ -31,7 +38,10 @@ import {
   ActivePipelineRunExistsError,
   ConcurrentPipelineTransitionError,
   PipelineActorUnauthorizedError,
+  PipelineDefinitionAmbiguousError,
   PipelineDefinitionNotEnforcedError,
+  PackPipelineUnsupportedError,
+  PipelineRoleUnavailableError,
   PipelineRunNotFoundError,
 } from "../pipeline-errors.ts";
 
@@ -59,10 +69,11 @@ export class ManagePipelineRuns {
     private readonly outbox?: JobOutboxRepository,
     private readonly taskDependencies?: TaskDependencyRepository,
     /**
-     * M16.5 Runtime activation, first slice: when present, a new run's
-     * configuration pin is read from here. Which pipeline/stage/role runs
-     * stays manifest-driven; this collaborator is consulted only for the
-     * pin, never for selection (see `resolveConfigurationPin`).
+     * M16.5 Runtime activation: when present, a new run's configuration pin
+     * is read from here, and a project with a nonempty pack selection may
+     * start a run from a resolved pack workflow instead of a manifest
+     * pipeline (see `selectDefinition`). A project with an empty selection
+     * is untouched.
      */
     private readonly configuration?: ReadProjectConfiguration,
   ) {}
@@ -71,6 +82,8 @@ export class ManagePipelineRuns {
     projectId: string;
     taskId: string;
     pipelineId: string;
+    /** Chooses the source when a pipeline ID names both; otherwise optional. */
+    source?: "manifest" | "pack";
     principal: OperatorPrincipal;
     actorLabel?: string;
   }): Promise<PipelineRun> {
@@ -93,15 +106,26 @@ export class ManagePipelineRuns {
     const revision = await this.manifests.findLatest(input.projectId);
     if (revision === null)
       throw new OfficeManifestNotFoundError(input.projectId);
-    const definition = revision.manifest.pipelines.find(
+    const manifestDefinition = revision.manifest.pipelines.find(
       (value) => value.id === input.pipelineId,
     );
-    if (definition === undefined)
-      throw new OfficePipelineNotFoundError(input.projectId, input.pipelineId);
-    if (definition.enforcement !== "enforced")
-      throw new PipelineDefinitionNotEnforcedError(definition.id);
-    const stageRunIds = definition.stages.map(() => this.ids.generate());
-    const runId = this.ids.generate();
+    // A project with no selected pack has only manifest pipelines: refuse an
+    // unknown or guidance pipeline before any write lock or configuration
+    // read, in the order this command always had. The decision is made again
+    // inside the transaction, where the selection is authoritative.
+    if (
+      input.source !== "pack" &&
+      (this.configuration === undefined ||
+        !(await this.configuration.selectsPacks(input.projectId)))
+    ) {
+      if (manifestDefinition === undefined)
+        throw new OfficePipelineNotFoundError(
+          input.projectId,
+          input.pipelineId,
+        );
+      if (manifestDefinition.enforcement !== "enforced")
+        throw new PipelineDefinitionNotEnforcedError(manifestDefinition.id);
+    }
     const run = await this.transactions.run(async () => {
       if (this.taskDependencies !== undefined)
         await assertTaskPrerequisitesComplete(
@@ -110,14 +134,24 @@ export class ManagePipelineRuns {
           this.tasks,
           this.taskDependencies,
         );
-      // Resolved inside this same authoritative transaction so the pin
-      // reflects the binding/definition revisions as of the run insertion
-      // below, not a possibly-stale snapshot read before the transaction
-      // opened (an immutable historical pin cannot be revalidated later).
+      // Resolved inside this same authoritative transaction so the pin and
+      // the selected definition reflect the binding/definition revisions as
+      // of the run insertion below, not a possibly-stale snapshot read before
+      // the transaction opened (an immutable historical pin cannot be
+      // revalidated later).
       const now = this.clock.now();
-      const configurationPin = await this.resolveConfigurationPin(
-        input.projectId,
-      );
+      const configuration = await this.readActiveConfiguration(input.projectId);
+      const selected = await this.selectDefinition({
+        projectId: input.projectId,
+        pipelineId: input.pipelineId,
+        manifestDefinition,
+        configuration,
+        ...(input.source === undefined ? {} : { source: input.source }),
+      });
+      const definition = selected.definition;
+      const stageRunIds = definition.stages.map(() => this.ids.generate());
+      const runId = this.ids.generate();
+      const configurationPin = configuration?.pin;
       const run = PipelineRun.create({
         id: runId,
         projectId: input.projectId,
@@ -137,6 +171,12 @@ export class ManagePipelineRuns {
         taskId: input.taskId,
         pipelineId: definition.id,
         manifestRevision: revision.revision,
+        ...(selected.source === "pack"
+          ? {
+              definitionSource: "pack",
+              workflowId: selected.workflowId,
+            }
+          : {}),
         ...(input.actorLabel === undefined
           ? {}
           : { actorLabel: input.actorLabel }),
@@ -434,27 +474,94 @@ export class ManagePipelineRuns {
   }
 
   /**
-   * M16.5 Runtime activation, first slice. Reads only the `pin` field of
-   * the resolved configuration (digest, revisions, exact pack tuples) --
-   * never `workflows`, `roles`, `agents`, `policies` or any other derived
-   * view -- so this stays identity pinning and cannot influence which
-   * pipeline, stage or role the run above selects.
-   *
-   * Must be called from inside `this.transactions.run(...)` (see `start`):
-   * it uses `readPinWithinActiveTransaction`, which reads through the same
-   * open transaction instead of opening its own, so the pin reflects the
-   * binding/definition revisions exactly as of the run insertion that
-   * follows -- no commit boundary in between for a concurrent pack-binding
-   * or project-definition mutation to land in.
+   * The resolved configuration of a project that selected at least one pack,
+   * read inside the active transaction; `undefined` for every other project,
+   * which keeps manifest selection and no pin. Must be called from inside
+   * `this.transactions.run(...)`: it reads through the open transaction, so
+   * the pin and the selected definition reflect the binding and definition
+   * revisions exactly as of the run insertion that follows.
    */
-  private async resolveConfigurationPin(
+  private async readActiveConfiguration(
     projectId: string,
-  ): Promise<PipelineRunConfigurationPin | undefined> {
+  ): Promise<ResolvedProjectConfiguration | undefined> {
     if (this.configuration === undefined) return undefined;
     const configuration =
       await this.configuration.readPinWithinActiveTransaction(projectId);
-    if (configuration.selectedPacks.length === 0) return undefined;
-    return configuration.pin;
+    return configuration.selectedPacks.length === 0 ? undefined : configuration;
+  }
+
+  /**
+   * Which definition a new run freezes. A pack workflow is eligible only for
+   * a project with a nonempty pack selection. An ID that names both a
+   * manifest pipeline and a pack workflow needs an explicit `source`. A workflow
+   * of a dependency pack the project did not select is never startable. A pack
+   * workflow fails closed unless every stage role already exists in the
+   * Runtime: activation materializes no role or agent. A guidance definition,
+   * from either source, is refused here, before any role is demanded.
+   */
+  private async selectDefinition(input: {
+    projectId: string;
+    pipelineId: string;
+    manifestDefinition: OfficePipeline | undefined;
+    configuration: ResolvedProjectConfiguration | undefined;
+    source?: "manifest" | "pack";
+  }): Promise<
+    | { definition: OfficePipeline; source: "manifest" }
+    | { definition: OfficePipeline; source: "pack"; workflowId: string }
+  > {
+    const configuration = input.configuration;
+    const workflow =
+      configuration === undefined || input.source === "manifest"
+        ? undefined
+        : findPackWorkflow(configuration, input.pipelineId);
+    const manifestDefinition =
+      input.source === "pack" ? undefined : input.manifestDefinition;
+    if (workflow !== undefined && manifestDefinition !== undefined)
+      throw new PipelineDefinitionAmbiguousError(input.pipelineId);
+    if (configuration === undefined || workflow === undefined) {
+      if (
+        manifestDefinition === undefined &&
+        configuration !== undefined &&
+        input.source !== "manifest" &&
+        isDependencyOnlyWorkflow(configuration, input.pipelineId)
+      )
+        throw new PackPipelineUnsupportedError(
+          input.pipelineId,
+          "it belongs to a dependency pack the project did not select",
+        );
+      if (manifestDefinition === undefined)
+        throw new OfficePipelineNotFoundError(
+          input.projectId,
+          input.pipelineId,
+        );
+      if (manifestDefinition.enforcement !== "enforced")
+        throw new PipelineDefinitionNotEnforcedError(manifestDefinition.id);
+      return { definition: manifestDefinition, source: "manifest" };
+    }
+    const definition = packWorkflowPipeline(configuration, workflow);
+    // A guidance workflow is refused as such before any role is demanded.
+    if (definition.enforcement !== "enforced")
+      throw new PipelineDefinitionNotEnforcedError(definition.id);
+    if (definition.stages.length === 0)
+      throw new PackPipelineUnsupportedError(definition.id, "it has no stages");
+    const known = new Set(
+      (await this.agents.listRoles(input.projectId)).map(
+        (role) => role.snapshot().key,
+      ),
+    );
+    const missing = [
+      ...new Set(
+        definition.stages
+          .map((stage) => stage.roleId)
+          .filter((roleId) => !known.has(roleId)),
+      ),
+    ];
+    if (missing.length > 0)
+      throw new PipelineRoleUnavailableError(
+        localDefinitionId(workflow.workflowId),
+        missing,
+      );
+    return { definition, source: "pack", workflowId: workflow.workflowId };
   }
 
   private requireOperator(actor: OperatorPrincipal): void {

@@ -2196,8 +2196,9 @@ actions.
 After M16, Domain Packs are a definition, customization and upgrade layer
 with reference fixtures. M16 itself did not execute from packs or pin their
 configuration. PR #168 subsequently added configuration pins for nonempty
-selections; pipeline selection remains manifest-driven, and production pack
-registration and adoption remain GP-10C-2 work. An
+selections; M16.5 activation now also selects resolved workflows for projects
+with selected packs. Production pack registration and adoption remain
+GP-10C-2 work. An
 accepted ADR alone does not satisfy the exit. Runtime execution that consumes
 the resolved configuration leaves the M16 exit and is expected to become the
 exit of M16.5.
@@ -2209,8 +2210,9 @@ governance, ProjectStorage, AgentKnowledgeStore, model routing, or worker queue.
 
 ## M16.5 — Domain Pack Runtime Activation
 
-Status: active scope, owner decisions of 2026-10-15 recorded; the pin-only
-first slice is implemented (PR #168, migration 0051) and the rest is not. The
+Status: active scope, owner decisions of 2026-10-15 recorded; the run pin
+(PR #168, migration 0051) and pack workflow selection for projects with a
+selected pack (2026-10-15) are implemented and the rest is not. The
 milestone was created by the owner's 2026-10-06 re-scope of the M16 exit; its
 name and number are provisional.
 
@@ -2235,8 +2237,10 @@ still scoped by its own record before work:
 - Runtime activation, Runtime task `aa10a111-9658-4f11-b99f-7074fe522588`
   (requirement M165-ACT): Runtime execution consumes the generic resolved
   configuration, and a new run persists its configuration digest and exact
-  source pack tuples with its existing pins. The pin is delivered; selection
-  from the pack is not.
+  source pack tuples with its existing pins. The pin and, for a project with a
+  selected pack, selection of the run's pipeline from a resolved pack workflow
+  are delivered (the latter on 2026-10-15); no role or agent is
+  materialized.
 - Execution parity, Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`:
   compare execution from a resolved configuration with legacy execution.
 - GP-10C-2: previewed explicit adoption of the development pack and its
@@ -2266,10 +2270,9 @@ A [scope-proposal draft](m16-5-domain-pack-runtime-activation-scope.md) lays
 out the planned-contents table above alongside the owner decisions it
 depends on (the GP-16 run-gate split, GP-14B's M11.6 Phase B dependency, the
 ADR-0026 status and the extent of activation), all since ruled on. It records
-no acceptance criteria; the one delivered exception is the pin-only first
-slice, in which a pipeline run records the resolved pack-configuration
-identity it started under (migration 0051, no change to pipeline, stage or
-role selection), was explicitly requested and is implemented. The remaining
+no acceptance criteria; two slices are delivered: the configuration pin
+(migration 0051), and pack workflow selection by `pipeline:start` for a project
+with a selected pack, which materializes no role or agent. The remaining
 items follow the recorded rulings and require their own task scope and
 acceptance criteria. Opening the closed `officeTaskKinds` list, once listed
 there as an open decision, was resolved separately as a standalone change that
