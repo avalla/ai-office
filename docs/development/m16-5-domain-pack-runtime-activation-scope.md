@@ -172,7 +172,7 @@ _selection_ also comes from a pack, which this slice does not change.
   GP-24. The execution-parity task and GP-24 do not own it.
 - Decision 3 (GP-14B): deferred to M11.6, whose Phase B it depends on. It is
   requirement GP-14B-M116 and leaves M16.5.
-- Decision 4 (ADR-0026): sufficient as the target; implement as accepted. A
+- Decision 4 (ADR-0026): sufficient as the target; implement it as accepted, task by task. A
   conflict found during implementation stops work for an owner decision.
 - Decision 5 and the extent of activation: selection of pipeline, stages and
   roles comes from the resolved configuration only for projects that adopted
@@ -214,7 +214,7 @@ selection, task-kind routing and policy enforcement untouched.
    before scoping GP-14B, or ships Runtime activation first without
    enforcement and defers GP-14B again.
 4. **ADR-0026 status. — Resolved 2026-10-15: ADR-0026 is sufficient and is
-   implemented as accepted.** Several of its clauses are accepted-but-unmet. **Needed
+   the target to implement as accepted.** Several of its clauses are accepted-but-unmet. **Needed
    decision:** whether M16.5 treats ADR-0026 as already settling the target
    architecture (just needing implementation), or whether activation design
    work surfaces changes that need an ADR amendment/addendum before
