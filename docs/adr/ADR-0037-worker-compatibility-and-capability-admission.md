@@ -202,8 +202,12 @@ require a stronger class once one exists. This ADR does not claim more.
 ### 4. The registry
 
 A host-local registry, because the facts describe the clients installed on one
-host and the Runtime has no host-level database; PostgreSQL authority is
-unaffected.
+host. The Runtime home does hold a host-level database, `global.sqlite`, but it
+is the store of reusable memory with its own schema, lifecycle and migrations;
+putting admission facts there would couple a safety-critical, tamper-evident,
+rollback-checked record to a memory store and make a memory migration or reset
+able to change what is admitted. The registry therefore stays separate content
+addressed files, and PostgreSQL authority is unaffected.
 
 - **Layout.** Objects (evidence bundles, decisions, revocations and manifests)
   are files named by digest under an owner-only directory in the Runtime home,
@@ -261,9 +265,15 @@ unaffected.
   whether or not a manifest still lists it as active. A committed
   manifest or revocation that is missing, unreadable or invalid, at start or on
   reload, cannot be skipped, because skipping it could readmit a revoked
-  subject: the snapshot is refused with `registry_unreadable`. A valid snapshot
-  stays in force until a verified newer one replaces it, except that a failed
-  reload after a revocation was published refuses the revoked subjects.
+  subject: the snapshot is refused with `registry_unreadable`. A reload that
+  finds such a committed object, or cannot verify the scope of the revocations
+  it must apply, fails closed: the refusal takes precedence and the previously
+  loaded snapshot is not kept in force. A previously loaded valid snapshot
+  stays in force only when the reload failed before reading any newer committed
+  manifest or revocation (for example the pointer could not be read at all and
+  the state file records no newer generation), because then no revocation can
+  have been bypassed; it is replaced as soon as a verified newer one is
+  available.
   The last accepted generation and manifest digest are kept in a state file in
   the Runtime home, outside the registry directory. An absent registry is an
   empty registry only while that state records no accepted generation. Once a
@@ -288,9 +298,15 @@ unaffected.
 
 Admission is one pure application function:
 
-`admit(explicitRequirements, mode, observedSubject, observedMetadata, snapshot,
-policy) → admitted(basis, decision, effective guarantees, advisories) |
-refused(reasons)`.
+`admit(explicitRequirements, mode, observedSubject, observedMetadata,
+dispatchContext, snapshot, policy) → admitted(basis, decision, effective
+guarantees, advisories) | refused(reasons)`.
+
+`dispatchContext` carries everything else the steps read, so the function has no
+hidden state: the run's persisted parameters (output-token cap, reasoning effort
+and the other parameters a parameter scope constrains), the outcomes of the
+per-dispatch observations (below) and the evaluation timestamp, which the caller
+supplies from the Runtime clock and which is the only time `admit` reads.
 
 `explicitRequirements` are the guarantees a role, stage or pack requests. The
 set the mode implies (`bounded_profile@1`, decision 6) is derived inside `admit`
@@ -324,7 +340,7 @@ Steps, in this order, each deterministic:
 0. Registry state: `registry_unreadable` per decision 4, otherwise continue.
 1. Model and run-parameter admissibility: some decision, active or revoked, or
    the `legacy_policy` predicate, names the observed `(worker, provider, model)`
-   under the observed mode, and the run's persisted parameters lie within that
+   under the observed mode, and the run's persisted parameters (from `dispatchContext`) lie within that
    record's parameter scope. If none, refuse `model_mismatch`; this reproduces
    today's `supportsModel` refusals, which also cover an output-token cap and a
    reasoning effort the worker does not execute. A subject blocked by an
@@ -339,7 +355,7 @@ Steps, in this order, each deterministic:
    `platform_unsupported`. Mode support: a mode with no governed contract
    (`governed_delegation` today) refuses with `mode_unsupported` before any
    subject matching.
-3. Per-dispatch observations: a failed observation refuses with `probe_failed`
+3. Per-dispatch observations (their outcomes are in `dispatchContext`): a failed observation refuses with `probe_failed`
    or `credential_not_admitted`.
 4. Match the subject. Among the exact decisions for the observed subject, the
    active one (there is at most one) is used. If none is active but a revoked
@@ -363,7 +379,7 @@ Steps, in this order, each deterministic:
    parameter scope of _that_ record (step 1 only established that some record
    names the model); otherwise refuse `model_mismatch`. Parameters are not part
    of the subject, so a scope never extends to another subject's runs.
-5. Validity window: a matched decision before its `notBefore` is refused with
+5. Validity window, against the supplied evaluation timestamp: a matched decision before its `notBefore` is refused with
    `decision_not_yet_valid`; one that opted in to expiry and has expired is
    refused with `decision_expired`. `notBefore` is always enforced.
 6. Drift. For each required guarantee, every metadata dependency is compared
@@ -578,9 +594,10 @@ Provenance never contains registry paths, credentials or raw probe output.
   registration a release, keeps version and model unbound, and cannot express
   per-guarantee state or drift.
 - **A database-backed registry.** Gives an audit trail and project-level
-  authority but describes host facts with project storage, needs a host-level
-  store the Runtime does not have, and pulls in the PostgreSQL authority work
-  (M22). Revisit only if audits must be shared between hosts.
+  authority but describes host facts with project storage, would need a
+  host-level store of its own, and pulls in the PostgreSQL authority work (M22).
+  The existing `global.sqlite` is reusable-memory storage and is not reused, for
+  the reason given in decision 4. Revisit only if audits must be shared between hosts.
 - **Trust the client's own capability listing.** Rejected by ADR-0017 for Claude
   and insufficient for Codex: tools derive from provider metadata the listing
   does not show.
