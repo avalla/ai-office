@@ -1,6 +1,8 @@
 # M16 — Generic Core & Domain Packs: boundary audit and delivery plan
 
-Status: M16 in progress. The GP-01 source audit was performed against `main` at
+Status: M16's re-scoped definition-layer exit is complete; M16.5 activation
+is delivered in slices recorded below and in the [roadmap](roadmap.md).
+The GP-01 source audit was performed against `main` at
 `7886519` and passed final repository review on 2026-10-02 against PR #80 at
 `90c51cf`. [ADR-0027](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
 defines the four M15 authority/evidence prerequisites and was integrated in
@@ -33,13 +35,15 @@ GP-10B-1 adds the four development workflows to that reference pack and
 proves expressible-subset parity for workflows; nothing was removed from the
 legacy path.
 The [roadmap](roadmap.md) owns milestone status; ADR-0026 is an accepted
-architectural contract, not current Runtime behavior.
+architectural target whose implementation is tracked clause by clause.
+The task sections preserve delivery-time evidence; the M16.5 addenda record
+later activation work and supersede earlier Runtime-status limitations.
 
 On 2026-10-06 the owner re-scoped the M16 exit to the definition and contract
-layer plus reference fixtures. After M16, packs are a definition,
-customization and upgrade layer; the Runtime does not yet execute from a
-pack. Runtime activation and the tasks that need it are planned for the
-successor milestone M16.5. See
+layer plus reference fixtures. M16 delivered pack definition, customization
+and upgrade contracts; execution was excluded from that exit. Runtime
+activation and its follow-ups belong to M16.5, with delivery status in the
+addenda below. See
 [M16 exit re-scope](#m16-exit-re-scope-owner-decision-2026-10-06).
 
 ## GP-03 additive migration and compatibility plan
