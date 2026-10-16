@@ -199,7 +199,10 @@ export interface PlanningSnapshotPage {
   collection: PlanningSnapshotCollection;
   section: "authoritative" | "derived";
   page: { offset: number; limit: number; total: number; truncated: boolean };
-  /** `sha256:<hex>` of the collection, window and items of this page. */
+  /**
+   * `sha256:<hex>` of the canonical page response without this field: every
+   * other field, metadata and items alike.
+   */
   pageDigest: string;
   items: PlanningSnapshotItem[];
 }
@@ -513,7 +516,7 @@ export function planningSnapshotPage(
       collectionItems(snapshot, name).length,
     ]),
   ) as Record<PlanningSnapshotCollection, number>;
-  return {
+  const header = {
     schemaVersion: snapshot.schemaVersion,
     snapshotId: snapshot.snapshotId,
     scope: snapshot.scope,
@@ -521,23 +524,20 @@ export function planningSnapshotPage(
     counts,
     collection,
     section: authoritativeCollections.has(collection)
-      ? "authoritative"
-      : "derived",
+      ? ("authoritative" as const)
+      : ("derived" as const),
     page: {
       offset: window.offset,
       limit: window.limit,
       total: all.length,
       truncated: window.offset + items.length < all.length,
     },
-    pageDigest: `sha256:${sha256({
-      // Bound to the snapshot, so equal items of another scope or state
-      // never share a page digest.
-      snapshotId: snapshot.snapshotId,
-      collection,
-      offset: window.offset,
-      limit: window.limit,
-      items,
-    })}`,
+  };
+  return {
+    ...header,
+    // The whole page response except this field: metadata such as `total`,
+    // `truncated` or `counts` cannot change under an unchanged digest.
+    pageDigest: `sha256:${sha256({ ...header, items })}`,
     items,
   };
 }

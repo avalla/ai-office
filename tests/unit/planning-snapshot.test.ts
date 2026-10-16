@@ -1,4 +1,6 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import { describe, expect, test } from "vitest";
 import {
   planningSnapshotCollections,
@@ -330,6 +332,75 @@ describe("planning read model", () => {
     );
     expect(pages.map((p) => p.items)).toEqual([[], []]);
     expect(pages[0]!.pageDigest).not.toBe(pages[1]!.pageDigest);
+  });
+
+  test("digests the whole page response except the digest itself", () => {
+    const page = planningSnapshotPage(
+      projectPlanningSnapshot(state(), project, both),
+      "tasks",
+      { offset: 0, limit: 2 },
+    );
+    const { pageDigest, ...rest } = page;
+    const digest = (value: unknown) =>
+      `sha256:${createHash("sha256").update(canonicalStringify(value)).digest("hex")}`;
+    expect(pageDigest).toBe(digest(rest));
+    // Any change to a metadata field yields a different digest.
+    for (const altered of [
+      { ...rest, page: { ...rest.page, total: rest.page.total + 1 } },
+      { ...rest, page: { ...rest.page, truncated: !rest.page.truncated } },
+      { ...rest, counts: { ...rest.counts, tasks: rest.counts.tasks + 1 } },
+      { ...rest, snapshotId: "snapshot:sha256:0" },
+      { ...rest, section: "derived" },
+      { ...rest, classes: ["P"] },
+      { ...rest, scope: { ...rest.scope, milestoneId: "m1" } },
+      { ...rest, schemaVersion: 2 },
+    ])
+      expect(digest(altered)).not.toBe(pageDigest);
+  });
+
+  test("changes the page digest when records outside the window change its metadata", () => {
+    // Same collection, window and items; one more task beyond the window.
+    const window = { offset: 0, limit: 2 };
+    const before = planningSnapshotPage(
+      projectPlanningSnapshot(state(), project, both),
+      "tasks",
+      window,
+    );
+    const grown = state();
+    grown.tasks.push({
+      id: "zz",
+      title: "Last",
+      status: "pending",
+      priority: -1,
+    });
+    const after = planningSnapshotPage(
+      projectPlanningSnapshot(grown, project, both),
+      "tasks",
+      window,
+    );
+    expect(after.items).toEqual(before.items);
+    expect(after.page).toEqual({
+      ...before.page,
+      total: before.page.total + 1,
+    });
+    expect(after.pageDigest).not.toBe(before.pageDigest);
+    // A last page whose truncation flag would flip is covered the same way.
+    const lastBefore = planningSnapshotPage(
+      projectPlanningSnapshot(state(), project, both),
+      "tasks",
+      { offset: 6, limit: 2 },
+    );
+    const lastAfter = planningSnapshotPage(
+      projectPlanningSnapshot(grown, project, both),
+      "tasks",
+      { offset: 6, limit: 2 },
+    );
+    expect(lastAfter.items).toEqual(lastBefore.items);
+    expect([lastBefore.page.truncated, lastAfter.page.truncated]).toEqual([
+      false,
+      true,
+    ]);
+    expect(lastAfter.pageDigest).not.toBe(lastBefore.pageDigest);
   });
 
   test("keeps the snapshot identity across windows and digests each page", () => {
