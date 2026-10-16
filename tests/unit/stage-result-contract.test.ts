@@ -565,17 +565,48 @@ describe("stage result hardening, second pass", () => {
   });
 
   test("applies the character and credential checks to data keys", () => {
-    const bad = [
-      "a\nINFO forged",
-      "a" + String.fromCodePoint(0x202e) + "b",
-      "a" + String.fromCodePoint(0) + "b",
-      "ghp_" + "A".repeat(36),
-      "k".repeat(stageResultLimits.dataKeyBytes + 1),
+    const bad: [string, string, string][] = [
+      ["line break", "a\nINFO forged", "forbidden characters"],
+      ["bidi override", "a" + String.fromCodePoint(0x202e) + "b", "forbidden"],
+      [
+        "zero-width space",
+        "a" + String.fromCodePoint(0x200b) + "b",
+        "forbidden",
+      ],
+      ["NUL", "a" + String.fromCodePoint(0) + "b", "forbidden"],
+      ["provider token", "ghp_" + "A".repeat(36), "credential-like"],
+      ["too long", "k".repeat(stageResultLimits.dataKeyBytes + 1), "oversized"],
+      // 64 CJK characters are 192 UTF-8 bytes: the limit is bytes, not units.
+      [
+        "multibyte too long",
+        String.fromCodePoint(0x4e2d).repeat(64),
+        "oversized",
+      ],
     ];
-    for (const key of bad)
-      expect(() =>
-        parseStageResultEnvelope({ ...valid, data: { [key]: 1 } }),
-      ).toThrow(DomainValidationError);
+    for (const [, key, expected] of bad)
+      expect(rejection({ ...valid, data: { [key]: 1 } })).toContain(expected);
+  });
+
+  class Marker {
+    value = 1;
+  }
+
+  test.each([
+    ["Map", () => new Map([["a", 1]])],
+    ["Set", () => new Set([1])],
+    ["Date", () => new Date(0)],
+    ["RegExp", () => /x/],
+    ["Uint8Array", () => new Uint8Array([1, 2])],
+    ["class instance", () => new Marker()],
+  ])("rejects a %s in data instead of coercing it", (_name, make) => {
+    expect(rejection({ ...valid, data: { v: make() } })).toContain(
+      "canonical JSON",
+    );
+  });
+
+  test("accepts a null-prototype object in data", () => {
+    const data = Object.assign(Object.create(null), { a: 1 });
+    expect(parseStageResultEnvelope({ ...valid, data }).data).toEqual({ a: 1 });
   });
 
   test("a Proxy that changes its keys between reads gets nothing past the guard", () => {

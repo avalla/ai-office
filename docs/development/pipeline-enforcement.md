@@ -112,9 +112,13 @@ and an object that changes between reads cannot get different content past the
 checks. The envelope, `producer` and `error` are read the same way, through
 own data properties only: an accessor is refused without being invoked, and
 hostile input that throws while it is read (a throwing Proxy trap, a revoked
-Proxy) surfaces as the same typed validation error.
+Proxy) surfaces as the same typed validation error. Summary and error message
+lengths are checked before trimming, so a string that fits only after its
+surrounding whitespace is removed is refused.
 
-Rejected: unknown versions and fields; control characters, bidi marks and
+Rejected: unknown versions and fields; objects in `data` that are not plain
+objects or arrays (Map, Set, Date, RegExp, typed arrays and class instances),
+which are never coerced into their own fields; control characters, bidi marks and
 overrides, zero-width and byte-order marks, line and paragraph separators and
 lone surrogates in any text or data key; line breaks outside the summary and
 data string values; data keys that contain a sensitive name (for example

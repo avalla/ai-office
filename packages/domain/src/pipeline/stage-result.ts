@@ -280,9 +280,18 @@ function guardData(value: unknown, depth: number, budget: DataBudget): unknown {
     }
     return items;
   }
+  // Only plain objects: snapshotting a Map, Date, Set or class instance would
+  // launder it into an object of its own fields and silently change evidence.
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null)
+    invalid("data is not canonical JSON");
   const entries: [string, unknown][] = [];
   for (const key of Object.keys(value)) {
-    if (key.length > stageResultLimits.dataKeyBytes)
+    // UTF-8 bytes never fewer than UTF-16 units: cheap check, then exact.
+    if (
+      key.length > stageResultLimits.dataKeyBytes ||
+      byteLength(key) > stageResultLimits.dataKeyBytes
+    )
       invalid("data contains an oversized key");
     spend(budget, key.length);
     if (/[\t\n\r]/.test(key)) invalid("data contains forbidden characters");
