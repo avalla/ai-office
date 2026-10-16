@@ -35,8 +35,8 @@ the separate `ai-office` skill; `skills/README.md` states the independence of
    result with evidence) and an explicit creation command that opens a run
    (input contract in invariant 5). The skill uses them when a Runtime is
    available.
-3. Keep the skill usable without a Runtime. Without one, the skill keeps the
-   file handoff packet of
+3. Keep the skill usable without a Runtime. For a task without a delivery run,
+   the skill keeps the file handoff packet of
    [step 1 of the task-delivery profiles plan](../development/task-delivery-profiles.md)
    and the same gate semantics.
 4. A delivery profile selects gates; it does not replace an enforced
@@ -169,7 +169,7 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      profile name. It also records whether an external review command is
      configured, as a presence flag and not its text. Later changes to
      `.task-delivery.yaml` or to the resolved profile never alter the run;
-     adopting them needs a new run. An external review requested by an
+     adopting them is outside this ADR. An external review requested by an
      authorizer is a dynamic addition, recorded like a floor addition.
    - The floor is not part of the snapshot and does not constrain setup: it
      applies on top of whatever is configured and depends on the task, the diff
@@ -197,9 +197,10 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      a later context can still read every addition while the Runtime is
      unreachable. An entry not yet marked registered is pending.
    - A reset or handoff carries the floor additions: the handoff packet lists
-     each pending entry by its identity in a fixed, validated field, distinct
-     from the checkpoint identifiers that retention matches in the packet, and
-     the next context reads the entries from the file store. A failed
+     each pending entry by its identity in a fixed, validated field, encoded so
+     that listing floor entries never pins or unpins a checkpoint under the
+     retention rule that matches checkpoint identifiers in the packet, and the
+     next context reads the entries from the file store. A failed
      registration therefore cannot make a required full-form gate be
      forgotten. If a floor evaluation is due and the addition is neither
      registered nor durably pending, the skill does not start or pass any
@@ -208,20 +209,16 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      reconciled later in recording order; a missing registration never means
      the floor does not apply, and `delivery:next` says so. An authorizer's
      attempt to lower the effective gate set below the recorded or pending
-     additions is refused by the skill, and the Runtime rejects any change that
-     would remove a recorded addition; setup configuration itself is not
-     refused.
-   - Runtime path. Once a delivery run exists for a task, the task stays on the
-     Runtime path: an outage leaves entries pending and never switches the task
-     to offline rules. A run created part-way through a task takes the floor
-     determinations already in the handoff packet as its initial additions,
-     supplied in the creation input (invariant 5). A
+     additions is refused by the skill, and no command removes or rewrites a
+     recorded addition; setup configuration itself is not refused.
+   - Runtime path. A delivery run is created at preflight, before the task has
+     any floor determination or checkpoint, and a task has at most one delivery
+     run. Once the run exists the task stays on the Runtime path: an outage
+     leaves entries pending and never switches the task to offline rules. A
      task without a delivery run keeps the existing offline rules unchanged.
-   - Run multiplicity. A task has at most one open delivery run, and creating a
-     new one supersedes the previous. Pending entries and pending checkpoint
-     markers of a superseded run stay registrable to it, or are released by an
-     explicit, reported reconciliation; they are never silently cleared and
-     never pin retention indefinitely without being reported.
+     This ADR does not migrate a task already under way offline onto a
+     Runtime run, because the offline handoff packet records no floor
+     determinations to inherit; such a migration is a separate decision.
 4. **Checkpoint registration is idempotent, conflict-explicit and pinned until
    registered.**
    - A registration names an opaque, client-claimed identity: the delivery run,
@@ -244,8 +241,8 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      a pending checkpoint, in addition to the latest and the handoff-cited ones
      it already keeps. Without that ordering a crash between publication and
      marking would leave an unregistered checkpoint prunable. The marker is
-     cleared only after a successful registration or an explicit idempotent
-     reconciliation.
+     cleared only after a successful registration, including an idempotent
+     re-registration during reconciliation, and never otherwise.
    - Reconciliation registers pending checkpoints in publication order. A
      conflict stops reconciliation at that checkpoint, keeps it and the later
      ones pending, and is reported.
@@ -266,27 +263,21 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      The client resolves each key in the skill's existing order (Runtime setup
      where it holds the key, then `.task-delivery.yaml`, then defaults) and
      validates the result with the rules `delivery:validate` applies.
+   - "Client" here means the skill acting through the CLI; the CLI only
+     resolves paths and relays structured data, and the obligations on local
+     state below are the skill's.
    - The creation command takes the project, the task, the resolved
      configuration as structured data (schema version, profile, each selected
      gate with its form, and whether an external review command is
-     configured), optionally the pipeline run reference of invariant 1, and the
-     complete set of floor additions already determined for the task (each with
-     its gate, target form, trigger and head), which the client reads from its
-     handoff packet or file store. The set is a required field: an empty set is
-     stated explicitly and is never an omission. It carries no path. Its name
-     is left to the implementation plan; this contract is what binds.
-   - The client must read that local state before creating a run. If the
-     handoff packet or file store cannot be read, the skill does not call the
-     creation command and reports why.
-   - Inherited floor additions are validated like any other (a known gate, a
-     valid target form, a well-formed head) and registered atomically with the
-     creation: the run does not become open until they are recorded.
-   - Completeness is an obligation of the client, not a guarantee of the
-     Runtime. The Runtime cannot read the client's local state, so it cannot
-     verify that the set is complete; it records what is supplied as claimed.
-     An omission is caught at the next floor evaluation point (preflight,
-     before `implementation` ends, before `ready_for_merge`, or when a new
-     commit can change the classification), which only moves up.
+     configured), and optionally the pipeline run reference of invariant 1. It
+     carries no path and no floor additions: a run is created at preflight,
+     before any exist (invariant 3), and the first determinations are recorded
+     afterwards through the normal path. Its name is left to the
+     implementation plan; this contract is what binds.
+   - The skill creates a run only at preflight. It does not create one for a
+     task that already has checkpoints, floor determinations or a handoff
+     packet, and reports why. The Runtime cannot read that local state, so it
+     cannot enforce this; like the snapshot, it is a client obligation.
    - The Runtime re-validates the data against the schema and the cross-key
      rules (for example, the accepted stage keys, and that `review` and `qa`
      are not both off without an external review command). It never reads
@@ -296,10 +287,10 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      and a hash of its canonical form (a specified canonical encoding, so the
      hash is comparable across clients), and is not verified against the
      repository, consistent with the head-commit decision above.
-   - Failure modes: invalid or unsupported configuration, or an invalid
-     inherited floor addition, fails with a typed validation error and no run
-     is created; a task that is not in the project
-     fails as in invariant 1.
+   - Failure modes: invalid or unsupported configuration fails with a typed
+     validation error and no run is created; a task that is not in the project
+     fails as in invariant 1; a second creation for a task that already has a
+     run is a typed conflict.
 
 ## Known limitations
 
@@ -309,6 +300,10 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
   separate decision and outside this ADR.
 - Pending checkpoints are not bounded in this proposal, so a long outage grows
   the local store. This is preferred to losing an unregistered checkpoint.
+- A task has one delivery run, created at preflight. A task already under way
+  offline is not migrated onto a Runtime run, and a changed configuration is not
+  adopted mid-task; either needs a separate decision, because the offline
+  handoff packet records no floor determinations to inherit.
 
 ## Open questions
 
