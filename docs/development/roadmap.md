@@ -2196,8 +2196,9 @@ actions.
 After M16, Domain Packs are a definition, customization and upgrade layer
 with reference fixtures. M16 itself did not execute from packs or pin their
 configuration. PR #168 subsequently added configuration pins for nonempty
-selections; pipeline selection remains manifest-driven, and production pack
-registration and adoption remain GP-10C-2 work. An
+selections; M16.5 activation now also selects resolved workflows for projects
+with selected packs. Production pack registration and adoption remain
+GP-10C-2 work. An
 accepted ADR alone does not satisfy the exit. Runtime execution that consumes
 the resolved configuration leaves the M16 exit and is expected to become the
 exit of M16.5.

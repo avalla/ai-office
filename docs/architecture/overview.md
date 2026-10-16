@@ -148,9 +148,11 @@ beside its `taskType`. Project-owned definitions and `replace` overrides
 carry the same fields, `extend` does not, and the resolved configuration
 reports them. They are stored in the existing JSON payload columns with no
 migration and are carried by portable archive format 10; format 9 rejects
-them. They are declarative text and references: the Runtime reads none of
-them, generates no instruction file from them and sends no pack prompt to a
-provider.
+them. M16.5 activation copies workflow and stage titles, objectives, checks
+and task-type routes into the frozen pipeline definition when a selected-pack
+workflow starts. Role responsibilities and prompt text remain declarative;
+activation generates no instruction file from them and sends no pack prompt
+to a provider.
 Development pack `0.3.0` (the second GP-10B-2 pull request) carries them as
 data: role responsibilities, stage titles, objectives and checks, the
 `maintenance` route of `delivery`, the role guidance prompts that each agent
@@ -165,9 +167,12 @@ admitted operation names per stage. The declaration is pack-owned and
 mandatory: a project has no operation on a policy, a workflow replacement
 must keep the governed stages and their separation order, and the policy of
 an existing workflow changes only through the reviewed upgrade plan. The
-derived view lists the policies; they are declarations only, the pipeline
-engine, runs, approvals, guards, grants and controlled-action authorization
-do not read them, and a policy without a target workflow still fails closed.
+derived view lists the policies. M16.5 activation maps the selected workflow's
+active pack policy into its frozen enforcement, approval, agent-separation
+and stage-operation requirements; the existing pipeline engine enforces them.
+A workflow without an active enforced policy cannot start. These requirements
+grant no capability and do not bypass controlled-action authorization.
+A policy without a target workflow still fails closed.
 Development pack `0.4.0` (the second GP-25 pull request) declares the legacy
 governance defaults as three such policies: `delivery` enforced, and an
 approval on `delivery/review`, `bugfix/review` and `release/verification`,
