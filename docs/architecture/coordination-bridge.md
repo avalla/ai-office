@@ -2,8 +2,9 @@
 
 Status: accepted with [ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md)
 as the design baseline, not current architecture. [overview.md](overview.md)
-describes what exists today; nothing here is implemented, and no part of it
-becomes current until the tasks of
+describes what exists today. Delivered so far: the planning read model (CB-02)
+and the coordination read API with its read-only listener (CB-10, see the
+overview); the rest becomes current only when the tasks of
 [M23](../development/coordination-bridge.md) deliver it. The wire contract is in
 the [coordination protocol](../development/coordination-protocol.md).
 

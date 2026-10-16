@@ -2502,8 +2502,17 @@ milestones, tasks, requirements and dependencies, with derived runnable,
 active, blocker, open-decision and inconsistency collections kept apart, a
 `snapshot:sha256:` identity over the complete scoped projection that does not
 change with the page window, a per-page digest, and the read-only
-`planning:snapshot` CLI command. The coordination listener, exposure registry
-and MCP server are not implemented yet. Numbered M23 because M21 and M22 (whose roadmap sections are not yet on main) were
+`planning:snapshot` CLI command. CB-10 delivers the client-neutral coordination
+read API over that read model: `CoordinationReadService` with the operations
+`status`, `milestones`, `tasks`, `requirements`, `dependencies`, `blockers` and
+`runnable`, the exposure registry and explicit P/T mappers (credential scrubber,
+256-character truncation, 256 KiB response cap), the `coordination:read` CLI
+command and the optional read-only coordination listener: a second Unix socket,
+disabled by default and enabled per project and data class in
+`<runtime home>/coordination-listener.json`, serving only GET
+`/api/coordination/v1` routes and a minimal health route, with a parity test
+across the listener, the CLI and the service. The MCP tool contract, server,
+authentication and isolated deployment (CB-11A–CB-11F) are not implemented yet. Numbered M23 because M21 and M22 (whose roadmap sections are not yet on main) were
 already registered.
 
 Goal: let users and external AI assistants (ChatGPT first) inspect the planning
