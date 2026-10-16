@@ -146,14 +146,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Module-private so the boundary can tell a rejection raised by this parser
- * from a `DomainValidationError` thrown by a hostile Proxy trap or getter.
+ * Rejections raised by this parser. Membership is tested with a WeakSet, which
+ * never runs a trap, so a hostile thrown value (a Proxy whose
+ * `getPrototypeOf` throws, a revoked Proxy) cannot be mistaken for one of
+ * ours or make the classification itself throw.
  */
-class StageResultRejection extends DomainValidationError {}
+const parserRejections = new WeakSet<object>();
 
 function invalid(reason: string): never {
   // Messages name the failing field only; they never echo the rejected value.
-  throw new StageResultRejection(`Invalid stage result: ${reason}`);
+  const rejection = new DomainValidationError(
+    `Invalid stage result: ${reason}`,
+  );
+  parserRejections.add(rejection);
+  throw rejection;
 }
 
 function assertSafeText(text: string, field: string): void {
@@ -388,7 +394,12 @@ export function parseStageResultEnvelope(value: unknown): StageResultEnvelope {
   } catch (error) {
     // Only this parser's own rejections pass through; any other error, even a
     // DomainValidationError thrown by a hostile trap, is replaced.
-    if (error instanceof StageResultRejection) throw error;
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      parserRejections.has(error)
+    )
+      throw error;
     // Exotic hostile input (for example a revoked Proxy) must still surface
     // as the typed, sanitized validation error, never as an arbitrary one.
     return invalid("envelope cannot be read");

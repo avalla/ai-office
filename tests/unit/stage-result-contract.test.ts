@@ -732,6 +732,35 @@ describe("stage result hardening, third pass", () => {
     );
   });
 
+  test("classifies a hostile thrown value without running its traps", () => {
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    const throwsRevoked = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw revoked.proxy;
+        },
+      },
+    );
+    const throwsOnPrototype = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Proxy(new Error("SECRET=abc"), {
+            getPrototypeOf() {
+              throw new Error("SECRET=trap");
+            },
+          });
+        },
+      },
+    );
+    for (const hostile of [throwsRevoked, throwsOnPrototype])
+      expect(rejection(hostile)).toBe(
+        "Invalid stage result: envelope cannot be read",
+      );
+  });
+
   test("refuses hidden properties on arrays, envelope and producer", () => {
     const hiddenIndex = [1];
     Object.defineProperty(hiddenIndex, "0", { value: 1, enumerable: false });
