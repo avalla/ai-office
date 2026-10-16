@@ -808,6 +808,19 @@ describe("stage result hardening, third pass", () => {
     ).toContain("credential-like");
   });
 
+  test("rejects bare token keys, including plural and suffixed forms", () => {
+    for (const key of [
+      "tokens",
+      "tokensUsed",
+      "tokens_count",
+      "Tokens",
+      "token_used",
+    ])
+      expect(
+        rejection({ ...valid, data: { [key]: "reserved-value" } }),
+      ).toContain("sensitive");
+  });
+
   test("accepts provider usage metering keys", () => {
     for (const key of [
       "cache_read_input_tokens",

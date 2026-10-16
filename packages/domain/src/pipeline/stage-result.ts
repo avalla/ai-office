@@ -127,9 +127,10 @@ const credentialPatterns: readonly RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/,
 ];
 
-// Token-usage metering names are data, not secrets; a bare `token` is not.
+// Token-usage metering names are data, not secrets; the prefix is mandatory,
+// so a bare `token` or `tokens` (with or without a suffix) is still sensitive.
 const meteringKeyPattern =
-  /^(?:(?:input|output|total|prompt|completion|cached|reasoning|max|cacheread|cachecreation)(?:input)?)?tokens(?:used|count)?$/;
+  /^(?:(?:input|output|total|prompt|completion|cached|reasoning|max|cacheread|cachecreation)(?:input)?)tokens(?:used|count)?$/;
 
 function isSensitiveDataKey(key: string): boolean {
   const normalized = normalizeSensitiveFieldKey(key);
