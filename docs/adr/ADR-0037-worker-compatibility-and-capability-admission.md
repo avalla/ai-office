@@ -240,7 +240,10 @@ unaffected.
   missing directory or pointer or manifest, an unreadable one, or one that fails
   the rollback check) refuses every subject with `registry_unreadable`,
   source-shipped baselines included, because revocations cannot be ruled out;
-  only an explicit operator reset of the state, audited, clears this.
+  only an explicit operator reset of the state clears this. A reset needs plan
+  and approval like a registration, is audited, and re-enables every
+  source-shipped record that a registry revocation had refused, so the operator
+  reviews the revocations first.
 - **Revocation** is a new record in a new generation. Removing trust is always
   allowed to the operator; adding trust always needs a decision.
 - **Source-shipped records.** The `baseline_import` and `legacy_policy` records
@@ -286,10 +289,14 @@ Steps, in this order, each deterministic:
    `platform_unsupported`. Mode support: a mode with no governed contract
    (`governed_delegation` today) refuses with `mode_unsupported` before any
    subject matching.
-2. Model admissibility: some decision, active or revoked, or the
-   `legacy_policy` predicate, names the observed `(worker, provider, model)`
-   under the observed mode. If none, refuse `model_mismatch`. For the predicate
-   the model clause is its provider and model-name pattern.
+2. Model and run-parameter admissibility: some decision, active or revoked, or
+   the `legacy_policy` predicate, names the observed `(worker, provider, model)`
+   under the observed mode, and the run's persisted parameters lie within that
+   record's parameter scope. If none, refuse `model_mismatch`; this reproduces
+   today's `supportsModel` refusals, which also cover an output-token cap and a
+   reasoning effort the worker does not execute. For the predicate the model
+   clause is its provider and model-name pattern and its parameter clause is
+   decision 10's.
 3. Per-dispatch observations: a failed observation refuses with `probe_failed`
    or `credential_not_admitted`.
 4. Match the subject. An exact decision for the observed subject, active or
@@ -432,7 +439,7 @@ recertifying the combination replaces it with a `certified` decision.
 
 WC-05 introduces the registry in _shadow mode_: the legacy allowlists keep
 deciding, the registry result is computed beside them, and any disagreement is a
-defect found by a differential test over a version × model × feature matrix.
+defect found by a differential test over a version × model × run-parameter × feature matrix.
 Cutover happens only when no disagreement remains. After cutover the registry
 can make an admission stricter than the allowlist was only through an operator's
 revocation, and can make it looser only through a new `certified` decision. This
@@ -446,7 +453,9 @@ closed, named predicate `claude-legacy-floor@1`, which holds exactly when
 `worker = claude-code`, `mode = bounded_single_agent`, the reported version
 parses and satisfies the floor rule of the current adapter (`>= 2.1.259`; a
 pre-release of exactly the floor version is refused and pre-releases of higher
-versions are admitted, as today), the provider is `anthropic` and
+versions are admitted, as today), the run carries no output-token cap and a
+reasoning effort, if any, in `low`, `medium`, `high`, `xhigh` or `max`, the
+provider is `anthropic` and
 the model matches the adapter's current model-name pattern. The predicate lives
 in source with the baseline records, is changed only by a reviewed change, and
 cannot be created, edited or extended by registry data. Every guarantee of the
@@ -463,7 +472,8 @@ decision D3 (open decision O2 asks to confirm this reading). It applies in step 
 only to _implicit legacy dispatch_: the requirement set is exactly
 `bounded_profile@1` as implied by the mode, with nothing requested by a role,
 stage or pack. When any explicit requirement exists, step 4 does not use the
-record, so `no_matching_audit` or `guarantee_unverified` refuses the run. In step 7 the
+record and refuses the run with `no_matching_audit`, with the detail that the
+legacy policy covers implicit dispatch only. In step 7 the
 record is deemed to satisfy the implicit `bounded_profile@1` of the mode and
 nothing else; the effective guarantees it reports stay `unverified`, and the
 result carries the basis `legacy_policy`. The exception therefore cannot satisfy
@@ -536,7 +546,7 @@ Provenance never contains registry paths, credentials or raw probe output.
 
 WC-02 may start only after this ADR is accepted. It must confirm the catalogue,
 record schemas and canonical digest, the manifest and generation protocol, the
-operator command shape, and where the pure function, the registry port and the
+operator command shapes (register, revoke, reload, verify and state reset), and where the pure function, the registry port and the
 snapshot live (types in `packages/domain`, port and admission in
 `packages/application`, the file registry in an infrastructure package, with the
 dependency direction unchanged).
