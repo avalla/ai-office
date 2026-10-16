@@ -33,8 +33,8 @@ the separate `ai-office` skill; `skills/README.md` states the independence of
 2. Expose it as `delivery:next` (the gates the recorded state requires, never
    labelled effective; see invariant 3), `delivery:record` (record a gate
    result with evidence) and an explicit creation command that opens a run
-   (input contract in invariant 5). The skill uses them when a Runtime is
-   available.
+   (input contract in invariant 5). The skill uses them for a task whose
+   delivery run was created at preflight.
 3. Keep the skill usable without a Runtime. For a task without a delivery run,
    the skill keeps the file handoff packet of
    [step 1 of the task-delivery profiles plan](../development/task-delivery-profiles.md)
@@ -211,11 +211,16 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      attempt to lower the effective gate set below the recorded or pending
      additions is refused by the skill, and no command removes or rewrites a
      recorded addition; setup configuration itself is not refused.
-   - Runtime path. A delivery run is created at preflight, before the task has
-     any floor determination or checkpoint, and a task has at most one delivery
-     run. Once the run exists the task stays on the Runtime path: an outage
-     leaves entries pending and never switches the task to offline rules. A
-     task without a delivery run keeps the existing offline rules unchanged.
+   - Runtime path. A delivery run is created at the start of preflight, before
+     its floor evaluation and before the first checkpoint, and a task has at
+     most one delivery run, which ends in a terminal state; restarting a task's
+     delivery is outside this ADR. Once the run exists the task stays on the
+     Runtime path: an outage leaves entries pending and never switches the task
+     to offline rules. If creation fails or the Runtime is unreachable at
+     preflight, the task proceeds on the offline path for its whole life and
+     the skill reports it; an ambiguous creation is resolved by an idempotent
+     retry (invariant 5) before any checkpoint is published. A task without a
+     delivery run keeps the existing offline rules unchanged.
      This ADR does not migrate a task already under way offline onto a
      Runtime run, because the offline handoff packet records no floor
      determinations to inherit; such a migration is a separate decision.
@@ -289,20 +294,24 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      repository, consistent with the head-commit decision above.
    - Failure modes: invalid or unsupported configuration fails with a typed
      validation error and no run is created; a task that is not in the project
-     fails as in invariant 1; a second creation for a task that already has a
-     run is a typed conflict.
+     fails as in invariant 1. Creation is idempotent on the project, the task and
+     the snapshot hash: the same input returns the existing run, so a retry
+     after a lost reply is safe, and a different snapshot for a task that
+     already has a run is a typed conflict.
 
 ## Known limitations
 
-- The file store is local. Losing it loses the checkpoints it held, and resume on
+- The file store is local. Losing it loses the checkpoints it held and the floor
+  entries not yet registered, and resume on
   another host without the original files is not supported. Cross-machine
   portability would need shared or replicated checkpoint storage, which is a
   separate decision and outside this ADR.
 - Pending checkpoints are not bounded in this proposal, so a long outage grows
   the local store. This is preferred to losing an unregistered checkpoint.
-- A task has one delivery run, created at preflight. A task already under way
-  offline is not migrated onto a Runtime run, and a changed configuration is not
-  adopted mid-task; either needs a separate decision, because the offline
+- A task has one delivery run, created at preflight, which ends in a terminal
+  state. A task already under way offline is not migrated onto a Runtime run, a
+  changed configuration is not adopted mid-task, and restarting a task's
+  delivery is not covered; each needs a separate decision, because the offline
   handoff packet records no floor determinations to inherit.
 
 ## Open questions
