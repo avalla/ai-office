@@ -300,6 +300,22 @@ describe("credential scrubber", () => {
       scrubCredentials(["pass", 'word: "', "\\".repeat(4096)].join("")),
     ).toBe(redactionMarker);
     expect(performance.now() - started).toBeLessThan(1000);
+    // An escaped line break inside a closed quote keeps the whole value.
+    expect(
+      scrubCredentials(["pass", 'word = "x\\\ny secret rest" end'].join("")),
+    ).toBe(`${redactionMarker} end`);
+    // Prefixed names, as in environment files, are assignments too.
+    expect(scrubCredentials(["DB_PASS", "WORD=supersecretvalue"].join(""))).toBe(
+      `DB_${redactionMarker}`,
+    );
+    expect(
+      scrubCredentials(["GITHUB_TO", "KEN: abcdefghijklmnop"].join("")),
+    ).toBe(`GITHUB_${redactionMarker}`);
+    expect(scrubCredentials(["my_api", "_key=abcdefghijk"].join(""))).toBe(
+      `my_${redactionMarker}`,
+    );
+    // A keyword glued to letters or digits is another word.
+    expect(scrubCredentials("mytoken=abcdefghijk")).toBe("mytoken=abcdefghijk");
     // A short closed quote is not a credential value by this rule.
     expect(scrubCredentials('pwd="short" plan')).toBe('pwd="short" plan');
   });

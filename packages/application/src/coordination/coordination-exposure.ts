@@ -108,9 +108,10 @@ const credentialPatterns: readonly RegExp[] = [
   // Assignments such as password=..., api_key: ...
   // A quoted value (escapes included) is redacted up to its closing quote,
   // an unterminated one to the end of its line, all of its words and a
-  // trailing backslash included;
-  // a JSON-style quoted key matches too.
-  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|aws_secret_access_key|client[_-]?secret)["']?\s*[:=]\s*(?:"(?:[^"\\]|\\.){6,}"|'(?:[^'\\]|\\.){6,}'|"(?:[^"\\\r\n]|\\.)*\\?(?=[\r\n]|$)|'(?:[^'\\\r\n]|\\.)*\\?(?=[\r\n]|$)|[^\s"']{8,})/gi,
+  // trailing backslash included; an escaped line break does not end a
+  // closed quote. A JSON-style quoted key matches too, and so does a
+  // prefixed name such as DB_PASSWORD or GITHUB_TOKEN.
+  /(?<![A-Za-z0-9])(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|aws_secret_access_key|client[_-]?secret)["']?\s*[:=]\s*(?:"(?:[^"\\]|\\[\s\S]){6,}"|'(?:[^'\\]|\\[\s\S]){6,}'|"(?:[^"\\\r\n]|\\.)*\\?(?=[\r\n]|$)|'(?:[^'\\\r\n]|\\.)*\\?(?=[\r\n]|$)|[^\s"']{8,})/gi,
 ];
 
 /** Zero-width and format characters that could split a token past a pattern. */
