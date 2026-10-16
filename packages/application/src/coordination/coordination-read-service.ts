@@ -9,6 +9,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { ProjectNotFoundError } from "../errors.ts";
 import { canonicalStringify } from "@ai-office/domain/capability/canonical-json.ts";
 import type { TaskStatus } from "@ai-office/domain/task/task.ts";
 import {
@@ -96,10 +97,21 @@ export interface CoordinationReadQuery {
   classes?: readonly string[] | undefined;
 }
 
-export interface CoordinationReadPolicy {
-  /** The classes this caller may receive; P is always among them. */
-  allowedClasses: readonly PlanningDataClass[];
-}
+/**
+ * Who may read what. `owner` is the trusted-local operator on the main
+ * socket: every project, classes P and T. `exposure` is the owner's
+ * listener configuration: only the listed projects, each with its enabled
+ * classes; any other project answers exactly like a missing one. Every
+ * adapter passes its policy here, so no adapter holds an authority check of
+ * its own.
+ */
+export type CoordinationReadPolicy =
+  | { kind: "owner" }
+  | {
+      kind: "exposure";
+      /** Project id to its enabled classes; P is always among them. */
+      projects: ReadonlyMap<string, readonly PlanningDataClass[]>;
+    };
 
 interface CoordinationResponseBase {
   coordinationApiVersion: typeof coordinationApiVersion;
@@ -139,24 +151,30 @@ function sha256(value: unknown): string {
   return createHash("sha256").update(canonicalStringify(value)).digest("hex");
 }
 
-const allClasses: readonly PlanningDataClass[] = ["P", "T"];
+const ownerClasses: readonly PlanningDataClass[] = ["P", "T"];
 
 export class CoordinationReadService {
   constructor(private readonly snapshots: GetPlanningSnapshot) {}
 
   async execute(
     query: CoordinationReadQuery,
-    policy: CoordinationReadPolicy = { allowedClasses: allClasses },
+    policy: CoordinationReadPolicy = { kind: "owner" },
   ): Promise<CoordinationReadResponse> {
     if (!isOperation(query.operation))
       throw new CoordinationOperationError(
         `Coordination operation must be one of: ${coordinationReadOperations.join(", ")}`,
       );
-    const requested = query.classes ?? policy.allowedClasses;
+    const allowedClasses =
+      policy.kind === "owner"
+        ? ownerClasses
+        : policy.projects.get(query.projectId);
+    if (allowedClasses === undefined)
+      throw new ProjectNotFoundError(query.projectId);
+    const requested = query.classes ?? allowedClasses;
     // Validate the class grammar first, so an invalid value is reported as
     // invalid rather than as not enabled.
     const classes = planningClassSet(requested);
-    if (classes.some((value) => !policy.allowedClasses.includes(value)))
+    if (classes.some((value) => !allowedClasses.includes(value)))
       throw new CoordinationClassNotEnabledError();
 
     const response =

@@ -1,4 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -51,12 +58,12 @@ describe("coordination listener configuration", () => {
   test.each([
     ["not json", "{", "not valid JSON"],
     ["not an object", [], "one object"],
-    ["unknown top field", { version: 1, enabled: true, projects: [], all: true }, "unknown field all"],
+    ["unknown top field", { version: 1, enabled: true, projects: [], all: true }, "unknown field \"all\""],
     ["wrong version", { version: 2, enabled: true, projects: [] }, "version must be 1"],
     ["enabled not boolean", { version: 1, enabled: "yes", projects: [] }, "enabled must be"],
     ["projects not array", { version: 1, enabled: true, projects: "*" }, "projects must be an array"],
     ["entry not object", { version: 1, enabled: true, projects: ["p"] }, "projects[0] must be an object"],
-    ["unknown entry field", { version: 1, enabled: true, projects: [{ projectId: "p", classes: ["P"], scope: "x" }] }, "unknown field projects[0].scope"],
+    ["unknown entry field", { version: 1, enabled: true, projects: [{ projectId: "p", classes: ["P"], scope: "x" }] }, "unknown field projects[0].\"scope\""],
     ["bad project id", { version: 1, enabled: true, projects: [{ projectId: "a/b", classes: ["P"] }] }, "projectId must be"],
     ["duplicate project", { version: 1, enabled: true, projects: [{ projectId: "p", classes: ["P"] }, { projectId: "p", classes: ["P"] }] }, "listed twice"],
     ["class D", { version: 1, enabled: true, projects: [{ projectId: "p", classes: ["P", "D"] }] }, "classes must be"],
@@ -108,10 +115,51 @@ describe("coordination listener configuration file", () => {
         enabled: true,
         projects: [{ projectId: "p", classes: ["P"] }],
       }),
+      { mode: 0o600 },
     );
     expect(loadCoordinationListenerConfiguration(directory).state).toBe(
       "enabled",
     );
+  });
+
+  test("a file other users can write is misconfigured", () => {
+    const directory = home();
+    const path = join(directory, "coordination-listener.json");
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        enabled: true,
+        projects: [{ projectId: "p", classes: ["P"] }],
+      }),
+    );
+    for (const mode of [0o620, 0o602]) {
+      chmodSync(path, mode);
+      expect(loadCoordinationListenerConfiguration(directory)).toEqual({
+        state: "misconfigured",
+        reason: "the configuration is writable by other users; use mode 0600",
+      });
+    }
+    chmodSync(path, 0o600);
+    expect(loadCoordinationListenerConfiguration(directory).state).toBe(
+      "enabled",
+    );
+  });
+
+  test("an unknown key is quoted and bounded in the reason", () => {
+    const result = parseCoordinationListenerConfiguration(
+      JSON.stringify({
+        version: 1,
+        enabled: true,
+        projects: [],
+        [`evil\n\u001b[31m${"k".repeat(200)}`]: 1,
+      }),
+    );
+    expect(result.state).toBe("misconfigured");
+    if (result.state !== "misconfigured") return;
+    expect(result.reason).not.toContain("\n");
+    expect(result.reason).not.toContain("\u001b");
+    expect(result.reason.length).toBeLessThan(120);
   });
 
   test("a symbolic link, a directory or an oversized file is misconfigured", () => {
@@ -133,6 +181,7 @@ describe("coordination listener configuration file", () => {
     writeFileSync(
       join(large, "coordination-listener.json"),
       " ".repeat(64 * 1024 + 1),
+      { mode: 0o600 },
     );
     expect(loadCoordinationListenerConfiguration(large)).toEqual({
       state: "misconfigured",

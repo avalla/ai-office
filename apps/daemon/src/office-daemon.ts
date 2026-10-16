@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import {
   daemonProtocolLimits,
@@ -12,6 +12,7 @@ import type { OperationalEventBus } from "@ai-office/application/events/operatio
 import { CommandQueue } from "./command-queue.ts";
 import type { DaemonCommandHandler } from "./local-command-handler.ts";
 import type { QueryApi } from "./query-api.ts";
+import { coordinationApiVersion } from "@ai-office/application/protocol/coordination-query-protocol.ts";
 
 export class RuntimeHostAlreadyRunningError extends Error {
   constructor(socketPath: string) {
@@ -48,8 +49,6 @@ export interface PersistentRuntimeHostOptions {
 
 export interface CoordinationListener {
   socketPath: string;
-  /** Path probed to tell a live listener from a stale socket file. */
-  healthPath: string;
   handle(request: Request): Promise<Response>;
 }
 
@@ -117,7 +116,9 @@ export class PersistentRuntimeHost {
           // releases their listeners and heartbeat timers.
           this.options.queryApi?.closeStreams();
           await this.options.onStopping?.();
-          await coordinationServer?.stop(false);
+          // Reads hold no stream or state, so in-flight ones are not awaited:
+          // a slow client cannot delay the Runtime stop.
+          await coordinationServer?.stop(true);
           await server.stop(false);
           await this.options.events.execute({
             eventType: "daemon.stopped",
@@ -328,6 +329,9 @@ export class PersistentRuntimeHost {
     const listener = this.options.coordinationListener;
     if (listener === undefined) return undefined;
     try {
+      // The listener never shares the main socket, which is live by now.
+      if (resolve(listener.socketPath) === resolve(this.options.socketPath))
+        throw new Error("Coordination socket path is the main socket path");
       // Only a stale socket is ever replaced; any other file at the path is
       // left alone and keeps the listener closed.
       if (
@@ -335,17 +339,33 @@ export class PersistentRuntimeHost {
         !lstatSync(listener.socketPath).isSocket()
       )
         throw new Error("Coordination socket path is not a socket");
-      await this.prepareSocket(listener.socketPath, listener.healthPath);
-      const server = Bun.serve({
-        unix: listener.socketPath,
-        fetch: async (request) => {
-          try {
-            return await listener.handle(request);
-          } catch {
-            return json({ error: "Internal error" }, 500);
-          }
-        },
-      });
+      await this.prepareCoordinationSocket(listener.socketPath);
+      // Created owner-only from the start, not only after the chmod below.
+      const previousUmask = process.umask(0o177);
+      let server: ReturnType<typeof Bun.serve>;
+      try {
+        server = Bun.serve({
+          unix: listener.socketPath,
+          fetch: async (request) => {
+            try {
+              return await listener.handle(request);
+            } catch {
+              return json(
+                {
+                  coordinationApiVersion,
+                  error: {
+                    code: "INTERNAL_ERROR",
+                    message: "Query execution failed",
+                  },
+                },
+                500,
+              );
+            }
+          },
+        });
+      } finally {
+        process.umask(previousUmask);
+      }
       try {
         chmodSync(listener.socketPath, 0o600);
       } catch (error) {
@@ -363,23 +383,41 @@ export class PersistentRuntimeHost {
     }
   }
 
-  private async prepareSocket(
-    socketPath = this.options.socketPath,
-    healthPath = "/health",
-  ): Promise<void> {
+  /**
+   * Removes a stale coordination socket. Any HTTP answer, whatever its
+   * status, proves something is serving there, so the file is left alone.
+   */
+  private async prepareCoordinationSocket(socketPath: string): Promise<void> {
     if (!existsSync(socketPath)) return;
-
+    let answered = false;
     try {
-      const response = await fetch(`http://localhost${healthPath}`, {
+      await fetch("http://localhost/", {
         unix: socketPath,
         signal: AbortSignal.timeout(500),
       });
-      if (response.ok) throw new RuntimeHostAlreadyRunningError(socketPath);
+      answered = true;
+    } catch {
+      // Connection refused or timed out: nothing is serving the file.
+    }
+    if (answered) throw new RuntimeHostAlreadyRunningError(socketPath);
+    this.removeSocket(socketPath);
+  }
+
+  private async prepareSocket(): Promise<void> {
+    if (!existsSync(this.options.socketPath)) return;
+
+    try {
+      const response = await fetch("http://localhost/health", {
+        unix: this.options.socketPath,
+        signal: AbortSignal.timeout(500),
+      });
+      if (response.ok)
+        throw new RuntimeHostAlreadyRunningError(this.options.socketPath);
     } catch (error) {
       if (error instanceof RuntimeHostAlreadyRunningError) throw error;
     }
 
-    this.removeSocket(socketPath);
+    this.removeSocket(this.options.socketPath);
   }
 
   private removeSocket(socketPath: string): void {

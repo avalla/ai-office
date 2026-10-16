@@ -36,9 +36,17 @@ export interface CoordinationQueryApiOptions {
   reads: CoordinationReadService;
   /** Enabled projects and their classes; any other project is not served. */
   projects: ReadonlyMap<string, readonly PlanningDataClass[]>;
-  /** The instant the listener started serving. */
+  /** The Runtime host start instant, reported by the health route. */
   startedAt: () => Date;
+  /** Concurrent read requests served at once; more answer RUNTIME_BUSY. */
+  maxInFlight?: number;
 }
+
+/**
+ * Each read loads and hashes a whole project planning state on the Runtime
+ * event loop, so a client of this socket cannot queue unbounded work there.
+ */
+const defaultMaxInFlight = 8;
 
 const headers = { "cache-control": "no-store" } as const;
 
@@ -59,7 +67,12 @@ function errorResponse(
 const projectNotFound = () =>
   errorResponse("NOT_FOUND", "Project not found", 404);
 
+const busy = (message: string) =>
+  errorResponse("RUNTIME_BUSY", message, 503, { "retry-after": "1" });
+
 export class CoordinationQueryApi {
+  private inFlight = 0;
+
   constructor(private readonly options: CoordinationQueryApiOptions) {}
 
   async handle(request: Request): Promise<Response> {
@@ -93,23 +106,26 @@ export class CoordinationQueryApi {
         };
         return Response.json(health, { headers });
       }
-      const allowedClasses = this.options.projects.get(
-        route.projectId,
-      );
-      if (allowedClasses === undefined) return projectNotFound();
       const parameters = parseCoordinationReadParameters(url.searchParams);
-      const response = await this.options.reads.execute(
-        {
-          projectId: route.projectId,
-          operation: route.operation,
-          milestoneId: parameters.milestoneId,
-          offset: parameters.offset,
-          limit: parameters.limit,
-          classes: parameters.classes,
-        },
-        { allowedClasses },
-      );
-      return Response.json(response, { headers });
+      if (this.inFlight >= (this.options.maxInFlight ?? defaultMaxInFlight))
+        return busy("Too many concurrent reads; retry");
+      this.inFlight += 1;
+      try {
+        const response = await this.options.reads.execute(
+          {
+            projectId: route.projectId,
+            operation: route.operation,
+            milestoneId: parameters.milestoneId,
+            offset: parameters.offset,
+            limit: parameters.limit,
+            classes: parameters.classes,
+          },
+          { kind: "exposure", projects: this.options.projects },
+        );
+        return Response.json(response, { headers });
+      } finally {
+        this.inFlight -= 1;
+      }
     } catch (error) {
       if (
         error instanceof QueryValidationError ||
@@ -124,13 +140,12 @@ export class CoordinationQueryApi {
       if (error instanceof CoordinationResponseTooLargeError)
         return errorResponse("PAYLOAD_TOO_LARGE", error.message, 413);
       if (error instanceof PlanningReadBusyError)
-        return errorResponse(
-          "RUNTIME_BUSY",
-          "A write is in progress; retry",
-          503,
-          { "retry-after": "1" },
-        );
-      // Internal failures never leak a message or a stack trace.
+        return busy("A write is in progress; retry");
+      // Internal failures never leak a message or a stack trace to the
+      // client; the operator log names only the error type.
+      console.error(
+        `Coordination listener read failed: ${error instanceof Error ? error.name : "unknown error"}`,
+      );
       return errorResponse("INTERNAL_ERROR", "Query execution failed", 500);
     }
   }

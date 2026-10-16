@@ -126,6 +126,62 @@ describe("coordination exposure registry", () => {
     expect(exact).not.toHaveProperty("truncatedFields");
   });
 
+  test("cuts relationship lists at 100 entries and flags them", () => {
+    const ids = Array.from({ length: 150 }, (_, index) => `t${index}`);
+    const item = exposeItem(
+      "requirements",
+      {
+        requirementId: "r",
+        key: "R-1",
+        title: "Req",
+        status: "accepted",
+        milestoneId: null,
+        taskIds: ids,
+      },
+      ["P", "T"],
+    );
+    expect(item.taskIds).toEqual(ids.slice(0, 100));
+    expect(item.truncatedFields).toEqual(["taskIds"]);
+    const exact = exposeItem(
+      "requirements",
+      {
+        requirementId: "r",
+        key: "R-1",
+        title: "Req",
+        status: "accepted",
+        milestoneId: null,
+        taskIds: ids.slice(0, 100),
+      },
+      ["P", "T"],
+    );
+    expect(exact).not.toHaveProperty("truncatedFields");
+  });
+
+  test("never leaves a partial redaction marker at the cut", () => {
+    const token = ["gh", "p_", "q".repeat(36)].join("");
+    const item = exposeItem(
+      "milestones",
+      {
+        milestoneId: "m",
+        title: `${"x".repeat(250)}${token}${"y".repeat(10)}`,
+        status: "active",
+      },
+      ["P", "T"],
+    );
+    expect(item.title).toBe("x".repeat(250));
+    expect(item.truncatedFields).toEqual(["title"]);
+  });
+
+  test("bounds very long stored text before scrubbing and flags the cut", () => {
+    const item = exposeItem(
+      "milestones",
+      { milestoneId: "m", title: "z".repeat(100_000), status: "active" },
+      ["P", "T"],
+    );
+    expect(item.title).toBe("z".repeat(256));
+    expect(item.truncatedFields).toEqual(["title"]);
+  });
+
   test("scrubs before truncating, so a token at the boundary is still removed", () => {
     const token = `ghp_${"a".repeat(36)}`;
     const item = exposeItem(
@@ -139,20 +195,52 @@ describe("coordination exposure registry", () => {
 });
 
 describe("credential scrubber", () => {
-  test.each([
-    `ghp_${"A".repeat(36)}`,
-    `github_pat_${"B".repeat(40)}`,
-    `sk-${"c".repeat(40)}`,
-    `sk-ant-api03-${"d".repeat(40)}`,
-    `xoxb-${"1".repeat(20)}`,
-    "AKIAABCDEFGHIJKLMNOP",
-    `AIza${"e".repeat(35)}`,
-    "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3OCJ9.c2lnbmF0dXJlLXZhbHVl",
-    `Bearer ${"f".repeat(32)}`,
-    "-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----",
-  ])("redacts %s", (secret) => {
+  // Synthetic samples are assembled at run time, so the repository holds no
+  // credential-shaped literal that a secret scanner or a redacting tool would
+  // rewrite before a reader sees it.
+  const join = (...parts: string[]) => parts.join("");
+  const samples: [string, string][] = [
+    ["GitHub classic token", join("gh", "p_", "A".repeat(36))],
+    ["GitHub fine-grained token", join("github", "_pat_", "B".repeat(40))],
+    ["OpenAI key", join("sk", "-", "c".repeat(40))],
+    ["Anthropic key", join("sk", "-ant-api03-", "d".repeat(40))],
+    ["Slack token", join("xo", "xb-", "1".repeat(20))],
+    ["AWS access key id", join("AK", "IA", "ABCDEFGHIJKLMNOP")],
+    ["Google API key", join("AI", "za", "e".repeat(35))],
+    [
+      "JWT",
+      join("ey", "J", "hbGciOiJIUzI1NiJ9", ".", "ey", "J", "zdWIiOiIxMjM0NTY3OCJ9", ".", "c2lnbmF0dXJlLXZhbHVl"),
+    ],
+    ["bearer header value", join("Bearer ", "f".repeat(32))],
+    ["basic header value", join("Basic ", "Zm9vOmJhcmJhemJhcXV4cXV1eA==")],
+    ["Stripe live key", join("sk", "_live_", "g".repeat(24))],
+    ["Stripe restricted key", join("rk", "_test_", "h".repeat(24))],
+    ["GitLab token", join("gl", "pat-", "i".repeat(20))],
+    ["npm token", join("np", "m_", "j".repeat(36))],
+    ["Google OAuth token", join("ya", "29.", "k".repeat(30))],
+    ["password assignment", join("password", "=", "hunter22")],
+    ["API key assignment", join("api_key", ": ", "l".repeat(12))],
+    ["AWS secret assignment", join("aws_secret_access_key", "=", "m".repeat(40))],
+    [
+      "token split by a zero-width space",
+      join("gh", "p_", "n".repeat(10), "​", "n".repeat(26)),
+    ],
+    [
+      "private key block",
+      join("-----BEGIN RSA ", "PRIVATE KEY-----\nMIIabc\n-----END RSA ", "PRIVATE KEY-----"),
+    ],
+  ];
+  test.each(samples)("redacts a %s", (_shape, secret) => {
     const scrubbed = scrubCredentials(`before ${secret} after`);
     expect(scrubbed).toBe(`before ${redactionMarker} after`);
+  });
+
+  test("redacts URL credentials and keeps the host", () => {
+    expect(
+      scrubCredentials(
+        ["see https://alice:", "s3cr3t-pass", "@example.com/x"].join(""),
+      ),
+    ).toBe(`see ${redactionMarker}example.com/x`);
   });
 
   test("leaves ordinary planning text alone", () => {
@@ -160,6 +248,8 @@ describe("credential scrubber", () => {
       "CB-R10 shared coordination API",
       "Fix the task-sk-board layout",
       "Bearer of bad news",
+      "Rotate token: weekly",
+      "Password reset flow",
     ])
       expect(scrubCredentials(text)).toBe(text);
   });

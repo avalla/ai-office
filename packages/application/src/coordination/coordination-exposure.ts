@@ -17,6 +17,10 @@ import type {
 export const coordinationExposureLimits = {
   /** Characters (code points), not bytes or UTF-16 units. */
   maxStringLength: 256,
+  /** Code points of stored text scanned by the scrubber before the cut. */
+  maxScannedTextLength: 4096,
+  /** Entries of one relationship list (ids or reasons) per item. */
+  maxListLength: 100,
 } as const;
 
 export interface CoordinationFieldExposure {
@@ -81,47 +85,66 @@ export const redactionMarker = "[redacted]";
 /**
  * Best-effort only: it catches common credential shapes so an accidental
  * paste in a title does not leave the machine. It is not a guarantee, and
- * titles are owner-entered planning data, never agent output.
+ * titles are owner-entered planning data, never agent output. Distinctive
+ * prefixes are matched without a word boundary, so a token glued to other
+ * text is still caught.
  */
-// Distinctive prefixes are matched without a word boundary, so a token glued
-// to other text is still caught.
 const credentialPatterns: readonly RegExp[] = [
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g,
   /github_pat_[A-Za-z0-9_]{20,}/g,
   /gh[pousr]_[A-Za-z0-9]{20,}/g,
+  /glpat-[A-Za-z0-9_-]{20,}/g,
+  /npm_[A-Za-z0-9]{36}/g,
+  /[sr]k_(?:live|test)_[A-Za-z0-9]{16,}/g,
   /sk-[A-Za-z0-9_-]{20,}/g,
   /xox[abposr]-[A-Za-z0-9-]{10,}/g,
   /(?:AKIA|ASIA)[0-9A-Z]{16}/g,
   /AIza[0-9A-Za-z_-]{35}/g,
+  /ya29\.[A-Za-z0-9_-]{20,}/g,
   /eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g,
-  /\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*/gi,
+  /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/-]{16,}=*/gi,
+  // Credentials in URL userinfo: scheme://user:password@host.
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/gi,
+  // Assignments such as password=..., api_key: ...
+  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|aws_secret_access_key|client[_-]?secret)\s*[:=]\s*\S{8,}/gi,
 ];
 
+/** Zero-width and format characters that could split a token past a pattern. */
+const invisibleCharacters = /[\u00AD\u200B-\u200F\u2060-\u2064\uFEFF]/g;
+
 export function scrubCredentials(value: string): string {
-  let result = value;
+  let result = value.replace(invisibleCharacters, "");
   for (const pattern of credentialPatterns)
     result = result.replace(pattern, redactionMarker);
   return result;
 }
 
-/** Truncates by code point so a surrogate pair is never split. */
+/**
+ * Bounds text by code point so a surrogate pair is never split, and never
+ * leaves a partial redaction marker at the cut.
+ */
 function truncate(value: string): { value: string; truncated: boolean } {
   const points = Array.from(value);
-  return points.length <= coordinationExposureLimits.maxStringLength
-    ? { value, truncated: false }
-    : {
-        value: points
-          .slice(0, coordinationExposureLimits.maxStringLength)
-          .join(""),
-        truncated: true,
-      };
+  const limit = coordinationExposureLimits.maxStringLength;
+  if (points.length <= limit) return { value, truncated: false };
+  let cut: number = limit;
+  const marker = redactionMarker.length;
+  for (let start = Math.max(0, cut - marker + 1); start < cut; start += 1)
+    if (points.slice(start, start + marker).join("") === redactionMarker) {
+      cut = start;
+      break;
+    }
+  return { value: points.slice(0, cut).join(""), truncated: true };
 }
 
 export type CoordinationExposedItem = Record<string, unknown>;
 
 /**
  * Builds one exposed item from a planning item: only registered fields of an
- * allowed class, in registry order; text scrubbed, then truncated.
+ * allowed class, in registry order. Text is bounded, scrubbed, then
+ * truncated; relationship lists are cut at {@link coordinationExposureLimits}
+ * so one item always fits a response. Every cut field is named in
+ * `truncatedFields`.
  */
 export function exposeItem(
   collection: CoordinationExposedCollection,
@@ -139,10 +162,23 @@ export function exposeItem(
     const value = values[field];
     if (value === undefined) continue;
     if (exposure.text === true && typeof value === "string") {
-      const bounded = truncate(scrubCredentials(value));
+      // Scrubbing cost stays bounded whatever the stored length.
+      const points = Array.from(value);
+      const scanned =
+        points.length > coordinationExposureLimits.maxScannedTextLength
+          ? points
+              .slice(0, coordinationExposureLimits.maxScannedTextLength)
+              .join("")
+          : value;
+      const bounded = truncate(scrubCredentials(scanned));
       item[field] = bounded.value;
-      if (bounded.truncated) truncated.push(field);
-    } else item[field] = Array.isArray(value) ? [...(value as unknown[])] : value;
+      if (bounded.truncated || scanned !== value) truncated.push(field);
+    } else if (Array.isArray(value)) {
+      const list = value as readonly unknown[];
+      item[field] = list.slice(0, coordinationExposureLimits.maxListLength);
+      if (list.length > coordinationExposureLimits.maxListLength)
+        truncated.push(field);
+    } else item[field] = value;
   }
   if (truncated.length > 0) item[truncatedFieldsKey] = truncated;
   return item;

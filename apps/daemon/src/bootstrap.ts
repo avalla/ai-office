@@ -25,7 +25,6 @@ import { loadCoordinationListenerConfiguration } from "./coordination-listener-c
 import { GetPlanningSnapshot } from "@ai-office/application/coordination/get-planning-snapshot.ts";
 import { CoordinationReadService } from "@ai-office/application/coordination/coordination-read-service.ts";
 import type { CoordinationListenerConfiguration } from "@ai-office/application/coordination/coordination-listener-configuration.ts";
-import { coordinationQueryPrefix } from "@ai-office/application/protocol/coordination-query-protocol.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
@@ -550,7 +549,6 @@ export async function bootstrap(
             socketPath:
               options.coordinationSocketPath ??
               join(runtimePaths.runtimeHome, "coordination.sock"),
-            healthPath: `${coordinationQueryPrefix}/health`,
             handle: (request: Request) => coordinationApi.handle(request),
           }
         : undefined;

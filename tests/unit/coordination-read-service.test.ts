@@ -224,7 +224,10 @@ describe("coordination read service", () => {
 
   test("a caller cannot receive a class that is not allowed", async () => {
     const reads = service();
-    const onlyP = { allowedClasses: ["P"] as const };
+    const onlyP = {
+      kind: "exposure" as const,
+      projects: new Map([["p", ["P"] as const]]),
+    };
     const page = (await reads.execute(
       { projectId: "p", operation: "milestones" },
       onlyP,
@@ -237,6 +240,13 @@ describe("coordination read service", () => {
         onlyP,
       ),
     ).rejects.toBeInstanceOf(CoordinationClassNotEnabledError);
+    // An existing project outside the exposure policy reads as missing.
+    await expect(
+      reads.execute(
+        { projectId: "p", operation: "status" },
+        { kind: "exposure", projects: new Map([["other", ["P", "T"]]]) },
+      ),
+    ).rejects.toBeInstanceOf(ProjectNotFoundError);
     // An invalid class is invalid, not "not enabled".
     await expect(
       reads.execute(
@@ -278,9 +288,15 @@ describe("coordination read service", () => {
     ).rejects.toBeInstanceOf(PlanningReadBusyError);
   });
 
-  test("a response above 256 KiB is refused, not cut", async () => {
-    const tasks = Array.from({ length: 3000 }, (_, index) => ({
-      id: `task-${String(index).padStart(5, "0")}-${"i".repeat(100)}`,
+  test("a response above 256 KiB is refused; a smaller window of the same operation is served", async () => {
+    // 200 tasks, each with 100 prerequisites of 60-character ids: every item
+    // is at the list bound, so a full page is far above 256 KiB.
+    const prerequisites = Array.from(
+      { length: 100 },
+      (_, index) => `pre-${String(index).padStart(3, "0")}-${"p".repeat(52)}`,
+    );
+    const tasks = Array.from({ length: 200 }, (_, index) => ({
+      id: `task-${String(index).padStart(3, "0")}`,
       title: "t",
       status: "pending" as const,
       priority: 0,
@@ -288,30 +304,112 @@ describe("coordination read service", () => {
     const big = (): PlanningStateRecord => ({
       ...state(),
       tasks: [
-        ...state().tasks,
         ...tasks,
+        ...prerequisites.map((id) => ({
+          id,
+          title: "p",
+          status: "completed" as const,
+          priority: 0,
+        })),
       ],
-      requirements: [
-        {
-          id: "r1",
-          key: "R-1",
-          title: "Req 1",
-          status: "accepted",
-          milestoneId: "m1",
-        },
-      ],
+      dependencies: tasks.flatMap((task) =>
+        prerequisites.map((dependsOnTaskId) => ({
+          taskId: task.id,
+          dependsOnTaskId,
+        })),
+      ),
+      requirements: [],
+      taskRequirementLinks: [],
+    });
+    await expect(
+      service(big).execute({ projectId: "p", operation: "tasks", limit: 200 }),
+    ).rejects.toBeInstanceOf(CoordinationResponseTooLargeError);
+    const page = (await service(big).execute({
+      projectId: "p",
+      operation: "tasks",
+      limit: 10,
+    })) as CoordinationCollectionResponse;
+    expect(page.items).toHaveLength(10);
+  });
+
+  test("one item always fits: a requirement with thousands of tasks is listed with a cut, flagged list", async () => {
+    const tasks = Array.from({ length: 3000 }, (_, index) => ({
+      id: `task-${String(index).padStart(5, "0")}-${"i".repeat(100)}`,
+      title: "t",
+      status: "pending" as const,
+      priority: 0,
+    }));
+    const page = (await service(() => ({
+      ...state(),
+      tasks,
+      dependencies: [],
       taskRequirementLinks: tasks.map((task) => ({
         taskId: task.id,
         requirementId: "r1",
       })),
-    });
+    })).execute({
+      projectId: "p",
+      operation: "requirements",
+    })) as CoordinationCollectionResponse;
+    expect(page.items[0]!.taskIds).toHaveLength(100);
+    expect(page.items[0]!.truncatedFields).toEqual(["taskIds"]);
+  });
+
+  test("a read that meets a short write retries, a long write stays busy", async () => {
+    const delays: number[] = [];
+    const sleep = async (milliseconds: number) => {
+      delays.push(milliseconds);
+    };
+    let busyReads = 2;
+    const reads: PlanningReadRepository = {
+      readPlanningState: async () => {
+        if (busyReads > 0) {
+          busyReads -= 1;
+          throw new PlanningReadBusyError();
+        }
+        return state();
+      },
+    };
+    const retried = new CoordinationReadService(
+      new GetPlanningSnapshot(reads, { attempts: 5, delayMs: 7, sleep }),
+    );
     await expect(
-      service(big).execute({ projectId: "p", operation: "requirements" }),
-    ).rejects.toBeInstanceOf(CoordinationResponseTooLargeError);
-    // A smaller window over the same state is served.
+      retried.execute({ projectId: "p", operation: "status" }),
+    ).resolves.toMatchObject({ operation: "status" });
+    expect(delays).toEqual([7, 7]);
+
+    delays.length = 0;
+    let calls = 0;
+    const stuck = new CoordinationReadService(
+      new GetPlanningSnapshot(
+        {
+          readPlanningState: async () => {
+            calls += 1;
+            throw new PlanningReadBusyError();
+          },
+        },
+        { attempts: 3, delayMs: 5, sleep },
+      ),
+    );
     await expect(
-      service(big).execute({ projectId: "p", operation: "tasks", limit: 10 }),
-    ).resolves.toMatchObject({ page: { limit: 10 } });
+      stuck.execute({ projectId: "p", operation: "tasks" }),
+    ).rejects.toBeInstanceOf(PlanningReadBusyError);
+    expect(calls).toBe(3);
+    expect(delays).toEqual([5, 5]);
+
+    // Any other failure is not retried.
+    calls = 0;
+    const broken = new GetPlanningSnapshot(
+      {
+        readPlanningState: async () => {
+          calls += 1;
+          throw new Error("disk");
+        },
+      },
+      { attempts: 3, delayMs: 5, sleep },
+    );
+    await expect(broken.execute({ projectId: "p" })).rejects.toThrow("disk");
+    expect(calls).toBe(1);
   });
 
   test("matches the recorded v1 fixture byte for byte", async () => {

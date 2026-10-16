@@ -6,7 +6,7 @@
  * every adapter.
  */
 
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   existsSync,
   mkdirSync,
@@ -263,6 +263,7 @@ function enable(where: Home, projects: { projectId: string; classes: string[] }[
   writeFileSync(
     where.configurationPath,
     JSON.stringify({ version: 1, enabled: true, projects }),
+    { mode: 0o600 },
   );
 }
 
@@ -276,6 +277,7 @@ describe("coordination listener", () => {
     writeFileSync(
       where.configurationPath,
       JSON.stringify({ version: 1, enabled: true, projects: "all" }),
+      { mode: 0o600 },
     );
     await withRuntime(where, async ({ run }) => {
       await run(["project:create", "Misconfigured"]);
@@ -531,6 +533,62 @@ describe("coordination listener", () => {
         message: "The requested data classes are not enabled for this project",
       });
     });
+  });
+
+  test("never takes over the main socket or a live foreign socket", async () => {
+    const where = home();
+    let projectId = "";
+    await withRuntime(where, async ({ run }) => {
+      projectId = (await seed(run)).projectId;
+    });
+    enable(where, [{ projectId, classes: ["P"] }]);
+
+    // Same path as the main socket: the listener refuses to start (the main
+    // socket file is never unlinked or rebound) and commands keep working.
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await withRuntime(
+        { ...where, coordinationSocket: where.mainSocket },
+        async ({ run, mainSocket }) => {
+          await run(["task:list", "--project", projectId]);
+          const coordination = await request(
+            mainSocket,
+            "/api/coordination/v1/health",
+          );
+          expect(coordination.status).toBe(404);
+        },
+      );
+      expect(errors).toHaveBeenCalledWith(
+        "Coordination listener could not start; it stays disabled until the Runtime restarts.",
+      );
+    } finally {
+      errors.mockRestore();
+    }
+
+    // A live server in another process that answers 404 to the coordination
+    // health route is not stale: its socket is left alone and keeps answering.
+    const foreign = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `Bun.serve({ unix: ${JSON.stringify(where.coordinationSocket)}, fetch: () => Response.json({ foreign: true }, { status: 404 }) }); console.log("ready"); setInterval(() => {}, 1000);`,
+      ],
+      { stdout: "pipe" },
+    );
+    try {
+      await foreign.stdout.getReader().read();
+      // The socket file's identity, not a fetch: a pooled connection could
+      // still reach the old listener after the file was replaced.
+      const before = statSync(where.coordinationSocket).ino;
+      await withRuntime(where, async ({ run }) => {
+        await run(["task:list", "--project", projectId]);
+        expect(statSync(where.coordinationSocket).ino).toBe(before);
+      });
+      expect(statSync(where.coordinationSocket).ino).toBe(before);
+    } finally {
+      foreign.kill("SIGKILL");
+      await foreign.exited;
+    }
   });
 
   test("replaces a stale socket but never another file at the socket path", async () => {

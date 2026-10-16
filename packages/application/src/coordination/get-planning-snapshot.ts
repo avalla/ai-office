@@ -1,5 +1,8 @@
 import { ProjectNotFoundError } from "../errors.ts";
-import type { PlanningReadRepository } from "../ports/planning-read.port.ts";
+import {
+  PlanningReadBusyError,
+  type PlanningReadRepository,
+} from "../ports/planning-read.port.ts";
 import {
   planningSnapshotCollections,
   planningSnapshotLimits,
@@ -10,6 +13,21 @@ import {
   type PlanningSnapshotCollection,
   type PlanningSnapshotPage,
 } from "./planning-snapshot.ts";
+
+/** How a read that meets an open writer transaction is retried. */
+export interface PlanningReadBusyRetry {
+  /** Total attempts, the first included. */
+  attempts: number;
+  delayMs: number;
+  sleep: (milliseconds: number) => Promise<void>;
+}
+
+const defaultBusyRetry: PlanningReadBusyRetry = {
+  attempts: 5,
+  delayMs: 20,
+  sleep: (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
+};
 
 /** A planning query whose collection, window or class set is not accepted. */
 export class PlanningSnapshotQueryError extends Error {
@@ -77,7 +95,10 @@ function windowValue(
  * planning state and appends no planning or domain audit.
  */
 export class GetPlanningSnapshot {
-  constructor(private readonly reads: PlanningReadRepository) {}
+  constructor(
+    private readonly reads: PlanningReadRepository,
+    private readonly busy: PlanningReadBusyRetry = defaultBusyRetry,
+  ) {}
 
   async execute(query: PlanningSnapshotQuery): Promise<PlanningSnapshotPage> {
     const collection = query.collection ?? "tasks";
@@ -110,7 +131,7 @@ export class GetPlanningSnapshot {
     const classes = planningClassSet(query.classes ?? ["P", "T"]);
     const milestoneId = query.milestoneId ?? null;
 
-    const state = await this.reads.readPlanningState(query.projectId);
+    const state = await this.readState(query.projectId);
     if (state === null) throw new ProjectNotFoundError(query.projectId);
     if (
       milestoneId !== null &&
@@ -123,5 +144,25 @@ export class GetPlanningSnapshot {
       { projectId: query.projectId, milestoneId },
       classes,
     );
+  }
+
+  /**
+   * Writer transactions on the shared connection are short, so a read that
+   * meets one waits briefly and retries; only a write still open after the
+   * last attempt surfaces as {@link PlanningReadBusyError}.
+   */
+  private async readState(projectId: string) {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await this.reads.readPlanningState(projectId);
+      } catch (error) {
+        if (
+          !(error instanceof PlanningReadBusyError) ||
+          attempt >= this.busy.attempts
+        )
+          throw error;
+        await this.busy.sleep(this.busy.delayMs);
+      }
+    }
   }
 }

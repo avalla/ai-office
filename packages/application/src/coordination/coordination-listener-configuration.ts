@@ -28,12 +28,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** The first unknown key, quoted and bounded so a log line stays one line. */
 function closed(
   value: Record<string, unknown>,
   allowed: readonly string[],
 ): string | null {
   const unknown = Object.keys(value).find((key) => !allowed.includes(key));
-  return unknown === undefined ? null : unknown;
+  return unknown === undefined ? null : JSON.stringify(unknown.slice(0, 64));
 }
 
 /**
