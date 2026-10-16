@@ -103,6 +103,18 @@ codes), and `derived` (analysis kept apart from authoritative fields). The ident
 yields the same canonical projection and the same identifier; there is no
 revision counter, the digest is the revision.
 
+Every identifier that leaves the Runtime is computed over the exposed
+projection, after the exposure mappers (CB-10): text scrubbed and cut at 256
+characters, relationship lists cut at 100 entries, requirements ordered by
+exposed key, milestones ordered by id (their creation time is not exposed).
+Stored states that differ only in what is not exposed (a scrubbed credential,
+a cut title tail, list entries past 100, milestone creation times) therefore
+share one identifier, so the identifier cannot confirm a guess about hidden data. The
+local `planning:snapshot` command keeps the identifier over stored values; it
+is not an exposure channel. An `expectedSnapshot` is compared against the
+exposed identifier, and it stays advisory: the preconditions of 8.2 are the
+guard.
+
 ### 3.2 `review_request`
 
 `payload`: `subject` (`snapshotId` or `planId`), `questions` (a closed set:

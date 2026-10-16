@@ -50,11 +50,23 @@ export interface PlanningStateRecord {
   taskRequirementLinks: { taskId: string; requirementId: string }[];
 }
 
+/**
+ * A write transaction is open on the connection the read would share, so the
+ * read could observe uncommitted state. Nothing was read; retry later.
+ */
+export class PlanningReadBusyError extends Error {
+  constructor() {
+    super("A write is in progress; retry the planning read");
+    this.name = "PlanningReadBusyError";
+  }
+}
+
 export interface PlanningReadRepository {
   /**
    * The project's complete planning state, read in one consistent snapshot so
    * every edge and link references a task, milestone or requirement the same
-   * result contains. `null` when the project does not exist.
+   * result contains. `null` when the project does not exist. Throws
+   * {@link PlanningReadBusyError} instead of reading uncommitted state.
    */
   readPlanningState(projectId: string): Promise<PlanningStateRecord | null>;
 }
