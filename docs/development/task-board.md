@@ -369,6 +369,19 @@ applied. When a terminal pipeline and a review exit both point at the same
 task, the plan carries the dependency repair and the pipeline finding is
 reported as covered by it.
 
+**A plan never repairs a dependent and its prerequisite together.** A
+review-exit repair is valid only while the exits it answers still hold, and
+another repair in the same plan can move exactly those prerequisites — a
+blocked prerequisite with a stale terminal pipeline carries its own
+`task:cancel`. When that happens the dependent's review-exit finding is
+reported with its repair refused, named after the prerequisite repair to
+apply first; otherwise applying the prerequisite's cancel first would make
+the dependent's apply-time revalidation fail and roll back the whole batch,
+while applying it second would strand the dependent blocked behind a terminal
+prerequisite. Re-inspection after the prerequisite's repair derives the
+dependent's fresh finding — a cancelled prerequisite turns the blocked-exit
+`block` into the terminal-exit `cancel` the state calls for.
+
 **Review-exit repairs are revalidated at apply time.** Immediately before each
 review-exit `block`/`cancel`, the prerequisites named in `reviewExits` are
 re-read inside the plan's transaction; if any named exit no longer holds — the

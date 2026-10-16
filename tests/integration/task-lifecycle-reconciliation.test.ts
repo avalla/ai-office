@@ -2251,6 +2251,132 @@ describe("task reconciliation", () => {
         eventsBefore,
       );
     });
+
+    test("defers the dependent's repair while its prerequisite has a repair in the same plan", async () => {
+      const context = await fixture();
+      await seedProject(context, "project-1");
+      await seedTask(context, "project-1", "upstream");
+      await seedTask(context, "project-1", "dependent");
+      await context.dependencyCommands.link({
+        projectId: "project-1",
+        taskId: "dependent",
+        dependsOnTaskId: "upstream",
+        actorId: "operator",
+      });
+      const task = (taskId: string) => ({
+        projectId: "project-1",
+        taskId,
+        actorId: "operator",
+      });
+      await context.lifecycle.start(task("upstream"));
+      await context.lifecycle.submitForReview(task("upstream"));
+      await context.lifecycle.start(task("dependent"));
+      await seedManifest(context);
+      // A stale terminal pipeline for the prerequisite, admitted while it was
+      // still in review — the storage claim guard refuses pipeline inserts
+      // after the exit. It carries the plan's only other repair: a cancel
+      // that would move the prerequisite off the recorded blocked exit.
+      const run = PipelineRun.create({
+        id: "pipeline-1",
+        projectId: "project-1",
+        taskId: "upstream",
+        manifestRevisionId: "manifest-1",
+        manifestRevision: 1,
+        definition: manifest.pipelines[0]!,
+        startedBy: "operator",
+        stageRunIds: ["pipeline-1-stage"],
+        now,
+      });
+      await context.pipelines.insert(run);
+      const version = run.snapshot().version;
+      run.cancel("operator", now);
+      expect(await context.pipelines.save(run, version)).toBe(true);
+      await context.lifecycle.block({
+        ...task("upstream"),
+        reason: "Review found a blocker",
+      });
+
+      const report = await context.reconcile.inspect("project-1");
+      // The dependent's review-exit repair is deferred; the prerequisite's
+      // own repair is the only one this plan offers.
+      const repairable = report.issues.filter((issue) => issue.repairable);
+      expect(repairable.map((issue) => [issue.taskId, issue.finding])).toEqual([
+        ["upstream", "terminal_pipeline_open_task"],
+      ]);
+      const deferred = reviewExitIssue(report);
+      expect(deferred).toMatchObject({
+        severity: "warning",
+        repairable: false,
+        repairOperation: null,
+        suggestedCommand: null,
+        reviewExits: [
+          { taskId: "upstream", from: "waiting_review", to: "blocked" },
+        ],
+      });
+      expect(deferred?.refusalReason).toBe(
+        "prerequisite upstream has its own repair in this plan; apply it first, then re-inspect",
+      );
+
+      // The approved plan applies end to end: the prerequisite's cancel,
+      // audited with its pipeline reason.
+      const result = await context.reconcile.repair({
+        projectId: "project-1",
+        approvedPlanHash: report.planHash!,
+        actorId: "local-operator",
+      });
+      expect(result.applied).toEqual([
+        {
+          taskId: "upstream",
+          from: "blocked",
+          to: "cancelled",
+          operation: "cancel",
+        },
+      ]);
+      expect(result.refused.map((issue) => issue.taskId)).toContain(
+        "dependent",
+      );
+      expect(
+        (await context.tasks.findById("dependent"))?.snapshot().status,
+      ).toBe("running");
+
+      // Re-inspection derives the dependent's fresh finding — the exit is
+      // now terminal, so the repair is a cancel at inconsistent severity —
+      // and the follow-up plan applies it.
+      const after = await context.reconcile.inspect("project-1");
+      const fresh = reviewExitIssue(after);
+      expect(fresh).toMatchObject({
+        severity: "inconsistent",
+        repairable: true,
+        repairOperation: "cancel",
+        suggestedCommand: "task:cancel",
+        reviewExits: [
+          { taskId: "upstream", from: "waiting_review", to: "cancelled" },
+        ],
+      });
+      const followup = await context.reconcile.repair({
+        projectId: "project-1",
+        approvedPlanHash: after.planHash!,
+        actorId: "local-operator",
+      });
+      expect(followup.applied).toEqual([
+        {
+          taskId: "dependent",
+          from: "running",
+          to: "cancelled",
+          operation: "cancel",
+        },
+      ]);
+      const events = auditEvents(context, "task.status_changed");
+      expect(JSON.parse(events.at(-1)!.payload_json)).toEqual({
+        operation: "cancel",
+        from: "running",
+        to: "cancelled",
+        reason: "reconciled: prerequisite upstream exited review to cancelled",
+      });
+      const settled = await context.reconcile.inspect("project-1");
+      expect(settled.issues).toEqual([]);
+      expect(settled.planHash).toBeNull();
+    });
   });
 });
 

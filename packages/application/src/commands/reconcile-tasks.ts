@@ -636,6 +636,36 @@ export class ReconcileTasks {
       }
     }
 
+    // A review-exit repair is valid only while the exits it answers still
+    // hold, and another repair in the same plan can move exactly those
+    // prerequisites: a blocked prerequisite with a stale terminal pipeline
+    // carries its own cancel, which applied first would move it off the
+    // recorded exit before the dependent's repair re-reads it, and applied
+    // second would strand the dependent blocked behind a terminal
+    // prerequisite. Dependency findings are derived before the pipeline
+    // findings that can conflict with them and tasks are visited in storage
+    // order, so the conflict is resolved here, once every finding is known:
+    // the dependent's repair is refused and named after the prerequisite
+    // repair to apply first. Re-inspection after that repair derives the
+    // dependent's fresh finding — a cancelled prerequisite turns the
+    // blocked-exit block into the terminal-exit cancel the state calls for.
+    const repairedTasks = new Set(
+      issues.filter((issue) => issue.repairable).map((issue) => issue.taskId),
+    );
+    for (const issue of issues) {
+      if (!issue.repairable || issue.reviewExits === undefined) continue;
+      const conflict = issue.reviewExits.find((exit) =>
+        repairedTasks.has(exit.taskId),
+      );
+      if (conflict === undefined) continue;
+      issue.repairable = false;
+      issue.repairOperation = null;
+      // The direct command would apply the stale-exit outcome by hand, which
+      // is exactly what the deferral exists to prevent.
+      issue.suggestedCommand = null;
+      issue.refusalReason = `prerequisite ${conflict.taskId} has its own repair in this plan; apply it first, then re-inspect`;
+    }
+
     const repairs = issues.filter((issue) => issue.repairable);
     return {
       projectId,
