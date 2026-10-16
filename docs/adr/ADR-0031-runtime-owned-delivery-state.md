@@ -67,8 +67,8 @@ until it is explicitly accepted.
   to a pipeline run. It does not extend a task or a pipeline run: extending the
   pipeline run would bind the portable workflow to enforced pipelines (the
   rejected alternative above), and a task is not the right owner of gate
-  results. When a delivery run is linked to a pipeline run, its gate state is
-  read from the pipeline instead of copied, so the two records cannot drift.
+  results. The reference is provenance only; the relation is bounded by
+  invariants 1 and 2 below, so the two records cannot drift.
 - **Evidence.** Only a reference and a content hash are stored, never the
   evidence itself, consistent with the gate evidence references of the
   file-based checkpoints.
@@ -98,31 +98,97 @@ in this proposal. Accepting the ADR accepts them.
   the key-value JSON storage. Setup is mutable configuration resolved by scope;
   a run is a history with identity, transitions and evidence references that
   needs explicit constraints. A forward-only migration introduces it without
-  changing `0050_task_delivery_setup`.
-  - At creation the run fixes an immutable snapshot of the configuration
-    effectively resolved at that moment, so a later setup change cannot alter a
-    run in progress. The snapshot is the resolved configuration, not only a
-    profile name, and includes the schema version and the selected gates.
+  changing `0050_task_delivery_setup`. At creation the run fixes an immutable
+  snapshot of the configuration (invariant 3).
 - **Checkpoint store.** The delivery run complements the file-based checkpoint
   store and does not replace it. The file store remains the source of truth for
   a checkpoint's content, validity and resume; the delivery run is the Runtime
   register of the reference, its hash, and its association with the run, gate
   and head commit. The delivery run can name a candidate checkpoint but cannot
   declare it valid for resume, and a checkpoint's existence never implies that a
-  gate passed or is authorized. With a linked enforced pipeline, the pipeline
-  run remains the source of gate state.
-  - Reconciliation protocol (the file publication and `delivery:record` cannot
-    share a transaction):
-    1. Publish the immutable checkpoint atomically to the file store.
-    2. Register its reference and hash on the delivery run with an idempotent
-       operation. Registering the same checkpoint with the same hash again is
-       harmless; a reference already registered with a different hash is an
-       explicit conflict, never an overwrite.
-    3. If registration fails, the checkpoint is kept and reconciled later.
-    4. Resume is conservative: it resolves the reference and validates the file,
-       hash, version and association to the run. A missing or invalid
-       checkpoint makes resume from it fail explicitly; the system does not
-       silently fall back to a possibly inconsistent state.
+  gate passed or is authorized. Registration follows the protocol in invariant
+  4.
+
+## Invariants and failure modes
+
+These are constraints on a future implementation, not an implementation. Each
+failure is a typed error at the application boundary.
+
+1. **A linked pipeline run must belong to the same project and task.**
+   - A delivery run has a project and a task from creation. A pipeline run
+     reference is accepted only when the pipeline run's project and task both
+     equal the delivery run's. The application service validates this at
+     creation and in every command that supplies or changes the reference; a
+     foreign key to the run identifier alone cannot enforce ownership and is
+     only a backstop, as the cross-project rule in `AGENTS.md` requires.
+   - The reference is set at most once and is never repointed.
+   - Failure modes: a pipeline run of another task or project, or one that does
+     not exist, is rejected with the same typed not-found error, so a caller
+     cannot probe another project's runs; nothing is linked and no pipeline
+     state is read.
+2. **Delivery gates and pipeline stages are independent.**
+   - Delivery gates come from the delivery catalog. Pipeline stage identifiers
+     are open strings declared by the office manifest. The ADR defines no mapping
+     between them and a consumer must not infer one by name.
+   - The link is provenance only. `delivery:next` reports delivery gates from
+     the delivery run's own records and, separately, the stage state of the
+     linked pipeline run read from the pipeline. Neither is copied into the
+     other, and neither marks the other passed.
+   - Readiness stays the conjunction already defined in
+     [task-delivery profiles](../development/task-delivery-profiles.md): the
+     selected and floor-required gates, a required external review, and the
+     stages of an enforced pipeline, which stay authoritative whatever the
+     profile selects.
+   - Failure modes: a linked pipeline run that is absent, terminal or in an
+     ambiguous state is reported as such next to the delivery gates and never
+     turned into a delivery gate result. A future mapping needs its own ADR with
+     a pinned, versioned mapping.
+3. **The configuration snapshot is immutable and the floor is dynamic.**
+   - At creation the run fixes the configuration effectively resolved at that
+     moment: its schema version, the resolved profile and the selected gates,
+     not only a profile name. Later setup changes never alter the run; adopting
+     them needs a new run.
+   - The floor is not part of the snapshot. It depends on the task, the diff
+     and the head commit, which the command does not receive, so the skill
+     evaluates it where the profiles design says (at preflight, before
+     `implementation` ends, before `ready_for_merge`, and when a new commit can
+     change the classification) and it only moves up.
+   - The effective gate set is the snapshot's selected gates plus the gates the
+     floor made required. The run records each floor-required gate, with its
+     trigger and the head it was determined on, as an append-only addition. The
+     recorded set never shrinks within a run: a later head that no longer
+     triggers the floor does not remove it. A floor-required gate that ran in a
+     reduced form is run again in its full form, and the reduced evidence does
+     not cover it.
+   - Failure modes: if recording a floor addition fails, the skill still applies
+     the floor locally and the record is reconciled later; a missing record
+     never means the floor does not apply. `delivery:next` states that it does
+     not evaluate the floor itself, and a setup lowered below the computed floor
+     is refused, as the profiles design already requires.
+4. **Checkpoint registration is idempotent, conflict-explicit and pinned until
+   registered.**
+   - The file publication and `delivery:record` cannot share a transaction, so
+     the order is: publish the immutable checkpoint atomically to the file
+     store, then register its reference and hash on the delivery run.
+   - Registering the same checkpoint with the same hash again is harmless. A
+     reference already registered with a different hash is an explicit conflict,
+     never an overwrite.
+   - A published checkpoint whose registration has not succeeded is pending.
+     The file store keeps a durable pending marker next to it. Retention pruning
+     never deletes a pending checkpoint, in addition to the latest and the
+     handoff-cited ones it already keeps. The marker is cleared only after a
+     successful registration or an explicit idempotent reconciliation, and it
+     survives process restarts.
+   - Reconciliation registers pending checkpoints in publication order, and
+     resume validates the file, hash, version and association to the run. A
+     missing or invalid checkpoint makes resume from it fail explicitly; the
+     system does not silently fall back to a possibly inconsistent state.
+   - Failure modes: during a Runtime outage or repeated registration failures,
+     pending checkpoints accumulate beyond the retention cap rather than being
+     pruned. The skill reports the pending count when it is non-zero. Pruning of
+     a registered checkpoint follows the existing retention rules only.
+     Capping the pending set, if ever needed, is a separate explicit decision
+     that must never delete an unregistered checkpoint silently.
 
 ## Known limitations
 
@@ -130,6 +196,8 @@ in this proposal. Accepting the ADR accepts them.
   another host without the original files is not supported. Cross-machine
   portability would need shared or replicated checkpoint storage, which is a
   separate decision and outside this ADR.
+- Pending checkpoints are not bounded in this proposal, so a long outage grows
+  the local store. This is preferred to losing an unregistered checkpoint.
 
 ## Open questions
 
