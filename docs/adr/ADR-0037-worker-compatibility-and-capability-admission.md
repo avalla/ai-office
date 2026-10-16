@@ -234,7 +234,12 @@ unaffected.
   revocation trigger and an operator may also request, the registry is read into
   an immutable snapshot after verifying every digest, every sufficiency check
   and every approval class. An invalid evidence bundle or decision listed by a
-  committed manifest is excluded and reported, which admits less. A committed
+  committed manifest is excluded and reported, and its subject is _blocked_: it
+  is refused with `registry_unreadable` and never falls back to the
+  `legacy_policy` predicate or to another record, so exclusion only ever admits
+  less. When the subject of an invalid decision cannot be read, the snapshot is
+  refused as a whole. A decision named by a committed revocation is revoked
+  whether or not a manifest still lists it as active. A committed
   manifest or revocation that is missing, unreadable or invalid, at start or on
   reload, cannot be skipped, because skipping it could readmit a revoked
   subject: the snapshot is refused with `registry_unreadable`. A valid snapshot
@@ -310,7 +315,9 @@ Steps, in this order, each deterministic:
    active one (there is at most one) is used. If none is active but a revoked
    exact decision exists, refuse with `audit_revoked`, never falling back to the
    `legacy_policy` predicate; a decision revoked as `superseded` therefore does
-   not block its active successor. With no exact decision at all, the predicate
+   not block its active successor. A blocked subject (decision 4, Loading) is
+   refused with `registry_unreadable` and does not fall back either. With no
+   exact decision at all, and no blocked subject, the predicate
    of decision 10 applies where it holds and its implicit-dispatch condition is
    met and the predicate record itself is not revoked; a revoked predicate
    refuses with `audit_revoked`. If none of this applies: refuse
