@@ -2011,7 +2011,7 @@ deliberately not delivered as written.
 
 ### Limitations and non-goals
 
-- No scheduler gate, run gate or run pin (`f8d75709`, GP-24).
+- No scheduler gate or run gate (`f8d75709`); the run pin exists since PR #168 and GP-24 uses it.
 - No stage, workflow or policy semantics (GP-25) and no validator adapters
   (GP-14A declares them as data, GP-14B checks and runs them).
 - No pack-granted authority and no credentials. A binding creates no
