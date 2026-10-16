@@ -74,3 +74,88 @@ operator, so operator administration is not strongly isolated in this release.
 Worker-mediated actions and AgentRun transitions remain runtime-enforced.
 Authenticated human presence, worker sandboxing, and remote multi-user identity
 remain future hardening work.
+
+## Provisional stage result contract (M11-1)
+
+`@ai-office/domain/pipeline/stage-result.ts` defines a versioned, internal
+envelope for the structured outcome of one stage attempt:
+`version`, `outcome` (`succeeded` | `failed`), `summary`, `producer` (an
+AgentRun id or an operator label), optional bounded canonical-JSON `data`, and
+a typed `error` that is required exactly when the outcome is `failed`.
+
+The `producer` inside the payload is a claim, not evidence. The Runtime passes
+the authenticated deliverer to `assessStageResultDelivery`, which classifies a
+delivery with this precedence (first match wins):
+
+1. `producer_mismatch`: the claimed producer differs from the authenticated
+   deliverer, so a superseded run cannot present itself as an operator;
+2. `duplicate`: the same canonical result is already recorded, also after its
+   run is no longer bound (ordinary at-least-once redelivery);
+3. `stale`: the delivering AgentRun is no longer the one bound to the stage;
+4. `conflict`: a different result is already recorded; it is never overwritten;
+5. `accepted`.
+
+The assessment is a pure decision: it never retries, overwrites or grants
+anything, and only `accepted` may be applied by a caller.
+
+An operator delivery is not bound to an AgentRun: while a run is bound and
+nothing is recorded, an operator result is `accepted` and the assessment sets
+`preemptsBoundRun`. That flag marks a pre-emption of the run, not an ordinary
+completion: a caller that applies it must record it through the existing
+attributed override path with a reason. The bound run's later result is then a
+`conflict`. An operator producer is a self-declared label; it is not
+authenticated against another same-UID process.
+A recorded result passed to the assessment is validated again, so a rehydrated
+row is compared in canonical form.
+
+Limits: summary 2000 bytes, error message 500 bytes, data 16384 bytes in total
+(string values and keys together), identifiers and data keys 128 bytes, data
+nesting depth 8 and at most 512 data nodes. Size, depth, node budget and the
+cumulative character budget are checked in a pre-pass before the payload is
+normalized, and the pre-pass returns a plain snapshot that every later step
+uses, so an object that changes between reads cannot get different content past
+the checks. Work is linear in the number of own keys of the input; it is not
+bounded by the budget alone. The serialized size limit is enforced on the
+canonical form, structure included. The envelope, `producer` and `error` are
+read the same way, through own data properties only (array length of a Proxy
+goes through its trap): an accessor is refused without being invoked, and
+hostile input that throws while it is read (a throwing Proxy trap, a revoked
+Proxy) surfaces as the same typed validation error; only rejections raised by
+the parser itself are passed through, so an error thrown by a trap is replaced.
+Length, line-break and character checks run on the raw string before it is
+trimmed, so padding cannot hide an oversized value or a forbidden boundary
+character. A lone carriage return is refused; CRLF is accepted where line
+breaks are.
+
+Rejected: unknown versions and fields; objects in `data` that are not plain
+objects or arrays (Map, Set, Date, RegExp, typed arrays and class instances),
+which are never coerced into their own fields (a plain object created in
+another JavaScript realm is refused too; JSON parsed by the Runtime is not
+affected); arrays or objects carrying extra, symbol-keyed or non-enumerable
+properties, which are refused rather than silently dropped; data keys named
+`__proto__`, `constructor` or `prototype`, which canonical JSON refuses;
+control characters and
+every Unicode format (bidi, zero-width, word joiner, tag characters), private
+use and surrogate code point, line and paragraph separators and invisible
+fillers in any text or data key; line breaks outside the summary and
+data string values; data keys that contain a sensitive name (for example
+`githubToken`, `client_secret`), except the token-usage metering names
+`inputTokens`, `outputTokens`, `totalTokens`, `promptTokens`,
+`completionTokens`, `cachedTokens`, `reasoningTokens`,
+`cacheReadInputTokens`, `cacheCreationInputTokens` and `maxTokens` (also with a `Used` or
+`Count` suffix); and token-shaped credential material in the summary, error
+message, data strings and data keys: bearer and basic credentials, common
+provider token prefixes, JWTs, URL userinfo passwords, an `authorization` header value, `key=value`
+assignments whose value mixes letters and digits, and private key headers.
+Ordinary prose such as "basic validation" or "token: refresh logic" is
+accepted. The credential check is conservative and is not a complete secret
+scanner. Rejection messages name the failing field and never echo the
+rejected value.
+
+Compatibility is provisional: this is not a stable public schema and may change
+with a new `version`. It is run evidence only and is not yet wired into the
+AgentRun-to-stage completion path. Not in this contract: a persisted
+Artifact/ArtifactVersion aggregate, review lifecycle, ReviewRequest/ReviewResult
+or approval semantics (M11.6), and automated worker dispatch (M12). M11-2 is
+expected to consume the envelope fields in conditions; M12 and M11.6 are the
+explicit consumers of this contract.
