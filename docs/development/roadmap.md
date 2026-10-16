@@ -1180,7 +1180,10 @@ aggregate, review commands, policy evaluator, or new Task status values.
 
 ### Phase B — Core Runtime
 
-Status: future.
+Status: future. Since the owner decision of 2026-10-15 it also owns Domain Pack
+evidence and validator enforcement (GP-14B, requirement GP-14B-M116, Runtime
+task `d991b5be`), which needs the persisted artifact, evidence and review
+contract below. It is not an M16.5 item.
 
 - persist artifacts and immutable versions, fingerprints, producer provenance and
   external-resource references;
@@ -1825,8 +1828,8 @@ artifact contracts, M14's software workflows as extraction input, M15's
 cross-domain architecture decision, and the existing AgentKnowledgeStore and
 ProjectStorage authority boundaries. M9's broad plugin SDK and a package
 marketplace are not prerequisites. Since the 2026-10-06 re-scope of the exit,
-no M16 task depends on M11.6 Phase B; that dependency belongs to GP-14B in
-M16.5.
+no M16 task depends on M11.6 Phase B; that dependency belongs to GP-14B,
+which moved from M16.5 to M11.6 on 2026-10-15.
 
 The core keeps project authority, tasks, AgentRuns, pipeline execution,
 governance, approval enforcement, controlled actions, audit, storage and
@@ -1886,8 +1889,8 @@ records carry the split. GP-14 was narrowed to its delivered definition half
 (the run gate) is an M16.5 requirement. GP-10C was likewise split into GP-10C-1
 (M16, verified) and GP-10C-2 (M16.5), and GP-24 moved to M16.5 as GP-24-M165.
 The two GP-12 follow-up tasks (`57a1833f`, `e003843f`) are owned by M16.5.
-GP-14B, GP-10C-2, GP-24, the GP-16 run gate, Runtime activation and
-the execution parity task are planned for M16.5 and are not M16 delivery
+GP-10C-2, GP-24, the GP-16 run gate, Runtime activation and
+the execution parity task are planned for M16.5 (GP-14B is owned by M11.6) and are not M16 delivery
 tasks; the plan's
 [M16 exit re-scope](generic-core-domain-packs.md#m16-exit-re-scope-owner-decision-2026-10-06)
 records the decision.
@@ -2201,8 +2204,8 @@ conflict stops work for an owner decision rather than being resolved locally.
 Goal: make the Runtime execute from the resolved project configuration that
 M16 defines, and deliver the pack work that needs that execution or the
 M11.6 Phase B artifact contract. It is expected to depend on the M16
-definition contracts and, for evidence and validator enforcement, on M11.6
-Phase B.
+definition contracts only; it has no M11.6 Phase B dependency, because the
+work that needed it left the milestone.
 
 Planned contents, each needing an owner-approved scope before work. The
 order and dependencies among them are provisional and are set by each scope
@@ -2239,9 +2242,10 @@ empty/custom fixtures run the same core lifecycles.
 Non-goals: expected to be those of M16; set with the scope proposal.
 
 A [scope-proposal draft](m16-5-domain-pack-runtime-activation-scope.md) lays
-out the planned-contents table above alongside the open owner decisions it
-depends on (the GP-16 run-gate split, GP-14B's M11.6 Phase B dependency, and which ADR-0026 clauses to target
-first), all four since ruled on. It is a proposal, with one delivered exception: the pin-only first
+out the planned-contents table above alongside the owner decisions it
+depends on (the GP-16 run-gate split, GP-14B's M11.6 Phase B dependency, the
+ADR-0026 status and the extent of activation), all since ruled on. It records
+no acceptance criteria; the one delivered exception is the pin-only first
 slice, in which a pipeline run records the resolved pack-configuration
 identity it started under (migration 0051, no change to pipeline, stage or
 role selection), was explicitly requested and is implemented. The rest of the
@@ -2400,8 +2404,8 @@ autonomous repository-write Developer roles (M14)
 ```
 
 M16.5, Domain Pack Runtime Activation, is planned beside this chain: it is
-expected to depend on M16 and on M11.6 Phase B, and M17 is not expected to
-depend on it.
+expected to depend on M16 only, and M17 is not expected to depend on it. The
+M11.6 Phase B dependency left with GP-14B on 2026-10-15.
 
 These milestones intentionally defer:
 
