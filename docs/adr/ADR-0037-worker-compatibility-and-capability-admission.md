@@ -233,10 +233,14 @@ unaffected.
   and every approval class. An invalid object is excluded and reported. A valid
   snapshot stays in force until a verified newer one replaces it, except that a
   failed reload after a revocation was published refuses the revoked subjects.
-  An absent registry is an empty registry. A registry that exists but whose
-  manifest or pointer is unreadable, or that fails the rollback check, refuses
-  every subject with `registry_unreadable`, source-shipped baselines included,
-  because revocations cannot be ruled out.
+  The last accepted generation and manifest digest are kept in a state file in
+  the Runtime home, outside the registry directory. An absent registry is an
+  empty registry only while that state records no accepted generation. Once a
+  generation has been accepted, an absent, unreadable or rolled-back registry (a
+  missing directory or pointer or manifest, an unreadable one, or one that fails
+  the rollback check) refuses every subject with `registry_unreadable`,
+  source-shipped baselines included, because revocations cannot be ruled out;
+  only an explicit operator reset of the state, audited, clears this.
 - **Revocation** is a new record in a new generation. Removing trust is always
   allowed to the operator; adding trust always needs a decision.
 - **Source-shipped records.** The `baseline_import` and `legacy_policy` records
@@ -267,7 +271,13 @@ before any client process runs, probes included, and this ADR does not reverse
 that). A failed check is reported to `admit` as an observation and becomes the
 reason `probe_failed` (client or feature probe) or `credential_not_admitted`
 (login, plan claim or token). A later task may move a check into offline probes
-only if the check also remains at dispatch.
+only if the check also remains at dispatch. The execution-time re-admission of
+the Codex login, just before it is copied for the run, also stays.
+
+Today a run assigned a model the worker cannot execute is refused with
+`WORKER_MODEL_UNSUPPORTED` before the client is inspected and before the login
+is read. Admission preserves that order with a model-admissibility step ahead of
+the per-dispatch observations.
 
 Steps, in this order, each deterministic:
 
@@ -276,32 +286,40 @@ Steps, in this order, each deterministic:
    `platform_unsupported`. Mode support: a mode with no governed contract
    (`governed_delegation` today) refuses with `mode_unsupported` before any
    subject matching.
-2. Per-dispatch observations: a failed observation refuses with `probe_failed`
+2. Model admissibility: some decision, active or revoked, or the
+   `legacy_policy` predicate, names the observed `(worker, provider, model)`
+   under the observed mode. If none, refuse `model_mismatch`. For the predicate
+   the model clause is its provider and model-name pattern.
+3. Per-dispatch observations: a failed observation refuses with `probe_failed`
    or `credential_not_admitted`.
-3. Select the active decision whose subject equals the observed subject in every
-   field; the `legacy_policy` record applies instead only under decision 10. If
-   none: refuse `no_matching_audit` and report the _nearest_ decision by number
-   of differing dimensions with the differing dimensions named
-   (`version_mismatch`, `model_mismatch`, `configuration_mismatch`,
-   `protocol_mismatch`, `platform_mismatch`, `mode_mismatch`) and expected and
-   observed values.
-4. Exclude a revoked decision (`audit_revoked`) and, where it opted in to expiry,
-   an expired one (`decision_expired`).
-5. Drift. For each required guarantee, every metadata dependency is compared
+4. Match the subject. An exact decision for the observed subject, active or
+   revoked, takes precedence; a revoked exact match refuses with `audit_revoked`
+   and never falls back to the `legacy_policy` predicate. With no exact match,
+   the predicate of decision 10 applies where it holds and its implicit-dispatch condition is met. If neither: refuse
+   `no_matching_audit` and report the _nearest_ record by number of differing
+   dimensions, with the differing dimensions named (`version_mismatch`,
+   `model_mismatch`, `configuration_mismatch`, `protocol_mismatch`,
+   `platform_mismatch`, `mode_mismatch`) and expected and observed values. For
+   the predicate the dimensions are its named clauses: the floor clause is
+   reported as `version_mismatch`, the model-name clause as `model_mismatch`.
+5. Expiry: where the matched decision opted in to expiry and has expired, refuse
+   with `decision_expired`.
+6. Drift. For each required guarantee, every metadata dependency is compared
    with the audited projection digest. A mismatch refuses
    (`metadata_drift_invalidates_guarantee`) for new runs of that subject. A
    difference in a projection no _required_ guarantee depends on is an advisory
    diagnostic and refuses nothing. A dependency declared `unobservable` cannot be
-   compared; what admission does then is open decision O1, and until it is
-   decided the imported baseline is admitted with the unobservable dependency
-   disclosed in the result and the provenance, as today's behavior does. Whether
-   a dependency is observable for Codex is a finding of WC-03: the metadata is
-   fetched by the client with the login at session start, so observing it may
-   need a client process run, not a pre-dispatch read.
-6. Each required guarantee must be satisfied by the asserted state
+   compared; what admission does then is open decision O1. Until O1 is decided
+   the imported baseline is admitted with the unobservable dependency disclosed
+   in the result and the provenance, as today's behavior does, and a `certified`
+   decision with an unobservable dependency is refused. Whether a dependency is
+   observable for Codex is a finding of WC-03: the metadata is fetched by the
+   client with the login at session start, so observing it may need a client
+   process run, not a pre-dispatch read.
+7. Each required guarantee must be satisfied by the asserted state
    (`guarantee_unverified`, `guarantee_unsupported`).
 
-Expiry is opt-in per decision and is evaluated only in step 4. It can only add a
+Expiry is opt-in per decision and is evaluated only in step 5. It can only add a
 refusal; it never admits what any other step refuses, and it never overrides a
 drift or revocation result. A time-based condition therefore cannot prevail over
 a security check in either direction.
@@ -311,14 +329,15 @@ Reasons are a closed set: `registry_unreadable`, `platform_unsupported`,
 `no_matching_audit`, the six `*_mismatch` values, `audit_revoked`,
 `decision_expired`, `metadata_drift_invalidates_guarantee`,
 `guarantee_unverified` and `guarantee_unsupported`. A refusal carries its
-reasons, the nearest decision and bounded, secret-free detail.
+reasons, the nearest record and bounded, secret-free detail.
 
-Public codes are unchanged and the reason is added diagnostics: every reason
-maps to `WORKER_UNAVAILABLE`, except `model_mismatch`, which maps to
-`WORKER_MODEL_UNSUPPORTED` where that code is returned today. The run-level
-model-selection outcomes `WORKER_MODEL_CONFLICT` and `WORKER_MODEL_REQUIRED`
-(routing and `--worker-model` rules) are decided before admission and are
-unaffected. WC-05 pins this table with tests.
+Public codes are unchanged and the reason is added diagnostics. The mapping is
+exact: `model_mismatch` maps to `WORKER_MODEL_UNSUPPORTED`; every other reason
+maps to `WORKER_UNAVAILABLE`. The run-level model-selection outcomes
+`WORKER_MODEL_CONFLICT` and `WORKER_MODEL_REQUIRED` (routing and
+`--worker-model` rules) are decided before admission and are unaffected. WC-05
+pins this table, and the order of steps 2 and 3, with tests that the shadow
+comparison runs.
 
 ### 6. Bounded execution and governed delegation
 
@@ -425,8 +444,9 @@ The Claude worker's current admission is represented by one source-shipped
 record of basis `legacy_policy`. It is not a general range feature. It is the
 closed, named predicate `claude-legacy-floor@1`, which holds exactly when
 `worker = claude-code`, `mode = bounded_single_agent`, the reported version
-parses and satisfies the floor and pre-release rule of the current adapter
-(`>= 2.1.259`, no pre-release beyond the floor), the provider is `anthropic` and
+parses and satisfies the floor rule of the current adapter (`>= 2.1.259`; a
+pre-release of exactly the floor version is refused and pre-releases of higher
+versions are admitted, as today), the provider is `anthropic` and
 the model matches the adapter's current model-name pattern. The predicate lives
 in source with the baseline records, is changed only by a reviewed change, and
 cannot be created, edited or extended by registry data. Every guarantee of the
@@ -439,11 +459,11 @@ any change of the Claude rules is a separate owner decision after it.
 
 `legacy_policy` is the single permitted exception to the refusal of uncertified
 subjects that require bounded guarantees, and only because of the owner's
-decision D3 (open decision O2 asks to confirm this reading). It applies in step 3
+decision D3 (open decision O2 asks to confirm this reading). It applies in step 4
 only to _implicit legacy dispatch_: the requirement set is exactly
 `bounded_profile@1` as implied by the mode, with nothing requested by a role,
-stage or pack. When any explicit requirement exists, step 3 does not use the
-record, so `no_matching_audit` or `guarantee_unverified` refuses the run. In step 6 the
+stage or pack. When any explicit requirement exists, step 4 does not use the
+record, so `no_matching_audit` or `guarantee_unverified` refuses the run. In step 7 the
 record is deemed to satisfy the implicit `bounded_profile@1` of the mode and
 nothing else; the effective guarantees it reports stay `unverified`, and the
 result carries the basis `legacy_policy`. The exception therefore cannot satisfy
@@ -506,7 +526,7 @@ Provenance never contains registry paths, credentials or raw probe output.
 
 | Id  | Question                                                                                                                                                                                          | Recommendation                                                                                                                                                                          |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| O1  | A required T1 guarantee whose metadata dependency is `unobservable`: admit with disclosure, or refuse. Until decided, step 5 admits the imported baseline with disclosure                         | Admit with disclosure for the imported baseline to avoid a regression; WC-03 determines whether the dependency can be observed, and refusal can then be made the rule for new decisions |
+| O1  | A required T1 guarantee whose metadata dependency is `unobservable`: admit with disclosure, or refuse. Until decided, step 6 admits the imported baseline with disclosure                         | Admit with disclosure for the imported baseline to avoid a regression; WC-03 determines whether the dependency can be observed, and refusal can then be made the rule for new decisions |
 | O2  | Confirm that D3 plus the instruction to keep refusing uncertified subjects that require bounded guarantees mean: `legacy_policy` is the one labelled exception, for implicit legacy dispatch only | Confirm                                                                                                                                                                                 |
 | O3  | Approve the evidence sufficiency table (T1 needs scripted adversarial evidence plus drift observation or live confirmation of metadata)                                                           | Approve as the baseline of WC-02                                                                                                                                                        |
 | O4  | Accept `local_operator` approvals until M10, recorded as such, knowing that a same-account process (including an external coding agent) is not distinguished from the operator                    | Accept, with the class visible everywhere, the separation of agents from the approval surface stated as an operational rule, and a policy hook to require a stronger class later        |
