@@ -99,7 +99,7 @@ Commands:
   task:record-completion --project <id> --task <id> --reason <text> [--approve <plan-hash>] [--json]  # historical correction; read-only preflight without --approve
   task:link-requirement --project <id> --task <id> --requirement <id>
   task:unlink-requirement --project <id> --task <id> --requirement <id>
-  task:reconcile --project <id> [--json]  # read-only; add --fix --approve <planHash> to repair
+  task:reconcile --project <id> [--json]  # read-only; flags started dependents whose prerequisite left review; add --fix --approve <planHash> to apply the approved block/cancel repairs
   agent:sync --project <id> [--directory <path>]
   agent:list --project <id>
   agent:models --project <id> [--json]  # read-only; policy, profile and model each agent would be scheduled with
