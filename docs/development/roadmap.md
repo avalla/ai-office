@@ -1884,7 +1884,7 @@ dependency edges; GP-02's cross-milestone M15-4 prerequisite is also stored as
 a typed task dependency edge in the project Runtime. GP-10A, GP-10B-1,
 GP-10B-2 and GP-10C-1 remain separately tracked extraction slices. Runtime
 records carry the split. GP-14 was narrowed to its delivered definition half
-(GP-14A, PRs #128 and #129) and verified; GP-14B is a separate requirement (M16.5, moved to M11.6 on 2026-10-15). GP-16 was rejected as a scope split, not for a defect: GP-16A
+(GP-14A, PRs #128 and #129) and verified; GP-14B is a separate requirement, GP-14B-M116, owned by M11.6 since 2026-10-15. GP-16 was rejected as a scope split, not for a defect: GP-16A
 (the delivered capability contracts, PR #116) is verified in M16, and GP-16-RG
 (the run gate) is an M16.5 requirement. GP-10C was likewise split into GP-10C-1
 (M16, verified) and GP-10C-2 (M16.5), and GP-24 moved to M16.5 as GP-24-M165.
@@ -2140,7 +2140,7 @@ A binding grants nothing. Grants, constraints, approval and controlled
 execution are unchanged and still separately authorize every use; a request
 for a bound operation without a grant is denied as before. There is no
 scheduler or run gate: rejecting a run for a missing provider belongs to the
-execution parity task `a45ddb12-3159-4b60-9b8b-c26516720834` and GP-24.
+M16.5 run-gate task `f8d75709` (owner decision 2026-10-15), after Runtime activation and GP-24.
 Provider binding is host-local availability and is not part of
 `configurationDigest`, which narrows ADR-0026 on purpose. GP-25 stage
 operations are opaque names and do not reference these declarations. No migration and no portable archive
@@ -2195,21 +2195,21 @@ name and number are provisional.
 
 Owner decisions, 2026-10-15: (1) GP-14B moves to M11.6, which owns the Phase B
 artifact contract it needs, and leaves M16.5; (2) the GP-16 run gate is its own
-task, after Runtime activation and GP-24; (3) activation selects pipeline,
+task `f8d75709`, after Runtime activation and GP-24; (3) activation selects pipeline,
 stages and roles from the resolved configuration only for projects that
 adopted a pack through GP-10C-2, and legacy projects are unchanged; (4)
 ADR-0026 settles the target architecture and is implemented as accepted, and a
-conflict stops work for an owner decision rather than being resolved locally.
+conflict stops work for an owner decision rather than being resolved locally;
+(5) the order is Runtime activation, execution parity, GP-10C-2, GP-24, the
+GP-16 run gate, then the two GP-12 follow-ups.
 
 Goal: make the Runtime execute from the resolved project configuration that
-M16 defines, and deliver the pack work that needs that execution or the
-M11.6 Phase B artifact contract. It is expected to depend on the M16
+M16 defines, and deliver the pack work that needs that execution. It is expected to depend on the M16
 definition contracts only; it has no M11.6 Phase B dependency, because the
 work that needed it left the milestone.
 
-Planned contents, each needing an owner-approved scope before work. The
-order and dependencies among them are provisional and are set by each scope
-proposal:
+Planned contents, in the order the owner set on 2026-10-15; each task is
+still scoped by its own record before work:
 
 - Runtime activation, Runtime task `aa10a111-9658-4f11-b99f-7074fe522588`
   (requirement M165-ACT): Runtime execution consumes the generic resolved
@@ -2228,9 +2228,10 @@ proposal:
   registration, preserving old bindings.
 - The GP-16 run gate (requirement GP-16-RG, the split-off half of GP-16; the
   delivered half is GP-16A in M16): bind registered providers at bootstrap and reject a
-  missing required provider before runs. The delivered GP-16 section names
-  `a45ddb12` and GP-24 as its owners; this item's scope proposal decides the
-  split and is not a second owner.
+  missing required provider before runs. It is Runtime task `f8d75709`, after
+  Runtime activation and GP-24; neither `a45ddb12` nor GP-24 owns it.
+- The two GP-12 follow-up tasks `57a1833f` and `e003843f` (requirement
+  M165-GP12-FU).
 
 Exit: to be defined with the scope proposal. It is expected to carry the
 clauses that left the M16 exit: Runtime execution consumes the generic
