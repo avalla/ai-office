@@ -1883,7 +1883,9 @@ Putting a connector ID and version under the digest would make the digest
 change when a host upgrades a connector, and would make an archive's recorded
 digest unreproducible on another host. The consequence is recorded as a
 limitation: the digest does not attest which provider version a host bound.
-Pinning a binding on a run belongs to GP-24.
+The original assignment of provider-binding pinning to GP-24 is superseded
+by the 2026-10-15 scope ruling: GP-24 owns removal protection using existing
+configuration pins. Those pins do not attest provider versions.
 
 ### Boundaries
 
@@ -5125,7 +5127,7 @@ a core lifecycle from a pack is M16.5 (see
    after Runtime activation and execution parity. Runtime activation owns
    execution from resolved configuration and run pinning (the pin shipped in
    PR #168); GP-10C-2 consumes those capabilities rather than delivering them.
-   The accepted M16.5 scope proposal sets this order.
+   The recorded 2026-10-15 owner rulings set this order.
    M16 delivers only the declarative content an adoption would bind
    (GP-10C-1).
 6. **New projects:** decide separately whether explicit pack selection is the
@@ -5667,8 +5669,8 @@ addenda below and the roadmap.
   Runtime activation now persists the run pins (PR #168); blocking a
   removal stays with GP-24, which uses them. The GP-10B-1 section and the
   roadmap say that the execution parity task "depends on GP-10B-1, GP-10B-2
-  and the policy task (GP-25)": it is now also expected to need Runtime
-  activation (provisional, see the table below).
+  and the policy task (GP-25)": it also requires Runtime activation under
+  the recorded 2026-10-15 owner-approved sequence.
 
 **Rows owned by other pull requests.** The same owner decision set the M16
 part of three tasks whose table rows this record did not edit. GP-16,
