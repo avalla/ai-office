@@ -432,62 +432,87 @@ describe("pack workflow selection (M16.5 Runtime activation)", () => {
     expect(h.transactionsOpened()).toBe(0);
   });
 
-  test("a pack workflow with no enforced policy is refused as guidance before any role is demanded", async () => {
-    const h = harness();
-    const { projectId, taskId } = await seed(h, {
-      pipelines: [delivery],
-      roles: [],
-      selectLegal: false,
-    });
-    const encoder = new TextEncoder();
-    const draft = {
-      schemaVersion: 1,
-      id: "org.example.guidance",
-      version: "1.0.0",
-      manifestDigest: `sha256:${"0".repeat(64)}`,
-      coreContract: { minInclusive: 1, maxExclusive: 3 },
-      metadata: { name: "guidance", description: "No policy" },
-      dependencies: [],
-      contributions: {
-        ...Object.fromEntries(contributionKinds.map((kind) => [kind, []])),
-        roles: [{ id: "clerk" }],
-        taskTypes: [{ id: "case" }],
-        workflows: [
-          {
-            id: "case-flow",
-            taskType: "case",
-            stages: [{ id: "open", role: "clerk" }],
-          },
-        ],
-      },
-    };
-    const bytes = encoder.encode(
-      JSON.stringify({
-        ...draft,
-        manifestDigest: computeManifestDigest(
-          parseDomainPackManifest(encoder.encode(JSON.stringify(draft))),
-        ),
-      }),
-    );
-    const pack = h.catalog.register({
-      bytes,
-      artifactDigest: computeArtifactDigest(bytes),
-      provenance: { installerId: "selection", reference: "guidance" },
-    });
-    await h.storage.packBindings.replace(projectId, 0, [pack], now);
+  test.each(["guidance", "empty guidance", "empty enforced"] as const)(
+    "%s workflow is refused without writes before any role is demanded",
+    async (kind) => {
+      const h = harness();
+      const { projectId, taskId } = await seed(h, {
+        pipelines: [delivery],
+        roles: [],
+        selectLegal: false,
+      });
+      const encoder = new TextEncoder();
+      const draft = {
+        schemaVersion: 1,
+        id: "org.example.guidance",
+        version: "1.0.0",
+        manifestDigest: `sha256:${"0".repeat(64)}`,
+        coreContract: { minInclusive: 1, maxExclusive: 3 },
+        metadata: { name: "refused workflow", description: kind },
+        dependencies: [],
+        contributions: {
+          ...Object.fromEntries(contributionKinds.map((kind) => [kind, []])),
+          policies:
+            kind === "empty enforced"
+              ? [
+                  {
+                    id: "enforce",
+                    workflow: "case-flow",
+                    enforcement: "enforced",
+                  },
+                ]
+              : [],
+          roles: [{ id: "clerk" }],
+          taskTypes: [{ id: "case" }],
+          workflows: [
+            {
+              id: "case-flow",
+              taskType: "case",
+              stages:
+                kind === "guidance" ? [{ id: "open", role: "clerk" }] : [],
+            },
+          ],
+        },
+      };
+      const bytes = encoder.encode(
+        JSON.stringify({
+          ...draft,
+          manifestDigest: computeManifestDigest(
+            parseDomainPackManifest(encoder.encode(JSON.stringify(draft))),
+          ),
+        }),
+      );
+      const pack = h.catalog.register({
+        bytes,
+        artifactDigest: computeArtifactDigest(bytes),
+        provenance: { installerId: "selection", reference: "guidance" },
+      });
+      await h.storage.packBindings.replace(projectId, 0, [pack], now);
+      const auditBefore = auditPayloads(h);
+      const taskBefore = (await h.storage.tasks.findById(taskId))!.snapshot();
 
-    await expect(
-      h.manager.start({
-        projectId,
-        taskId,
-        pipelineId: "case-flow",
-        principal: localOperatorPrincipal,
-      }),
-    ).rejects.toBeInstanceOf(PipelineDefinitionNotEnforcedError);
-    expect(await h.storage.pipelines.findActiveByTask(taskId, projectId)).toBe(
-      null,
-    );
-  });
+      await expect(
+        h.manager.start({
+          projectId,
+          taskId,
+          pipelineId: "case-flow",
+          principal: localOperatorPrincipal,
+        }),
+      ).rejects.toBeInstanceOf(
+        kind === "empty enforced"
+          ? PackPipelineUnsupportedError
+          : PipelineDefinitionNotEnforcedError,
+      );
+      expect(auditPayloads(h)).toBe(auditBefore);
+      expect((await h.storage.tasks.findById(taskId))!.snapshot()).toEqual(
+        taskBefore,
+      );
+      expect(await h.storage.pipelines.listByProject(projectId)).toEqual([]);
+      expect(
+        await h.storage.pipelines.findActiveByTask(taskId, projectId),
+      ).toBe(null);
+    },
+  );
 
   describe("workflows of a dependency pack", () => {
     // A pack that only depends on the legal pack: the legal pack is resolved,

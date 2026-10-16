@@ -542,6 +542,8 @@ export class ManagePipelineRuns {
     // A guidance workflow is refused as such before any role is demanded.
     if (definition.enforcement !== "enforced")
       throw new PipelineDefinitionNotEnforcedError(definition.id);
+    if (definition.stages.length === 0)
+      throw new PackPipelineUnsupportedError(definition.id, "it has no stages");
     const known = new Set(
       (await this.agents.listRoles(input.projectId)).map(
         (role) => role.snapshot().key,

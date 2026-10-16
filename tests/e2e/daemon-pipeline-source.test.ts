@@ -377,6 +377,25 @@ describe("daemon pipeline:start pack guards over the socket (M16.5)", () => {
       }),
       "guidance",
     );
+    const empty = register(
+      packBytes({
+        id: "org.example.empty",
+        metadata: { name: "empty", description: "Enforced without stages" },
+        contributions: {
+          ...emptyContributions,
+          taskTypes: [{ id: "case" }],
+          workflows: [{ id: "empty-flow", taskType: "case", stages: [] }],
+          policies: [
+            {
+              id: "enforce",
+              workflow: "empty-flow",
+              enforcement: "enforced",
+            },
+          ],
+        },
+      }),
+      "empty",
+    );
     const dependent = register(
       packBytes({
         id: "org.example.dependent",
@@ -479,6 +498,14 @@ describe("daemon pipeline:start pack guards over the socket (M16.5)", () => {
       const guidanceMessage = refusedGuidance.stderr.join("\n");
       expect(guidanceMessage).toContain("case-flow");
       expect(guidanceMessage).not.toContain("Runtime roles");
+
+      const emptyProject = await createProject("empty", [empty]);
+      const refusedEmpty = await start(emptyProject, "empty-flow");
+      expect(refusedEmpty.code).toBe(1);
+      expect(refusedEmpty.stdout).toEqual([]);
+      expect(refusedEmpty.stderr.join("\n")).toContain(
+        "cannot start a run: it has no stages",
+      );
 
       // The legal pack is resolved only as a dependency of the selected pack.
       const dependency = await createProject("dependency", [dependent]);
