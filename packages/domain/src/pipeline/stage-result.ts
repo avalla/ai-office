@@ -165,8 +165,30 @@ function boundedText(
   return text;
 }
 
-function parseProducer(value: unknown): StageResultProducer {
-  if (!isRecord(value)) return invalid("producer must be an object");
+/**
+ * Reads the own enumerable properties of an untrusted record exactly once and
+ * returns a plain snapshot. An accessor is refused without being invoked, so
+ * caller-controlled code never runs and a throwing getter cannot escape as an
+ * arbitrary error. A Proxy trap that throws is translated by the boundary in
+ * `parseStageResultEnvelope`.
+ */
+function snapshotRecord(
+  value: Record<string, unknown>,
+  field: string,
+): Record<string, unknown> {
+  const entries: [string, unknown][] = [];
+  for (const key of Object.keys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !("value" in descriptor))
+      return invalid(`${field} must contain plain data properties`);
+    entries.push([key, descriptor.value]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function parseProducer(input: unknown): StageResultProducer {
+  if (!isRecord(input)) return invalid("producer must be an object");
+  const value = snapshotRecord(input, "producer");
   const keys = Object.keys(value);
   const kind = value.kind;
   if (kind === "agent_run") {
@@ -196,8 +218,9 @@ function parseProducer(value: unknown): StageResultProducer {
   return invalid("producer.kind is not supported");
 }
 
-function parseError(value: unknown): StageResultError {
-  if (!isRecord(value)) return invalid("error must be an object");
+function parseError(input: unknown): StageResultError {
+  if (!isRecord(input)) return invalid("error must be an object");
+  const value = snapshotRecord(input, "error");
   if (Object.keys(value).some((key) => !["code", "message"].includes(key)))
     return invalid("error has unknown fields");
   const { code, message } = value;
@@ -297,7 +320,19 @@ function parseData(
  * top-level field of the input is read exactly once.
  */
 export function parseStageResultEnvelope(value: unknown): StageResultEnvelope {
-  if (!isRecord(value)) return invalid("envelope must be an object");
+  try {
+    return parseEnvelope(value);
+  } catch (error) {
+    if (error instanceof DomainValidationError) throw error;
+    // Exotic hostile input (for example a revoked Proxy) must still surface
+    // as the typed, sanitized validation error, never as an arbitrary one.
+    return invalid("envelope cannot be read");
+  }
+}
+
+function parseEnvelope(input: unknown): StageResultEnvelope {
+  if (!isRecord(input)) return invalid("envelope must be an object");
+  const value = snapshotRecord(input, "envelope");
   if (Object.keys(value).some((key) => !envelopeKeys.has(key)))
     return invalid("envelope has unknown fields");
   const { version, outcome, summary, producer, data, error } = value;

@@ -109,7 +109,10 @@ cumulative character budget are checked in a bounded pre-pass before the
 payload is normalized, and the pre-pass returns a plain snapshot that every
 later step uses, so an oversized or hostile shape is refused in bounded work
 and an object that changes between reads cannot get different content past the
-checks.
+checks. The envelope, `producer` and `error` are read the same way, through
+own data properties only: an accessor is refused without being invoked, and
+hostile input that throws while it is read (a throwing Proxy trap, a revoked
+Proxy) surfaces as the same typed validation error.
 
 Rejected: unknown versions and fields; control characters, bidi marks and
 overrides, zero-width and byte-order marks, line and paragraph separators and

@@ -227,6 +227,64 @@ describe("stage result hardening", () => {
   });
 
   test.each([
+    ["envelope", "summary"],
+    ["producer", "agentRunId"],
+    ["error", "message"],
+  ])(
+    "refuses a throwing accessor on %s without invoking it (%s)",
+    (target, field) => {
+      let invoked = false;
+      const trap = {
+        enumerable: true,
+        get() {
+          invoked = true;
+          throw new Error("secret getter detail");
+        },
+      };
+      const envelope = {
+        ...valid,
+        outcome: target === "error" ? "failed" : "succeeded",
+        producer: { ...valid.producer },
+        ...(target === "error"
+          ? { error: { code: "validation_failed", message: "bad" } }
+          : {}),
+      } as Record<string, unknown>;
+      const holder =
+        target === "envelope"
+          ? envelope
+          : (envelope[target] as Record<string, unknown>);
+      Object.defineProperty(holder, field, trap);
+      const message = rejection(envelope);
+      expect(invoked).toBe(false);
+      expect(message).toContain("plain data properties");
+      expect(message).not.toContain("secret getter detail");
+    },
+  );
+
+  test("reports a revoked Proxy as a typed validation error", () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    expect(rejection(proxy)).toContain("cannot be read");
+    expect(rejection({ ...valid, producer: proxy })).toContain(
+      "cannot be read",
+    );
+  });
+
+  test("reports a Proxy trap that throws as a typed validation error", () => {
+    const hostile = new Proxy(
+      { ...valid.producer },
+      {
+        ownKeys() {
+          throw new Error("secret trap detail");
+        },
+      },
+    );
+    const message = rejection({ ...valid, producer: hostile });
+    expect(message).toContain("cannot be read");
+    expect(message).not.toContain("secret trap detail");
+  });
+
+  test.each([
     ["authorization header", "Authorization: Bearer abcdefgh12345678"],
     ["bearer token", "failed with Bearer abcdefgh12345678ijkl"],
     ["github token", "pushed using ghp_abcdefghijklmnop1234"],
@@ -309,8 +367,7 @@ describe("stage result hardening", () => {
     ).toContain("actorLabel");
   });
 
-  test("reads each top-level field exactly once", () => {
-    const reads: Record<string, number> = {};
+  test("reads fields through descriptors, never through get", () => {
     const target: Record<string, unknown> = {
       version: 1,
       outcome: "failed",
@@ -320,22 +377,12 @@ describe("stage result hardening", () => {
       error: { code: "boom", message: "m" },
     };
     const counted = new Proxy(target, {
-      get(object, property) {
-        const key = String(property);
-        reads[key] = (reads[key] ?? 0) + 1;
-        return object[key];
+      // A plain `get` would run an accessor; the snapshot must never use it.
+      get() {
+        throw new Error("a field was read through get");
       },
     });
-    parseStageResultEnvelope(counted);
-    for (const key of [
-      "version",
-      "outcome",
-      "summary",
-      "producer",
-      "data",
-      "error",
-    ])
-      expect(reads[key]).toBe(1);
+    expect(parseStageResultEnvelope(counted).summary).toBe("s");
   });
 });
 
