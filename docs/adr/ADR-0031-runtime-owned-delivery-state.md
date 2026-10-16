@@ -31,8 +31,10 @@ the separate `ai-office` skill; `skills/README.md` states the independence of
    Runtime IPC. It records and reports; it authorizes nothing. Merge,
    approvals, and controlled actions keep their existing authority.
 2. Expose it as `delivery:next` (the gates the recorded state requires, never
-   labelled effective; see invariant 3) and `delivery:record` (record a gate
-   result with evidence). The skill uses them when a Runtime is available.
+   labelled effective; see invariant 3), `delivery:record` (record a gate
+   result with evidence) and an explicit creation command that opens a run
+   (input contract in invariant 5). The skill uses them when a Runtime is
+   available.
 3. Keep the skill usable without a Runtime. Without one, the skill keeps the
    file handoff packet of
    [step 1 of the task-delivery profiles plan](../development/task-delivery-profiles.md)
@@ -86,7 +88,9 @@ Two pieces of delivery state already exist and predate this decision:
 
 - Task-delivery setup is stored by the Runtime (migration
   `0050_task_delivery_setup`, `delivery:setup:show` and `delivery:setup:set`;
-  M19-T4).
+  M19-T4). It holds checkpoint, handoff and similar settings, not the delivery
+  profile or the gate selection, which live in the caller-local
+  `.task-delivery.yaml` that `delivery:validate` consumes.
 - Checkpoints are stored in a local file store with atomic, immutable
   publication (M19-T2). Per point 3 above the skill keeps working without a
   Runtime, so that store stays as the offline path.
@@ -178,12 +182,26 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
    - `delivery:next` reports the snapshot plus the recorded floor additions,
      is never labelled effective, and states that unrecorded additions may
      exist. It does not evaluate the floor itself.
-   - Failure modes: if recording a floor addition fails, the skill still
-     applies the floor locally and the record is reconciled later; a missing
-     record never means the floor does not apply. An authorizer's attempt to
-     lower the effective gate set below the recorded floor additions is
-     refused, as the profiles design requires; setup configuration itself is
-     not refused.
+   - A floor addition is made durable in the file store as a pending entry
+     before the skill acts on it, and only then registered on the run. The
+     entry carries the identity (delivery run, gate, target form, trigger and
+     head) and the content the Runtime needs. Registering the same identity
+     with the same content again is harmless; the same identity with different
+     content is an explicit conflict, never an overwrite. The entry is cleared
+     only after a successful registration, and it survives restarts.
+   - A reset or handoff carries the pending floor additions: the handoff packet
+     references them machine-readably, and the next context reads them from the
+     file store, so a failed registration cannot make a required full-form
+     gate be forgotten. If a floor evaluation is due and the addition is neither
+     registered nor durably pending, the skill does not leave that stage.
+   - Failure modes: if registration fails, the pending entry stays and is
+     reconciled later in recording order; a missing registration never means
+     the floor does not apply, and `delivery:next` says so. As with
+     checkpoints, this applies only to a task with a Runtime delivery run; the
+     offline path keeps the existing handoff packet rules. An authorizer's
+     attempt to lower the effective gate set below the recorded or pending
+     floor additions is refused, as the profiles design requires; setup
+     configuration itself is not refused.
 4. **Checkpoint registration is idempotent, conflict-explicit and pinned until
    registered.**
    - A registration names an opaque, client-claimed identity: the delivery run,
@@ -221,6 +239,28 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      rules stays on the run but is reported as unavailable, never as a
      candidate. Capping the pending set, if ever needed, is a separate explicit
      decision that must never delete an unregistered checkpoint silently.
+
+5. **Creation takes the resolved configuration from the client and never reads
+   caller-local files.**
+   - The profile and the gate selection are not held by `delivery:setup:*`.
+     The client resolves each key in the skill's existing order (Runtime setup
+     where it holds the key, then `.task-delivery.yaml`, then defaults) and
+     validates the result with the rules `delivery:validate` applies.
+   - The creation command takes the project, the task, the resolved
+     configuration as structured data (schema version, profile, and each
+     selected gate with its form), and optionally the pipeline run reference of
+     invariant 1. It carries no path.
+   - The Runtime re-validates the data against the schema and the cross-key
+     rules (for example, the accepted stage keys, and that `review` and `qa`
+     are not both off without an external review command). It never reads
+     `.task-delivery.yaml` or any caller-local file for creation and never
+     infers the caller's working directory, as `AGENTS.md` requires.
+   - The snapshot is recorded as claimed by the client, with its schema version
+     and a hash of its canonical form, and is not verified against the
+     repository, consistent with the head-commit decision above.
+   - Failure modes: invalid or unsupported configuration fails with a typed
+     validation error and no run is created; a task that is not in the project
+     fails as in invariant 1.
 
 ## Known limitations
 
