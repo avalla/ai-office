@@ -90,7 +90,9 @@ Two pieces of delivery state already exist and predate this decision:
   `0050_task_delivery_setup`, `delivery:setup:show` and `delivery:setup:set`;
   M19-T4). It holds checkpoint, handoff and similar settings, not the delivery
   profile or the gate selection, which live in the caller-local
-  `.task-delivery.yaml` that `delivery:validate` consumes.
+  `.task-delivery.yaml`. The skill reads it today
+  (`scripts/skills/task-delivery-config.ts`) and the planned
+  `delivery:validate` (not implemented) is to validate it.
 - Checkpoints are stored in a local file store with atomic, immutable
   publication (M19-T2). Per point 3 above the skill keeps working without a
   Runtime, so that store stays as the offline path.
@@ -106,7 +108,8 @@ were reviewed independently before being proposed, which is not an approval.
   a run is a history with identity, transitions and evidence references that
   needs explicit constraints. A forward-only migration introduces it without
   changing `0050_task_delivery_setup`. At creation the run fixes an immutable
-  snapshot of the configuration (invariant 3).
+  snapshot of the profile and gate configuration (invariant 3). The
+  `delivery:setup:*` keys are not part of that snapshot and keep resolving live.
 - **Checkpoint store.** The delivery run complements the file-based checkpoint
   store and does not replace it. The file store remains the source of truth for
   a checkpoint's content, validity and resume; the delivery run is the Runtime
@@ -163,8 +166,11 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
    - At creation the run fixes the configuration effectively resolved at that
      moment: its schema version, the resolved profile and each selected gate
      with its form (full or reduced, review rounds, independence), not only a
-     profile name. Later setup changes never alter the run; adopting them needs
-     a new run.
+     profile name. It also records whether an external review command is
+     configured, as a presence flag and not its text. Later changes to
+     `.task-delivery.yaml` or to the resolved profile never alter the run;
+     adopting them needs a new run. An external review requested by an
+     authorizer is a dynamic addition, recorded like a floor addition.
    - The floor is not part of the snapshot and does not constrain setup: it
      applies on top of whatever is configured and depends on the task, the diff
      and the head commit, which the commands do not receive. The skill
@@ -182,26 +188,39 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
    - `delivery:next` reports the snapshot plus the recorded floor additions,
      is never labelled effective, and states that unrecorded additions may
      exist. It does not evaluate the floor itself.
-   - A floor addition is made durable in the file store as a pending entry
-     before the skill acts on it, and only then registered on the run. The
-     entry carries the identity (delivery run, gate, target form, trigger and
-     head) and the content the Runtime needs. Registering the same identity
-     with the same content again is harmless; the same identity with different
-     content is an explicit conflict, never an overwrite. The entry is cleared
-     only after a successful registration, and it survives restarts.
-   - A reset or handoff carries the pending floor additions: the handoff packet
-     references them machine-readably, and the next context reads them from the
-     file store, so a failed registration cannot make a required full-form
-     gate be forgotten. If a floor evaluation is due and the addition is neither
-     registered nor durably pending, the skill does not leave that stage.
-   - Failure modes: if registration fails, the pending entry stays and is
+   - A floor addition is made durable in the file store before the skill acts
+     on it, and only then registered on the run. It is identified by the
+     delivery run, gate, target form, trigger and head, and that identity is its
+     whole content, so registering it again is harmless and there is no
+     conflicting content. Entries are append-only and survive restarts: a
+     successful registration marks an entry registered and never deletes it, so
+     a later context can still read every addition while the Runtime is
+     unreachable. An entry not yet marked registered is pending.
+   - A reset or handoff carries the floor additions: the handoff packet lists
+     each pending entry by its identity in a fixed, validated field, distinct
+     from the checkpoint identifiers that retention matches in the packet, and
+     the next context reads the entries from the file store. A failed
+     registration therefore cannot make a required full-form gate be
+     forgotten. If a floor evaluation is due and the addition is neither
+     registered nor durably pending, the skill does not start or pass any
+     further gate.
+   - Failure modes: if registration fails, the entry stays pending and is
      reconciled later in recording order; a missing registration never means
-     the floor does not apply, and `delivery:next` says so. As with
-     checkpoints, this applies only to a task with a Runtime delivery run; the
-     offline path keeps the existing handoff packet rules. An authorizer's
+     the floor does not apply, and `delivery:next` says so. An authorizer's
      attempt to lower the effective gate set below the recorded or pending
-     floor additions is refused, as the profiles design requires; setup
-     configuration itself is not refused.
+     additions is refused by the skill, and the Runtime rejects any change that
+     would remove a recorded addition; setup configuration itself is not
+     refused.
+   - Runtime path. Once a delivery run exists for a task, the task stays on the
+     Runtime path: an outage leaves entries pending and never switches the task
+     to offline rules. A run created part-way through a task takes the floor
+     determinations already in the handoff packet as its initial additions. A
+     task without a delivery run keeps the existing offline rules unchanged.
+   - Run multiplicity. A task has at most one open delivery run, and creating a
+     new one supersedes the previous. Pending entries and pending checkpoint
+     markers of a superseded run stay registrable to it, or are released by an
+     explicit, reported reconciliation; they are never silently cleared and
+     never pin retention indefinitely without being reported.
 4. **Checkpoint registration is idempotent, conflict-explicit and pinned until
    registered.**
    - A registration names an opaque, client-claimed identity: the delivery run,
@@ -247,16 +266,19 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      where it holds the key, then `.task-delivery.yaml`, then defaults) and
      validates the result with the rules `delivery:validate` applies.
    - The creation command takes the project, the task, the resolved
-     configuration as structured data (schema version, profile, and each
-     selected gate with its form), and optionally the pipeline run reference of
-     invariant 1. It carries no path.
+     configuration as structured data (schema version, profile, each selected
+     gate with its form, and whether an external review command is
+     configured), and optionally the pipeline run reference of invariant 1. It
+     carries no path. Its name is left to the implementation plan; this
+     contract is what binds.
    - The Runtime re-validates the data against the schema and the cross-key
      rules (for example, the accepted stage keys, and that `review` and `qa`
      are not both off without an external review command). It never reads
      `.task-delivery.yaml` or any caller-local file for creation and never
      infers the caller's working directory, as `AGENTS.md` requires.
    - The snapshot is recorded as claimed by the client, with its schema version
-     and a hash of its canonical form, and is not verified against the
+     and a hash of its canonical form (a specified canonical encoding, so the
+     hash is comparable across clients), and is not verified against the
      repository, consistent with the head-commit decision above.
    - Failure modes: invalid or unsupported configuration fails with a typed
      validation error and no run is created; a task that is not in the project
