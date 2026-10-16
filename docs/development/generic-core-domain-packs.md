@@ -5156,13 +5156,15 @@ that GP-14B moved to M11.6 (its edge below is kept for reference only) and that
 the run gate is its own task `f8d75709` after activation and GP-24:
 
 ```text
-GP-10B-2 + GP-25 → Runtime activation: execution from the resolved configuration, persisted run pins
-Runtime activation → GP-24 block pack removal on active pack-pinned runs
-GP-10B-1 + GP-10B-2 + GP-25 → Runtime task a45ddb12 execution parity
-Runtime activation → Runtime task a45ddb12 execution parity
-GP-14A + M11.6 Phase B → GP-14B (now M11.6) fail-closed evidence/validators, version-bound review
-GP-10C-1 + Runtime activation → GP-10C-2 previewed adoption/registration
+GP-10B-2 + GP-25 → Runtime activation (aa10a111): execution from the resolved configuration, persisted run pins
+GP-10B-1 + GP-10B-2 + GP-25 + Runtime activation → Runtime task a45ddb12 execution parity
+GP-10C-1 + Runtime activation + execution parity → GP-10C-2 previewed adoption/registration
+Runtime activation + GP-10C-2 → GP-24 block pack removal on active pack-pinned runs
 GP-16 + Runtime activation + GP-24 → GP-16 run gate (task f8d75709)
+GP-16 run gate → GP-12 follow-ups (57a1833f, e003843f)
+
+Outside M16.5:
+GP-14A + M11.6 Phase B → GP-14B (now M11.6) fail-closed evidence/validators, version-bound review
 ```
 
 GP-14A has no M11.6 dependency. The M11.6 Phase B artifact contract is a
