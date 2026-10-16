@@ -216,11 +216,21 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      most one delivery run, which ends in a terminal state; restarting a task's
      delivery is outside this ADR. Once the run exists the task stays on the
      Runtime path: an outage leaves entries pending and never switches the task
-     to offline rules. If creation fails or the Runtime is unreachable at
-     preflight, the task proceeds on the offline path for its whole life and
-     the skill reports it; an ambiguous creation is resolved by an idempotent
-     retry (invariant 5) before any checkpoint is published. A task without a
-     delivery run keeps the existing offline rules unchanged.
+     to offline rules. Before sending a creation request the skill makes a
+     creation-pending marker durable in the file store.
+     - If the Runtime is confirmed unreachable and no request was sent, the
+       marker is cleared, the task proceeds on the offline path for its whole
+       life, and the skill reports it.
+     - A typed rejection of the request (validation, not found, ownership or
+       conflict) is a stop condition: the answer clears the marker, the input
+       or state is corrected, and the task does not proceed offline.
+     - If the outcome is uncertain (the request may have committed, the reply
+       was lost, or the skill exited), the marker stays. The skill publishes no
+       checkpoint and passes no gate, offline or otherwise, until an
+       idempotent retry (invariant 5) shows whether a run exists; only that
+       answer clears the marker.
+
+     A task without a delivery run keeps the existing offline rules unchanged.
      This ADR does not migrate a task already under way offline onto a
      Runtime run, because the offline handoff packet records no floor
      determinations to inherit; such a migration is a separate decision.
@@ -294,10 +304,13 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      repository, consistent with the head-commit decision above.
    - Failure modes: invalid or unsupported configuration fails with a typed
      validation error and no run is created; a task that is not in the project
-     fails as in invariant 1. Creation is idempotent on the project, the task and
-     the snapshot hash: the same input returns the existing run, so a retry
-     after a lost reply is safe, and a different snapshot for a task that
-     already has a run is a typed conflict.
+     fails as in invariant 1. Creation is idempotent on the complete creation
+     payload (project, task, snapshot hash and pipeline run reference, or its
+     absence): the same payload returns the existing run, so a retry after a
+     lost reply is safe, and any different payload for a task that already has
+     a run is a typed conflict. A pipeline run reference is validated as in
+     invariant 1 whenever it is supplied, and is never added through a creation
+     retry.
 
 ## Known limitations
 
