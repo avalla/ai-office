@@ -1,6 +1,8 @@
 # M16 — Generic Core & Domain Packs: boundary audit and delivery plan
 
-Status: M16 in progress. The GP-01 source audit was performed against `main` at
+Status: M16's re-scoped definition-layer exit is complete; M16.5 activation
+is delivered in slices recorded below and in the [roadmap](roadmap.md).
+The GP-01 source audit was performed against `main` at
 `7886519` and passed final repository review on 2026-10-02 against PR #80 at
 `90c51cf`. [ADR-0027](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
 defines the four M15 authority/evidence prerequisites and was integrated in
@@ -33,13 +35,15 @@ GP-10B-1 adds the four development workflows to that reference pack and
 proves expressible-subset parity for workflows; nothing was removed from the
 legacy path.
 The [roadmap](roadmap.md) owns milestone status; ADR-0026 is an accepted
-architectural contract, not current Runtime behavior.
+architectural target whose implementation is tracked clause by clause.
+The task sections preserve delivery-time evidence; the M16.5 addenda record
+later activation work and supersede earlier Runtime-status limitations.
 
 On 2026-10-06 the owner re-scoped the M16 exit to the definition and contract
-layer plus reference fixtures. After M16, packs are a definition,
-customization and upgrade layer; the Runtime does not yet execute from a
-pack. Runtime activation and the tasks that need it are planned for the
-successor milestone M16.5. See
+layer plus reference fixtures. M16 delivered pack definition, customization
+and upgrade contracts; execution was excluded from that exit. Runtime
+activation and its follow-ups belong to M16.5, with delivery status in the
+addenda below. See
 [M16 exit re-scope](#m16-exit-re-scope-owner-decision-2026-10-06).
 
 ## GP-03 additive migration and compatibility plan
@@ -5585,16 +5589,20 @@ Limits and follow-ups, none of them changed here:
 The owner approved this on 2026-10-06. It is a planning record: it changes
 which work the M16 exit requires and delivers no code.
 
-**Decision.** M16 exits at the definition and contract layer plus reference
-fixtures. Work that needs the Runtime to execute from a pack, or that needs
-the M11.6 Phase B artifact contract, is planned for the successor milestone
-**M16.5 — Domain Pack Runtime Activation** (see the [roadmap](roadmap.md)).
+**Decision as recorded on 2026-10-06.** M16 exits at the definition and
+contract layer plus reference fixtures. At that time, both Runtime execution
+from packs and work needing the M11.6 Phase B artifact contract were assigned
+to the successor **M16.5 — Domain Pack Runtime Activation** milestone.
+**Superseded in part on 2026-10-15:** GP-14B moved wholly to M11.6 with its
+Phase B dependency. M16.5 retains activation and the ordered follow-ups below,
+without that dependency (see the [roadmap](roadmap.md)).
 
-**Product claim.** After M16, Domain Packs are a definition, customization
-and upgrade layer with reference fixtures. The Runtime does not yet execute
-from a pack: pipeline runs are still created from the OfficeManifest, no run
-pins a pack configuration, the production catalog holds no pack and no
-project has adopted the development pack.
+**Product claim at the 2026-10-06 decision.** M16 delivered a definition,
+customization and upgrade layer with reference fixtures. Runs still came
+from the OfficeManifest without pack pins; the production catalog held no
+pack and no project had adopted the development pack. PR #168 subsequently
+delivered run pinning. Later M16.5 activation status is recorded in the
+addenda below and the roadmap.
 
 **Why.** The points below are the rationale recorded with the decision.
 
