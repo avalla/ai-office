@@ -4287,7 +4287,7 @@ Anti-goal:
 GP-14A is a definition layer, like GP-11, GP-12, GP-13 and GP-25. GP-03 has no
 artifact or evidence primitive to reuse, so the contribution kinds
 `artifactTypes`, `evidenceTypes` and `validators` that the manifest already
-declares carry the new members. GP-14B (planned for M16.5, after the M11.6
+declares carry the new members. GP-14B (moved to M11.6 on 2026-10-15, after the M11.6
 Phase B artifact contract) owns enforcement: fail-closed evidence, adapter
 registration checks and version-bound review. GP-14A has no M11.6 dependency.
 
@@ -4548,7 +4548,7 @@ proved in both.
 - Running a validator, loading adapter code, looking up or registering an
   adapter, and any port for either.
 - Evidence records, review state, version-bound review, stale-evidence
-  handling and an advisory failure policy (GP-14B, M16.5).
+  handling and an advisory failure policy (GP-14B, M11.6).
 - Validating any value against a schema, and artifact storage (M11.6).
 - Project-authored artifact, evidence or validator types, a project override
   of a typed member, and disabling a type.
@@ -5619,7 +5619,7 @@ project has adopted the development pack.
 
 - GP-14 is split. GP-14A is the declarative definition layer for artifact
   types, evidence types and validator references; it stays in M16 and has no
-  M11.6 dependency. GP-14B is the enforcement half and is planned for M16.5.
+  M11.6 dependency. GP-14B is the enforcement half and moved from M16.5 to M11.6 on 2026-10-15.
 - GP-10C is split. GP-10C-1 declares evidence types, knowledge guidance and
   capability declarations in the development reference pack; it stays in
   M16. GP-10C-2 is previewed explicit adoption and registration and is
