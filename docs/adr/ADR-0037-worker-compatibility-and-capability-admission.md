@@ -219,7 +219,10 @@ unaffected.
 - **At most one active decision per subject.** A registration that would create
   a second active decision for the same subject is refused; replacing a decision
   is one generation that adds the new decision and a revocation of the old one
-  with reason `superseded`.
+  with reason `superseded`. A manifest may remove a decision from the active set
+  only by listing a revocation for it; a manifest that drops an active decision
+  otherwise is invalid, so a dropped decision cannot let step 4 fall back to the
+  legacy predicate.
 - **Rollback and tampering.** The Runtime records the last accepted generation
   and manifest digest in its own state and refuses a pointer that names a lower
   generation or a manifest whose chain does not contain the recorded one.
@@ -237,8 +240,11 @@ unaffected.
 - **Loading.** At Runtime start, and on a reload that registration and
   revocation trigger and an operator may also request, the registry is read into
   an immutable snapshot after verifying every digest, every sufficiency check
-  and every approval class. An invalid evidence bundle or decision listed by a
-  committed manifest is excluded and reported, and its subject is _blocked_: it
+  and every approval class. An invalid evidence bundle or decision in the
+  current manifest's active set and not revoked is excluded and reported, and
+  its subject is _blocked_ (an invalid decision that only a retained older
+  manifest lists, or that is revoked, is not in the active set and blocks
+  nothing beyond the revocation itself): it
   is refused with `registry_unreadable` and never falls back to the
   `legacy_policy` predicate or to another record, so exclusion only ever admits
   less. When the subject of an invalid decision cannot be read, the snapshot is
@@ -273,11 +279,17 @@ unaffected.
 
 Admission is one pure application function:
 
-`admit(requirements, mode, observedSubject, observedMetadata, snapshot, policy) →
-admitted(basis, decision, effective guarantees, advisories) | refused(reasons)`.
+`admit(explicitRequirements, mode, observedSubject, observedMetadata, snapshot,
+policy) → admitted(basis, decision, effective guarantees, advisories) |
+refused(reasons)`.
 
-`requirements` are the guarantees a role, stage or pack requests, plus the named
-set the mode implies (`bounded_profile`, decision 6). A request grants nothing.
+`explicitRequirements` are the guarantees a role, stage or pack requests. The
+set the mode implies (`bounded_profile@1`, decision 6) is derived inside `admit`
+from `mode` and is never passed in, so the origin of a requirement cannot be
+lost: a role that explicitly requests guarantees, even exactly those of
+`bounded_profile@1`, has non-empty `explicitRequirements` and is not an implicit
+dispatch. Decision 10 tests whether `explicitRequirements` is empty, never
+whether two sets are equal. A request grants nothing.
 Adapters report the observed subject and metadata and consume the result; they
 no longer decide which subjects are admitted. The decision is made once, before
 dispatch.
@@ -333,7 +345,9 @@ Steps, in this order, each deterministic:
    `model_mismatch`, `configuration_mismatch`, `protocol_mismatch`,
    `platform_mismatch`, `mode_mismatch`) and expected and observed values. For
    the predicate the dimensions are its named clauses: the floor clause is
-   reported as `version_mismatch`, the model-name clause as `model_mismatch`.
+   reported as `version_mismatch`, the model-name clause as `model_mismatch`,
+   and its pinned configuration, protocol and platform clauses as
+   `configuration_mismatch`, `protocol_mismatch` and `platform_mismatch`.
    Once a record matches, the run's persisted parameters must lie within the
    parameter scope of _that_ record (step 2 only established that some record
    names the model); otherwise refuse `model_mismatch`. Parameters are not part
@@ -481,10 +495,15 @@ recertifying the combination replaces it with a `certified` decision.
 WC-05 introduces the registry in _shadow mode_: the legacy allowlists keep
 deciding, the registry result is computed beside them, and any disagreement is a
 defect found by a differential test over a version × model × run-parameter × feature matrix.
-Cutover happens only when no disagreement remains. After cutover the registry
-can make an admission stricter than the allowlist was only through an operator's
-revocation, and can make it looser only through a new `certified` decision. This
-ADR and WC-01 change no allowlist and no admission rule.
+Cutover happens only when no unexplained disagreement remains. The refusals
+that this ADR makes mandatory and that the allowlists do not have are listed as
+expected differences, each justified, and are not disagreements: metadata drift
+touching a required guarantee (step 6), the validity window (step 5), and the
+registry-integrity refusals of decision 4. After cutover the registry can make
+an admission stricter than the allowlist was through an operator's revocation or
+through those mandatory refusals, and can make it looser only through a new
+`certified` decision. This ADR and WC-01 change no allowlist and no admission
+rule.
 
 ### 10. The legacy Claude policy is not a certificate
 
@@ -497,7 +516,15 @@ pre-release of exactly the floor version is refused and pre-releases of higher
 versions are admitted, as today), the run carries no output-token cap and a
 reasoning effort, if any, in `low`, `medium`, `high`, `xhigh` or `max`, the
 provider is `anthropic` and
-the model matches the adapter's current model-name pattern. The predicate lives
+the model matches the adapter's current model-name pattern, the observed
+configuration digest equals the digest of the source-shipped Claude legacy
+configuration profile (the argument vector, environment and settings the adapter
+constructs today), the output protocol is the source-shipped current Claude
+parser contract, and the platform is one the adapter supports today (not
+`win32`). A change to the adapter's flags, isolation configuration or parser
+therefore changes a pinned dimension and ends the exception for the changed
+adapter until the predicate is updated by a reviewed change; the refusal names
+`configuration_mismatch`, `protocol_mismatch` or `platform_mismatch`. The predicate lives
 in source with the baseline records, is changed only by a reviewed change, and
 cannot be created, edited or extended by registry data. Every guarantee of the
 record is `unverified`, with the flags the adapter passes listed as `declared`
@@ -510,9 +537,9 @@ any change of the Claude rules is a separate owner decision after it.
 `legacy_policy` is the single permitted exception to the refusal of uncertified
 subjects that require bounded guarantees, and only because of the owner's
 decision D3 (open decision O2 asks to confirm this reading). It applies in step 4
-only to _implicit legacy dispatch_: the requirement set is exactly
-`bounded_profile@1` as implied by the mode, with nothing requested by a role,
-stage or pack. When any explicit requirement exists, step 4 does not use the
+only to _implicit legacy dispatch_: `explicitRequirements` is empty, so the only
+requirement is the `bounded_profile@1` that the mode implies, with nothing
+requested by a role, stage or pack. When any explicit requirement exists, step 4 does not use the
 record and refuses the run with `no_matching_audit`, with the detail that the
 legacy policy covers implicit dispatch only. In step 7 the
 record is deemed to satisfy the implicit `bounded_profile@1` of the mode and

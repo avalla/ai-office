@@ -145,7 +145,7 @@ Recorded in the Runtime as WC-R01 … WC-R14 under the M24 milestone.
 
 | Id     | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| WC-R01 | No regression: baseline records reproduce every current admit/refuse decision of the Codex and Claude workers exactly, proved by a differential test over a version × model × run-parameter × feature matrix in shadow mode before cutover.                                                                                                                                                                                                                                                                                                                 |
+| WC-R01 | No regression: baseline records reproduce every current admit/refuse decision of the Codex and Claude workers exactly, proved by a differential test over a version × model × run-parameter × feature matrix in shadow mode before cutover, apart from the enumerated mandatory refusals of ADR-0037 (drift, validity window, registry integrity).                                                                                                                                                                                                          |
 | WC-R02 | Exact subject: worker, exact version, provider, exact model, effective-configuration digest, output protocol, platform and mode. No ranges and no implicit extension: certifying one subject certifies no other.                                                                                                                                                                                                                                                                                                                                            |
 | WC-R03 | Guarantee taxonomy: four states and risk tiers; unknown capabilities are `unverified`; a client or provider declaration never raises a state; the Claude legacy policy is labelled `legacy_policy` and never presented as certified.                                                                                                                                                                                                                                                                                                                        |
 | WC-R04 | Bounded single-agent execution and governed delegation are separate modes; native client delegation is unsupported absent Runtime admission.                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -209,11 +209,14 @@ registration, WC-08 the operator documentation.
 ### Rollout without regression
 
 1. _Shadow_: WC-05 evaluates the registry beside the legacy allowlists; the
-   legacy decision stays authoritative; any disagreement fails the differential
-   test.
-2. _Cutover_: only when baseline records reproduce every current decision. From
-   then the registry decides. Revocation is the way to refuse something newly;
-   a decision is the only way to admit.
+   legacy decision stays authoritative; any unexplained disagreement fails the
+   differential test. The mandatory refusals of ADR-0037 that the allowlists lack
+   (metadata drift touching a required guarantee, the validity window and the
+   registry-integrity refusals) are listed as expected, justified differences.
+2. _Cutover_: only when baseline records reproduce every current decision apart
+   from those expected differences. From then the registry decides. A revocation
+   or one of those mandatory refusals is the way to refuse something newly; a
+   decision is the only way to admit.
 3. _Claude_: the version floor is carried as `legacy_policy` and is not tightened
    by M24 up to WC-06. WC-07 supplies the evidence for a separate decision.
 4. _Never_: automatic enablement of a detected version, a silent downgrade of a
