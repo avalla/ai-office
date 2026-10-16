@@ -6,6 +6,7 @@ import {
   planningSnapshotPage,
   projectPlanningSnapshot,
   type PlanningDataClass,
+  type PlanningSnapshot,
   type PlanningSnapshotCollection,
   type PlanningSnapshotPage,
 } from "./planning-snapshot.ts";
@@ -40,7 +41,10 @@ function isCollection(value: string): value is PlanningSnapshotCollection {
   return (planningSnapshotCollections as readonly string[]).includes(value);
 }
 
-function classSet(values: readonly string[]): PlanningDataClass[] {
+/** Validates a requested class set: P, optionally with T. */
+export function planningClassSet(
+  values: readonly string[],
+): PlanningDataClass[] {
   const unique = [...new Set(values)];
   if (!unique.includes("P") || unique.some((v) => v !== "P" && v !== "T"))
     throw new PlanningSnapshotQueryError(
@@ -95,7 +99,15 @@ export class GetPlanningSnapshot {
       1,
       planningSnapshotLimits.maxLimit,
     );
-    const classes = classSet(query.classes ?? ["P", "T"]);
+    const snapshot = await this.readSnapshot(query);
+    return planningSnapshotPage(snapshot, collection, { offset, limit });
+  }
+
+  /** The complete snapshot of one validated scope, before pagination. */
+  async readSnapshot(
+    query: Pick<PlanningSnapshotQuery, "projectId" | "milestoneId" | "classes">,
+  ): Promise<PlanningSnapshot> {
+    const classes = planningClassSet(query.classes ?? ["P", "T"]);
     const milestoneId = query.milestoneId ?? null;
 
     const state = await this.reads.readPlanningState(query.projectId);
@@ -106,11 +118,10 @@ export class GetPlanningSnapshot {
     )
       throw new PlanningScopeNotFoundError(query.projectId, milestoneId);
 
-    const snapshot = projectPlanningSnapshot(
+    return projectPlanningSnapshot(
       state,
       { projectId: query.projectId, milestoneId },
       classes,
     );
-    return planningSnapshotPage(snapshot, collection, { offset, limit });
   }
 }

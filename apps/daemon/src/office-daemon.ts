@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import {
@@ -38,6 +38,19 @@ export interface PersistentRuntimeHostOptions {
   queryEvents?: OperationalEventBus;
   queueStatus?: () => Promise<NonNullable<DaemonHealthResponse["queue"]>>;
   knowledgeStatus?: NonNullable<DaemonHealthResponse["knowledge"]>;
+  /**
+   * The read-only coordination listener (ADR-0036 Decision 5), present only
+   * when the owner enabled it. Its handler answers every request on its own
+   * socket; nothing on that socket reaches the query API or `/commands`.
+   */
+  coordinationListener?: CoordinationListener;
+}
+
+export interface CoordinationListener {
+  socketPath: string;
+  /** Path probed to tell a live listener from a stale socket file. */
+  healthPath: string;
+  handle(request: Request): Promise<Response>;
 }
 
 function json(value: unknown, status = 200): Response {
@@ -67,6 +80,7 @@ export class PersistentRuntimeHost {
       throw new Error("Office daemon instances can only be started once");
     this.started = true;
     let server: ReturnType<typeof Bun.serve> | undefined;
+    let coordinationServer: ReturnType<typeof Bun.serve> | undefined;
 
     try {
       await this.prepareSocket();
@@ -81,6 +95,7 @@ export class PersistentRuntimeHost {
           this.route(request, () => host.timeout(request, 0)),
       });
       chmodSync(this.options.socketPath, 0o600);
+      coordinationServer = await this.startCoordinationListener();
       await this.options.onStarting?.();
       await this.options.events.execute({
         eventType: "daemon.started",
@@ -102,6 +117,7 @@ export class PersistentRuntimeHost {
           // releases their listeners and heartbeat timers.
           this.options.queryApi?.closeStreams();
           await this.options.onStopping?.();
+          await coordinationServer?.stop(false);
           await server.stop(false);
           await this.options.events.execute({
             eventType: "daemon.stopped",
@@ -113,7 +129,9 @@ export class PersistentRuntimeHost {
         // Event subscribers hold a listener and a heartbeat timer; dropping
         // them here keeps a stopped daemon from retaining either.
         this.options.queryEvents?.clear();
-        if (server !== undefined) this.removeSocket();
+        if (coordinationServer !== undefined)
+          this.removeSocket(this.options.coordinationListener!.socketPath);
+        if (server !== undefined) this.removeSocket(this.options.socketPath);
         await this.options.onStopped?.();
       }
     }
@@ -299,26 +317,74 @@ export class PersistentRuntimeHost {
     );
   }
 
-  private async prepareSocket(): Promise<void> {
-    if (!existsSync(this.options.socketPath)) return;
+  /**
+   * Starts the coordination listener when one is configured. The listener is
+   * optional: a failure to bind it is reported and leaves it closed, never
+   * the Runtime down, and never opens anything broader in its place.
+   */
+  private async startCoordinationListener(): Promise<
+    ReturnType<typeof Bun.serve> | undefined
+  > {
+    const listener = this.options.coordinationListener;
+    if (listener === undefined) return undefined;
+    try {
+      // Only a stale socket is ever replaced; any other file at the path is
+      // left alone and keeps the listener closed.
+      if (
+        existsSync(listener.socketPath) &&
+        !lstatSync(listener.socketPath).isSocket()
+      )
+        throw new Error("Coordination socket path is not a socket");
+      await this.prepareSocket(listener.socketPath, listener.healthPath);
+      const server = Bun.serve({
+        unix: listener.socketPath,
+        fetch: async (request) => {
+          try {
+            return await listener.handle(request);
+          } catch {
+            return json({ error: "Internal error" }, 500);
+          }
+        },
+      });
+      try {
+        chmodSync(listener.socketPath, 0o600);
+      } catch (error) {
+        await server.stop(true);
+        this.removeSocket(listener.socketPath);
+        throw error;
+      }
+      return server;
+    } catch {
+      // The socket path can be user-specific; the reason stays out of logs.
+      console.error(
+        "Coordination listener could not start; it stays disabled until the Runtime restarts.",
+      );
+      return undefined;
+    }
+  }
+
+  private async prepareSocket(
+    socketPath = this.options.socketPath,
+    healthPath = "/health",
+  ): Promise<void> {
+    if (!existsSync(socketPath)) return;
 
     try {
-      const response = await fetch("http://localhost/health", {
-        unix: this.options.socketPath,
+      const response = await fetch(`http://localhost${healthPath}`, {
+        unix: socketPath,
         signal: AbortSignal.timeout(500),
       });
-      if (response.ok)
-        throw new RuntimeHostAlreadyRunningError(this.options.socketPath);
+      if (response.ok) throw new RuntimeHostAlreadyRunningError(socketPath);
     } catch (error) {
       if (error instanceof RuntimeHostAlreadyRunningError) throw error;
     }
 
-    this.removeSocket();
+    this.removeSocket(socketPath);
   }
 
-  private removeSocket(): void {
-    if (existsSync(this.options.socketPath)) {
-      rmSync(this.options.socketPath);
+  private removeSocket(socketPath: string): void {
+    if (existsSync(socketPath)) {
+      rmSync(socketPath);
     }
   }
 }

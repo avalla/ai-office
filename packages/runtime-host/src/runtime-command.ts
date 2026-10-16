@@ -118,6 +118,13 @@ import { handleCostCommand } from "./commands/cost.ts";
 import { handleGovernanceCommand } from "./commands/governance.ts";
 import { handleRequirementCommand } from "./commands/requirement.ts";
 import { handlePlanningCommand } from "./commands/planning.ts";
+import { handleCoordinationCommand } from "./commands/coordination.ts";
+import {
+  CoordinationClassNotEnabledError,
+  CoordinationOperationError,
+  CoordinationResponseTooLargeError,
+} from "@ai-office/application/coordination/coordination-read-service.ts";
+import { PlanningReadBusyError } from "@ai-office/application/ports/planning-read.port.ts";
 import {
   PlanningScopeNotFoundError,
   PlanningSnapshotQueryError,
@@ -280,6 +287,7 @@ const commands = [
   "task:unlink-requirement",
   "task:reconcile",
   "planning:snapshot",
+  "coordination:read",
   "agent:sync",
   "agent:list",
   "agent:models",
@@ -430,6 +438,7 @@ const handlers = [
   handleGovernanceCommand,
   handleRequirementCommand,
   handlePlanningCommand,
+  handleCoordinationCommand,
   handleMemoryCommand,
   handleKnowledgeCommand,
   handleDeliverySetupCommand,
@@ -479,6 +488,10 @@ function formatKnownError(error: unknown): string | null {
     error instanceof RequirementNotFoundError ||
     error instanceof PlanningSnapshotQueryError ||
     error instanceof PlanningScopeNotFoundError ||
+    error instanceof PlanningReadBusyError ||
+    error instanceof CoordinationOperationError ||
+    error instanceof CoordinationClassNotEnabledError ||
+    error instanceof CoordinationResponseTooLargeError ||
     error instanceof TaskReconciliationApprovalError ||
     error instanceof TaskCompletionApprovalError ||
     error instanceof TaskLockActiveError ||

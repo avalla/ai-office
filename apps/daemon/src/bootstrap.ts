@@ -20,6 +20,12 @@ import { LocalCommandHandler } from "./local-command-handler.ts";
 import { ApplicationRuntime } from "@ai-office/runtime-host/application-runtime.ts";
 import { PersistentRuntimeHost } from "./office-daemon.ts";
 import { QueryApi } from "./query-api.ts";
+import { CoordinationQueryApi } from "./coordination-query-api.ts";
+import { loadCoordinationListenerConfiguration } from "./coordination-listener-configuration-file.ts";
+import { GetPlanningSnapshot } from "@ai-office/application/coordination/get-planning-snapshot.ts";
+import { CoordinationReadService } from "@ai-office/application/coordination/coordination-read-service.ts";
+import type { CoordinationListenerConfiguration } from "@ai-office/application/coordination/coordination-listener-configuration.ts";
+import { coordinationQueryPrefix } from "@ai-office/application/protocol/coordination-query-protocol.ts";
 import type { AgentClientCatalog } from "@ai-office/application/ports/agent-client-adapter.port.ts";
 import type { ProjectBindingAdapter } from "@ai-office/application/ports/project-binding-adapter.port.ts";
 import type { InstalledDomainPackCatalog } from "@ai-office/application/ports/installed-domain-pack-catalog.port.ts";
@@ -161,6 +167,13 @@ export interface BootstrapOptions {
   projectStorageBootstrap?: ProjectStorageBootstrapLike;
   /** Internal bootstrap seam for deterministic global-database failure tests. */
   openGlobalDatabase?: typeof openDatabase;
+  /**
+   * Coordination listener configuration; when omitted the host reads
+   * `<runtime home>/coordination-listener.json` once. Absent means disabled.
+   */
+  coordinationListener?: CoordinationListenerConfiguration;
+  /** Coordination socket; defaults to `<runtime home>/coordination.sock`. */
+  coordinationSocketPath?: string;
   /** Internal bootstrap seam for deterministic source-revision capture tests. */
   readSourceRevision?: (directory: string) => string | null;
 }
@@ -512,7 +525,38 @@ export async function bootstrap(
       };
     };
 
+    // Read once; a change takes effect on Runtime restart. Only an enabled,
+    // valid configuration opens the listener.
+    const coordinationConfiguration =
+      options.coordinationListener ??
+      loadCoordinationListenerConfiguration(runtimePaths.runtimeHome);
+    if (coordinationConfiguration.state === "misconfigured")
+      console.error(
+        `Coordination listener configuration is invalid (${coordinationConfiguration.reason}); the listener stays disabled.`,
+      );
+    const coordinationApi = new CoordinationQueryApi({
+      reads: new CoordinationReadService(
+        new GetPlanningSnapshot(projectStorage.planningReads),
+      ),
+      projects:
+        coordinationConfiguration.state === "enabled"
+          ? coordinationConfiguration.projects
+          : new Map(),
+      startedAt: () => statusHost.current?.startedAtInstant ?? new Date(),
+    });
+    const coordinationListener =
+      coordinationConfiguration.state === "enabled"
+        ? {
+            socketPath:
+              options.coordinationSocketPath ??
+              join(runtimePaths.runtimeHome, "coordination.sock"),
+            healthPath: `${coordinationQueryPrefix}/health`,
+            handle: (request: Request) => coordinationApi.handle(request),
+          }
+        : undefined;
+
     const host = new PersistentRuntimeHost({
+      ...(coordinationListener === undefined ? {} : { coordinationListener }),
       socketPath: runtimePaths.socketPath,
       queryApi: new QueryApi({
         queries,
