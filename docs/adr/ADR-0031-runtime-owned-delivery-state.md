@@ -269,15 +269,24 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
    - The creation command takes the project, the task, the resolved
      configuration as structured data (schema version, profile, each selected
      gate with its form, and whether an external review command is
-     configured), optionally the pipeline run reference of invariant 1, and
-     optionally the floor additions already determined for the task (each with
+     configured), optionally the pipeline run reference of invariant 1, and the
+     complete set of floor additions already determined for the task (each with
      its gate, target form, trigger and head), which the client reads from its
-     handoff packet or file store. It carries no path. Its name is left to the
-     implementation plan; this contract is what binds.
+     handoff packet or file store. The set is a required field: an empty set is
+     stated explicitly and is never an omission. It carries no path. Its name
+     is left to the implementation plan; this contract is what binds.
+   - The client must read that local state before creating a run. If the
+     handoff packet or file store cannot be read, the skill does not call the
+     creation command and reports why.
    - Inherited floor additions are validated like any other (a known gate, a
      valid target form, a well-formed head) and registered atomically with the
-     creation: the run does not become open until they are recorded, so a task
-     that already triggered the floor cannot start a Runtime run without them.
+     creation: the run does not become open until they are recorded.
+   - Completeness is an obligation of the client, not a guarantee of the
+     Runtime. The Runtime cannot read the client's local state, so it cannot
+     verify that the set is complete; it records what is supplied as claimed.
+     An omission is caught at the next floor evaluation point (preflight,
+     before `implementation` ends, before `ready_for_merge`, or when a new
+     commit can change the classification), which only moves up.
    - The Runtime re-validates the data against the schema and the cross-key
      rules (for example, the accepted stage keys, and that `review` and `qa`
      are not both off without an external review command). It never reads
