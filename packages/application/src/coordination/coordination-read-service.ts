@@ -170,6 +170,10 @@ const exposedCollections = [
  * tail of a title must not change an identity a caller can see, or the
  * identity would confirm a guessed secret.
  */
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 function exposedProjection(
   snapshot: PlanningSnapshot,
   counts: Record<PlanningSnapshotCollection, number>,
@@ -193,6 +197,14 @@ function exposedProjection(
       ),
     ]),
   ) as Record<CoordinationExposedCollection, CoordinationExposedItem[]>;
+  // Requirements are ordered by key in the read model. A scrubbed or cut key
+  // must not reveal where its stored value sorts, so they are ordered by the
+  // exposed key here; every other order uses class P values only.
+  exposed.requirements.sort(
+    (a, b) =>
+      compareText(String(a.key), String(b.key)) ||
+      compareText(String(a.requirementId), String(b.requirementId)),
+  );
   return {
     snapshotId: `snapshot:sha256:${sha256({
       coordinationApiVersion,
@@ -207,7 +219,29 @@ function exposedProjection(
 }
 
 export class CoordinationReadService {
+  /**
+   * The last exposed projection, keyed by the CB-02 identity, which covers
+   * the stored state, the scope and the classes: unchanged state is mapped
+   * and hashed once, however many pages or status reads ask for it.
+   */
+  private lastProjection?: {
+    key: string;
+    value: ReturnType<typeof exposedProjection>;
+  };
+
   constructor(private readonly snapshots: GetPlanningSnapshot) {}
+
+  private exposed(
+    snapshot: PlanningSnapshot,
+    counts: Record<PlanningSnapshotCollection, number>,
+  ): ReturnType<typeof exposedProjection> {
+    if (this.lastProjection?.key !== snapshot.snapshotId)
+      this.lastProjection = {
+        key: snapshot.snapshotId,
+        value: exposedProjection(snapshot, counts),
+      };
+    return this.lastProjection.value;
+  }
 
   async execute(
     query: CoordinationReadQuery,
@@ -270,7 +304,7 @@ export class CoordinationReadService {
       coordinationApiVersion,
       operation: "status",
       schemaVersion: snapshot.schemaVersion,
-      snapshotId: exposedProjection(snapshot, counts).snapshotId,
+      snapshotId: this.exposed(snapshot, counts).snapshotId,
       scope: snapshot.scope,
       classes: snapshot.classes,
       counts,
@@ -291,7 +325,7 @@ export class CoordinationReadService {
       limit: query.limit,
       classes,
     });
-    const exposed = exposedProjection(snapshot, page.counts);
+    const exposed = this.exposed(snapshot, page.counts);
     const header = {
       coordinationApiVersion,
       operation: collection,

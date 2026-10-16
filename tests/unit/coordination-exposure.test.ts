@@ -250,6 +250,18 @@ describe("credential scrubber", () => {
     ).toBe(redactionMarker);
   });
 
+  test("redacts escaped and unterminated quoted values", () => {
+    expect(
+      scrubCredentials(["pass", "word: ", '"QQQ\\"ZZZ WWW VVV"', " end"].join("")),
+    ).toBe(`${redactionMarker} end`);
+    expect(
+      scrubCredentials(["pass", "word: ", '"hunter2hunter2'].join("")),
+    ).toBe(redactionMarker);
+    expect(scrubCredentials("Rotate token: weekly")).toBe(
+      "Rotate token: weekly",
+    );
+  });
+
   test("bounds the code-point conversion of huge text", () => {
     const item = exposeItem(
       "milestones",

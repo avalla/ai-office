@@ -266,6 +266,50 @@ describe("coordination read service", () => {
     );
   });
 
+  test("requirements are ordered by their exposed key, not the stored one", async () => {
+    const token = (fill: string) => ["gh", "p_", fill.repeat(36)].join("");
+    const withKey = (key: string) =>
+      service(() => ({
+        ...state(),
+        requirements: [
+          { id: "r1", key, title: "One", status: "accepted", milestoneId: "m1" },
+          { id: "r2", key: "R-2", title: "Two", status: "accepted", milestoneId: "m1" },
+        ],
+      }));
+    // Stored keys sort on opposite sides of "R-2"; exposed, both read
+    // "[redacted]", so the order and every byte must match.
+    const low = await withKey(token("A")).execute({ projectId: "p", operation: "requirements" });
+    const high = await withKey(token("z")).execute({ projectId: "p", operation: "requirements" });
+    expect(JSON.stringify(low)).toBe(JSON.stringify(high));
+    expect(
+      (low as CoordinationCollectionResponse).items.map((item) => item.requirementId),
+    ).toEqual(["r2", "r1"]);
+  });
+
+  test("unchanged state is projected once across reads", async () => {
+    let reads = 0;
+    const counting = new CoordinationReadService(
+      new GetPlanningSnapshot({
+        readPlanningState: async () => {
+          reads += 1;
+          return state();
+        },
+      }),
+    );
+    const first = await counting.execute({ projectId: "p", operation: "tasks", limit: 1 });
+    const second = await counting.execute({ projectId: "p", operation: "tasks", limit: 1, offset: 1 });
+    const status = await counting.execute({ projectId: "p", operation: "status" });
+    expect(reads).toBe(3);
+    expect(second.snapshotId).toBe(first.snapshotId);
+    expect(status.snapshotId).toBe(first.snapshotId);
+    // A fresh service over the same state yields the same bytes as the cache.
+    expect(JSON.stringify(second)).toBe(
+      JSON.stringify(
+        await service().execute({ projectId: "p", operation: "tasks", limit: 1, offset: 1 }),
+      ),
+    );
+  });
+
   test("a caller cannot receive a class that is not allowed", async () => {
     const reads = service();
     const onlyP = {

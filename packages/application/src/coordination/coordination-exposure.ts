@@ -106,9 +106,9 @@ const credentialPatterns: readonly RegExp[] = [
   // Credentials in URL userinfo: scheme://user:password@host.
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/gi,
   // Assignments such as password=..., api_key: ...
-  // A quoted value is redacted up to its closing quote; a JSON-style quoted
-  // key is matched too.
-  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|aws_secret_access_key|client[_-]?secret)["']?\s*[:=]\s*(?:"[^"]{6,}"|'[^']{6,}'|[^\s"']{8,})/gi,
+  // A quoted value (escapes included) is redacted up to its closing quote;
+  // an unterminated quoted value still matches; a JSON-style quoted key too.
+  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|aws_secret_access_key|client[_-]?secret)["']?\s*[:=]\s*(?:"(?:[^"\\]|\\.){6,}"|'(?:[^'\\]|\\.){6,}'|["'][^\s"']{6,}|[^\s"']{8,})/gi,
 ];
 
 /** Zero-width and format characters that could split a token past a pattern. */
