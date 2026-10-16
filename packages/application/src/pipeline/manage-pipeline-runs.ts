@@ -47,6 +47,15 @@ import {
 
 type PipelinePrincipal = OperatorPrincipal | AgentExecutionPrincipal;
 
+/**
+ * Provenance for a stage completion that resumes a suspended pipeline: which
+ * trigger drove the recovery, and — for a task completion — which task did.
+ */
+export interface PipelineResumption {
+  readonly trigger: "task_completion" | "tick" | "orchestration_replay";
+  readonly triggerTaskId?: string;
+}
+
 export class ManagePipelineRuns {
   constructor(
     private readonly manifests: OfficeManifestRepository,
@@ -212,6 +221,7 @@ export class ManagePipelineRuns {
     projectId: string;
     agentRunId: string;
     expectedPipelineRunId?: string;
+    resumption?: PipelineResumption;
   }): Promise<PipelineRun> {
     const agentRun = await this.agents.findRun(input.agentRunId);
     if (agentRun === null)
@@ -272,6 +282,28 @@ export class ManagePipelineRuns {
       await this.persist(run, before.version);
       await this.syncTaskTerminal(run);
       const after = run.snapshot();
+      if (input.resumption !== undefined) {
+        // The resume and the stage completion it unlocked are the same state
+        // transition, so their audit records commit in this transaction. The
+        // prerequisite list is read here, authoritatively, not trusted from
+        // the caller.
+        const prerequisiteTaskIds =
+          this.taskDependencies === undefined
+            ? []
+            : (await this.taskDependencies.listByProject(input.projectId))
+                .filter((edge) => edge.taskId === before.taskId)
+                .map((edge) => edge.dependsOnTaskId)
+                .sort();
+        await this.event(run, "pipeline.resumed", principal, {
+          stageId: before.stages[before.currentStageIndex]!.stageId,
+          agentRunId: agent.id,
+          trigger: input.resumption.trigger,
+          ...(input.resumption.triggerTaskId === undefined
+            ? {}
+            : { triggerTaskId: input.resumption.triggerTaskId }),
+          prerequisiteTaskIds,
+        });
+      }
       await this.event(
         run,
         run.currentStage()?.status === "awaiting_approval"

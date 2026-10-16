@@ -980,7 +980,9 @@ Focus: user-facing product surfaces, packaging, and operability.
 
 - web UI beyond the local read-only operations console shipped in M7.8;
 - plugin SDK;
-- MCP server;
+- MCP server (the first server, remote and read-only, is proposed by
+  [M23](coordination-bridge.md) CB-11A–CB-11F; the M9 MCP task extends it and
+  does not create a second one);
 - packaged binaries;
 - remote snapshot transport with a deterministic filesystem adapter;
 - optimistic-concurrency push/pull and explicit divergence diagnostics;
@@ -1396,6 +1398,12 @@ integration.
   handling consistent with the M6 connector boundary;
 - correlation between external GitHub identities/events and internal pipeline,
   stage, artifact, action, and audit identities;
+- software-delivery provenance correlating internal Tasks and AgentRuns with
+  repository commits, Pull Requests, exact PR versions/head SHAs, and merge
+  evidence through generic Artifact/Evidence contracts. GitHub-specific identity
+  stays in the software/GitHub adapter boundary; each relationship preserves
+  how it was established, and external delivery state never becomes Task
+  lifecycle authority;
 - GitHub Actions evaluated as an optional execution backend, check producer, or
   integration point, never as AI Office's primary orchestrator.
 
@@ -1406,9 +1414,12 @@ does not decide who develops, who reviews, when QA or security is required, or
 whether merge policy is satisfied.
 
 The implementation assessment must decide the exact boundary between local Git
-worktree/commit operations, remote Git transport, and GitHub API operations.
-That split must preserve the current rule that agents do not receive direct
-repository, shell, credential, or connector authority.
+worktree/commit production and capture, remote Git transport, and GitHub API
+operations, including Pull Request correlation. That split must preserve the
+current rule that agents do not receive direct repository, shell, credential,
+or connector authority. The provenance contract may be designed before M11.6
+Artifact Runtime exists, but production persistence must reuse that generic
+foundation rather than create a parallel software-only authority.
 
 Depends on: M6 connector and controlled-action foundations and M11 pipeline
 orchestration. M12 workers may consume the connector through those boundaries;
@@ -1473,7 +1484,10 @@ A software-delivery pipeline may coordinate assessment, plan approval,
 branch/worktree preparation, implementation, test, push, pull request, structured
 review, bounded fix loops, QA, conditional security review, human approval, and
 merge. The engine owns this lifecycle; GitHub only reflects and performs the
-external repository operations it is authorized to expose.
+external repository operations it is authorized to expose. The pipeline consumes
+M13 delivery provenance from Task and AgentRun through commits and exact Pull
+Request versions to merge and review evidence; it does not reconstruct
+authoritative relationships from branch names or commit messages.
 
 Agent reviews should be able to return machine-interpretable artifacts in
 addition to human-readable text. A provisional shape may contain `decision` and
@@ -1502,6 +1516,9 @@ Exit direction:
   text as authorization;
 - separation-of-duties violations fail closed;
 - merge is impossible until all effective policy gates are satisfied;
+- every software delivery is traceable from Task and AgentRun through the exact
+  commits and Pull Request version reviewed and merged, without treating GitHub
+  state as Task lifecycle authority;
 - changing the selected worker runtime does not change workflow semantics.
 
 ## M15 — Domain-neutral professional work and vertical profiles
@@ -1874,7 +1891,9 @@ knowledge guidance contract GP-15, and their dependency graph, acceptance criter
 and non-goals are in the
 [Generic Core & Domain Packs plan](generic-core-domain-packs.md). The
 [accepted core/pack boundary ADR](../adr/ADR-0026-core-domain-pack-boundary.md)
-is the GP-02 architectural decision, not an implemented Runtime contract. The
+is the GP-02 architectural target, delivered incrementally; PR #168 implements
+its run-pinning clause. Activation, removal guarding and adoption remain M16.5
+work; evidence and validator enforcement belongs to M11.6. The
 [M15-4 decision](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
 supplies its four authority/evidence prerequisites; GP-02 reviewed the
 contract against them after M15-4 integration. The AI
@@ -1937,8 +1956,8 @@ and disable of a pack workflow, a derived workflow view, and upgrade rules
 that reuse GP-08, GP-11 and GP-12. It adds forward SQLite and PostgreSQL
 migrations that admit workflow overrides and portable archive format 9. It
 does not touch the pipeline engine, pipeline runs, pins, approvals or guards;
-runs do not pin pack configuration yet, and blocking a change on in-flight
-pinned runs is deferred to GP-24. GP-09 adds a versioned, read-only legacy
+PR #168 subsequently added pack-configuration pins. Blocking a change on
+in-flight pinned runs remains deferred to GP-24's scope. GP-09 adds a versioned, read-only legacy
 development profile and `project:configuration:legacy`: a deterministic,
 digest-pinned description of the office, roles, agents, task-kind routing and
 pipelines the Runtime reads from a legacy project today. It proves
@@ -2059,9 +2078,10 @@ Tests resolve these through a test-supplied catalog; no production catalog
 registers the pack, no project adopts it and the Runtime does not consume it.
 Aliases remain planned work of M16; automatic selection,
 remote marketplace/downloads and executable validators remain deferred.
-Runtime enforcement from pack policies (`a45ddb12`), adoption (GP-10C-2) and
-Runtime execution from packs are planned for M16.5. M16 remains incomplete
-until its re-scoped exit criteria are met.
+Runtime enforcement from pack policies and execution from packs belong to
+M16.5 activation (`aa10a111`); `a45ddb12` proves execution parity, and
+GP-10C-2 owns production adoption. These do not reopen M16's completed,
+re-scoped definition-layer exit.
 
 ### Post-GP-06 hardening follow-ups
 
@@ -2174,9 +2194,10 @@ core. Domain-specific adapters remain behind public ports and controlled
 actions.
 
 After M16, Domain Packs are a definition, customization and upgrade layer
-with reference fixtures. The Runtime does not yet execute from a pack: no run
-is created from a resolved configuration or pins one, no pack is registered
-in the production catalog, and no project adopts the development pack. An
+with reference fixtures. M16 itself did not execute from packs or pin their
+configuration. PR #168 subsequently added configuration pins for nonempty
+selections; pipeline selection remains manifest-driven, and production pack
+registration and adoption remain GP-10C-2 work. An
 accepted ADR alone does not satisfy the exit. Runtime execution that consumes
 the resolved configuration leaves the M16 exit and is expected to become the
 exit of M16.5.
@@ -2234,7 +2255,7 @@ still scoped by its own record before work:
   M165-GP12-FU).
 
 GP-14B, which left M16.5 for M11.6 on 2026-10-15 (requirement GP-14B-M116,
-task `d991b5be`), owns the Phase B contract it depends on and is not an M16.5
+task `d991b5be`), depends on M11.6's Phase B contract and is not an M16.5
 item.
 
 Exit: to be defined with the scope proposal. It is expected to carry the
@@ -2248,11 +2269,11 @@ A [scope-proposal draft](m16-5-domain-pack-runtime-activation-scope.md) lays
 out the planned-contents table above alongside the owner decisions it
 depends on (the GP-16 run-gate split, GP-14B's M11.6 Phase B dependency, the
 ADR-0026 status and the extent of activation), all since ruled on. It records
-no acceptance criteria; two slices are delivered: the pin, in which a
-pipeline run records the resolved pack-configuration identity it started under
+no acceptance criteria; two slices are delivered: the configuration pin
 (migration 0051), and pack workflow selection by `pipeline:start` for a project
-with a selected pack, which materializes no role or agent. The rest of the
-proposal is not delivered. Opening the closed `officeTaskKinds` list, once listed
+with a selected pack, which materializes no role or agent. The remaining
+items follow the recorded rulings and require their own task scope and
+acceptance criteria. Opening the closed `officeTaskKinds` list, once listed
 there as an open decision, was resolved separately as a standalone change that
 does not deliver or approve M16.5.
 
@@ -2505,3 +2526,49 @@ Continuity & Handoff (`active`). The roadmap has no dedicated M19 section
 yet; that gap is recorded here rather than silently documenting another
 milestone. No new code, model training or provider commitment is authorized
 by this entry.
+
+## M23 — AI Office Coordination Bridge
+
+Status: planned 2026-10-15; the milestone, requirements CB-R01–CB-R14 and the
+tasks CB-01–CB-12 (CB-11 split into CB-11A–CB-11F) are registered in the
+Runtime. CB-01 delivered the architecture, protocol and trust model as
+[ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md)
+(accepted 2026-10-15). CB-02 delivers the planning read model: a
+deterministic, minimized (classes P and T only), paginated projection of
+milestones, tasks, requirements and dependencies, with derived runnable,
+active, blocker, open-decision and inconsistency collections kept apart, a
+`snapshot:sha256:` identity over the complete scoped projection that does not
+change with the page window, a per-page digest, and the read-only
+`planning:snapshot` CLI command. The coordination listener, exposure registry
+and MCP server are not implemented yet. Numbered M23 because M21 and M22 (whose roadmap sections are not yet on main) were
+already registered.
+
+Goal: let users and external AI assistants (ChatGPT first) inspect the planning
+state, propose structured changes, request owner decisions and receive
+verifiable receipts, through a versioned, provider-neutral protocol. The Runtime
+stays the only authority; GitHub and MCP are untrusted channels, never a second
+task tracker. Every bridge component is optional, separately supervised and can
+be disabled without affecting the Runtime or the dashboard.
+
+First verifiable outcome (Remote Read Gate, CB-11F): an authenticated remote
+client calls `ai_office_get_milestones` over HTTPS and receives authoritative
+Runtime data, through a separate read-only MCP server (Streamable HTTP) behind
+a Cloudflare Tunnel or Nginx exposure layer, an external OAuth 2.1 authorization server
+and a read-only Runtime listener; no approve or apply tool exists. Then an
+asynchronous GitHub Issues bridge to a dedicated private repository, and the
+governed priority and dependency changes (digest-bound local approval, apply enabled only once the transaction refactor and writer exclusion are both delivered, receipts, reconciliation). The first mutable operations reuse
+`UpdateTask` and `ManageTaskDependencies`.
+
+The [M23 plan](coordination-bridge.md), the
+[architecture](../architecture/coordination-bridge.md) and the
+[protocol](coordination-protocol.md) record the gap analysis, trust model,
+data-exposure policy, dependency graph, delivery order and owner decisions
+D1–D11. M23 takes no dependency on M13 or M11.6; the CB-11 series is the single
+MCP server of the project and the M9 MCP task depends on CB-11B. Approval is
+trusted-local like existing approvals; stronger operator presence stays with
+M10. At most two initiatives run at once.
+
+Non-goals: GitHub-owned state or a task-tracker mirror, webhooks, the general
+GitHub connector (M13), remote approval, apply or any mutating MCP tool, a
+proxy embedded in the Runtime, an identity provider, scope or milestone
+mutation in V2, PostgreSQL parity claims.

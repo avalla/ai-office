@@ -69,6 +69,7 @@ export const projectStorageCapabilityNames = [
   "memoryReferences",
   "projectMemoryProvenance",
   "operationalReads",
+  "planningReads",
   "taskDeliverySetup",
   "transactions",
   "jobOutbox",
