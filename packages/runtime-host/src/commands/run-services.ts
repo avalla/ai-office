@@ -26,8 +26,8 @@ export function managePipelineRuns(c: CommandContext): ManagePipelineRuns {
     c.transactions,
     c.jobOutbox,
     c.taskDependencies,
-    // M16.5 Runtime activation, first slice: consulted only for a new run's
-    // pack-configuration pin, never for pipeline/stage/role selection.
+    // M16.5 activation resolves selected-pack workflows and policies, and
+    // freezes the selected definition with its configuration pin at start.
     c.projectConfiguration,
   );
 }

@@ -43,10 +43,11 @@ export class ReadProjectConfiguration {
   }
 
   /**
-   * The staleness-checked configuration pin, for a caller that already holds
-   * an active transaction opened by the same `TransactionRunner` as
-   * `this.ports.transactions` (for example a service pinning a run inside its
-   * own write transaction). Opening a second transaction here would throw
+   * The staleness-checked resolved configuration, including its pin and
+   * workflow/policy views, for a caller that already holds an active transaction
+   * opened by the same `TransactionRunner` as `this.ports.transactions`.
+   * Run start uses this to freeze its definition and pin together.
+   * Opening a second transaction here would throw
    * `TransactionAlreadyActiveError`, and reading outside that transaction
    * would reopen the race the staleness check exists to close.
    *
