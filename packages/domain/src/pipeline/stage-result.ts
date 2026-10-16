@@ -271,6 +271,10 @@ function guardData(value: unknown, depth: number, budget: DataBudget): unknown {
   if (Array.isArray(value)) {
     if (value.length > stageResultLimits.dataNodes)
       invalid("data has too many nodes");
+    // Indices plus `length`: extra, symbol or hidden properties are refused
+    // rather than silently dropped by the snapshot.
+    if (Reflect.ownKeys(value).length !== value.length + 1)
+      invalid("data is not canonical JSON");
     const items: unknown[] = [];
     for (let index = 0; index < value.length; index += 1) {
       const descriptor = Object.getOwnPropertyDescriptor(value, index);
@@ -285,8 +289,12 @@ function guardData(value: unknown, depth: number, budget: DataBudget): unknown {
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null)
     invalid("data is not canonical JSON");
+  const keys = Object.keys(value);
+  // Symbol and non-enumerable properties are refused, not silently dropped.
+  if (Reflect.ownKeys(value).length !== keys.length)
+    invalid("data is not canonical JSON");
   const entries: [string, unknown][] = [];
-  for (const key of Object.keys(value)) {
+  for (const key of keys) {
     // UTF-8 bytes never fewer than UTF-16 units: cheap check, then exact.
     if (
       key.length > stageResultLimits.dataKeyBytes ||
@@ -302,7 +310,8 @@ function guardData(value: unknown, depth: number, budget: DataBudget): unknown {
       invalid("data is not canonical JSON");
     entries.push([key, guardData(descriptor.value, depth + 1, budget)]);
   }
-  // fromEntries defines own properties, so a `__proto__` key stays a key.
+  // fromEntries defines own properties; `__proto__`, `constructor` and
+  // `prototype` keys are then refused by canonical JSON normalization.
   return Object.fromEntries(entries);
 }
 

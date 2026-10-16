@@ -609,6 +609,19 @@ describe("stage result hardening, second pass", () => {
     expect(parseStageResultEnvelope({ ...valid, data }).data).toEqual({ a: 1 });
   });
 
+  test.each([
+    ["an array with an extra property", () => Object.assign([1], { x: 2 })],
+    ["an object with a symbol key", () => ({ a: 1, [Symbol("s")]: 2 })],
+    [
+      "an object with a hidden property",
+      () => Object.defineProperty({ a: 1 }, "b", { value: 2 }),
+    ],
+  ])("refuses %s instead of silently dropping it", (_name, make) => {
+    expect(rejection({ ...valid, data: { v: make() } })).toContain(
+      "canonical JSON",
+    );
+  });
+
   test("a Proxy that changes its keys between reads gets nothing past the guard", () => {
     let calls = 0;
     const hostile = new Proxy(

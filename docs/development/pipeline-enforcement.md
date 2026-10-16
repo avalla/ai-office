@@ -118,7 +118,12 @@ surrounding whitespace is removed is refused.
 
 Rejected: unknown versions and fields; objects in `data` that are not plain
 objects or arrays (Map, Set, Date, RegExp, typed arrays and class instances),
-which are never coerced into their own fields; control characters, bidi marks and
+which are never coerced into their own fields (a plain object created in
+another JavaScript realm is refused too; JSON parsed by the Runtime is not
+affected); arrays or objects carrying extra, symbol-keyed or non-enumerable
+properties, which are refused rather than silently dropped; data keys named
+`__proto__`, `constructor` or `prototype`, which canonical JSON refuses;
+control characters, bidi marks and
 overrides, zero-width and byte-order marks, line and paragraph separators and
 lone surrogates in any text or data key; line breaks outside the summary and
 data string values; data keys that contain a sensitive name (for example
