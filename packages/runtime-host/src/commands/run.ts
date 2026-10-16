@@ -26,6 +26,7 @@ import { projectWorkerOutput } from "@ai-office/application/read-models/worker-o
 import { EvaluatePipelineAuthorization } from "@ai-office/application/pipeline/evaluate-pipeline-authorization.ts";
 import { isPrerequisiteRefusal } from "@ai-office/application/commands/manage-task-dependencies.ts";
 import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipeline-runs.ts";
+import { RecoverSuspendedPipelines } from "@ai-office/application/pipeline/recover-suspended-pipelines.ts";
 import {
   CliUsageError,
   type CommandContext,
@@ -455,6 +456,20 @@ export async function handleRunCommand(
         }),
       )
     ).filter((value) => value !== null);
+    // Suspended final stages (a completed run whose stage completion was
+    // refused while a prerequisite was still in review) are not queued work,
+    // so the claim loop above never sees them; the sweep resumes the ones
+    // whose prerequisites are now complete and leaves the rest untouched.
+    const recovery = await new RecoverSuspendedPipelines(
+      context.pipelines,
+      runtime,
+      tasks,
+      context.taskDependencies,
+      pipelineManager,
+    ).execute({ projectId, trigger: "tick" });
+    const resumed = recovery.recoveries.filter(
+      (entry) => entry.outcome === "resumed",
+    ).length;
     const unsuccessful = results.filter(
       (result) =>
         result.status !== "completed" ||
@@ -462,7 +477,14 @@ export async function handleRunCommand(
         result.error?.code === "STAGE_AWAITING_PREREQUISITES",
     ).length;
     if (parsed.flags.has("json"))
-      io.stdout(JSON.stringify({ schemaVersion: 1, results, unsuccessful }));
+      io.stdout(
+        JSON.stringify({
+          schemaVersion: 1,
+          results,
+          unsuccessful,
+          pipelineRecoveries: recovery.recoveries,
+        }),
+      );
     else {
       io.stdout(`Agent runs executed: ${results.length}`);
       for (const result of results) {
@@ -481,6 +503,7 @@ export async function handleRunCommand(
           );
       }
       io.stdout(`Unsuccessful runs: ${unsuccessful}`);
+      if (resumed > 0) io.stdout(`Suspended pipelines resumed: ${resumed}`);
     }
     return unsuccessful === 0 ? 0 : 1;
   }

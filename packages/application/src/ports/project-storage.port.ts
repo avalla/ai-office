@@ -8,6 +8,7 @@ import type { JobOutboxRepository } from "./job-outbox-repository.port.ts";
 import type { MemoryReferenceRepository } from "./memory-reference-repository.port.ts";
 import type { OfficeManifestRepository } from "./office-manifest-repository.port.ts";
 import type { OperationalReadRepository } from "./operational-read.port.ts";
+import type { PlanningReadRepository } from "./planning-read.port.ts";
 import type { PipelineRunRepository } from "./pipeline-run-repository.port.ts";
 import type { ProjectMemoryProvenanceRepository } from "./project-memory-provenance-repository.port.ts";
 import type { ProjectProfileRepository } from "./project-profile-repository.port.ts";
@@ -49,6 +50,7 @@ export interface ProjectStorage {
   memoryReferences: MemoryReferenceRepository;
   projectMemoryProvenance: ProjectMemoryProvenanceRepository;
   operationalReads: OperationalReadRepository;
+  planningReads: PlanningReadRepository;
   taskDeliverySetup: TaskDeliverySetupRepository;
   transactions: TransactionRunner;
   jobOutbox: JobOutboxRepository;

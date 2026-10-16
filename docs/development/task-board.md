@@ -104,9 +104,14 @@ attest work done outside the lifecycle and are not subject to the rule.
 
 If a pipeline's final stage finishes while a prerequisite is still in review,
 the refusal rolls back and the pipeline stays active; `run:tick` reports the
-run with `STAGE_AWAITING_PREREQUISITES`. Nothing resumes it automatically: once
-the prerequisite is completed, close the stage with `pipeline:transition --event
-complete --agent-run <id>`.
+run with `STAGE_AWAITING_PREREQUISITES`. The suspension is a first-class
+waiting state (ADR-0035): once every prerequisite is `completed`, the Runtime
+resumes the pipeline automatically — immediately when the completion goes
+through `task:complete`, and otherwise through the `run:tick` recovery sweep
+or the daemon's orchestration replay. The resume is exactly once and records
+a `pipeline.resumed` audit event naming the trigger and the prerequisites.
+Manual closure with `pipeline:transition --event complete --agent-run <id>`
+remains available as the operator path.
 
 When dependent work uses a prerequisite in review, the delivery workflow must
 start the dependent branch from a commit containing that prerequisite's current
