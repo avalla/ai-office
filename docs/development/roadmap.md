@@ -2221,7 +2221,7 @@ artifact contract it needs, and leaves M16.5; (2) the GP-16 run gate is its own
 task `f8d75709`, after Runtime activation and GP-24; (3) activation selects pipeline,
 stages and roles from the resolved configuration only for projects that
 adopted a pack through GP-10C-2, and legacy projects are unchanged; (4)
-ADR-0026 settles the target architecture and is the target to implement as accepted (its clauses are delivered task by task, not yet), and a
+ADR-0026 settles the target architecture and is the target to implement as accepted (its clauses are delivered task by task; run pinning shipped in PR #168, while the remaining clauses are still pending), and a
 conflict stops work for an owner decision rather than being resolved locally;
 (5) the order is Runtime activation, execution parity, GP-10C-2, GP-24, the
 GP-16 run gate, then the two GP-12 follow-ups.
