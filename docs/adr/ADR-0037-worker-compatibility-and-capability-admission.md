@@ -213,9 +213,17 @@ unaffected.
   manifest, which carries a generation number and the digest of the previous
   manifest), then moves the current pointer by writing a temporary file and
   renaming it over the old pointer. Every earlier manifest stays on disk. A
-  reader sees either the old complete set or the new complete set. Concurrent
-  registrations are serialized, and a registration states the generation it was
-  planned against; a mismatch is refused, never merged.
+  reader sees either the old complete set or the new complete set. Every
+  writer of the pointer, that is registration, revocation and state reset,
+  shares one publication exclusion, and each states the generation it was
+  planned against and rechecks it under that exclusion; a mismatch is refused,
+  never merged, so a registration and a revocation planned against the same
+  generation cannot publish competing successors.
+- **Subject binding.** Each manifest entry for a decision records the decision's
+  digest and its subject. The manifest is covered by its own digest and by the
+  chain, so the subject that the Runtime uses for blocking, matching and
+  revocation comes from the manifest, never from the decision object alone. A
+  decision object whose subject differs from its manifest binding is invalid.
 - **At most one active decision per subject.** A registration that would create
   a second active decision for the same subject is refused; replacing a decision
   is one generation that adds the new decision and a revocation of the old one
@@ -240,15 +248,16 @@ unaffected.
 - **Loading.** At Runtime start, and on a reload that registration and
   revocation trigger and an operator may also request, the registry is read into
   an immutable snapshot after verifying every digest, every sufficiency check
-  and every approval class. An invalid evidence bundle or decision in the
-  current manifest's active set and not revoked is excluded and reported, and
-  its subject is _blocked_ (an invalid decision that only a retained older
-  manifest lists, or that is revoked, is not in the active set and blocks
-  nothing beyond the revocation itself): it
-  is refused with `registry_unreadable` and never falls back to the
-  `legacy_policy` predicate or to another record, so exclusion only ever admits
-  less. When the subject of an invalid decision cannot be read, the snapshot is
-  refused as a whole. A decision named by a committed revocation is revoked
+  and every approval class. A decision in the current manifest's active set and
+  not revoked that is invalid, or that cites an invalid evidence bundle, is
+  excluded and reported, and its subject, taken from the manifest binding, is
+  _blocked_: it is refused with `registry_unreadable` and never falls back to
+  the `legacy_policy` predicate or to another record, so exclusion only ever
+  admits less. An invalid decision that only a retained older manifest lists is
+  not in the active set and blocks nothing; a revoked decision stays revoked and
+  refuses as `audit_revoked`. When the manifest binding of an invalid decision
+  is itself missing, unreadable or fails verification, the snapshot is refused
+  as a whole. A decision named by a committed revocation is revoked
   whether or not a manifest still lists it as active. A committed
   manifest or revocation that is missing, unreadable or invalid, at start or on
   reload, cannot be skipped, because skipping it could readmit a revoked
@@ -313,11 +322,7 @@ the per-dispatch observations.
 Steps, in this order, each deterministic:
 
 0. Registry state: `registry_unreadable` per decision 4, otherwise continue.
-1. Platform support; an unsupported platform refuses with
-   `platform_unsupported`. Mode support: a mode with no governed contract
-   (`governed_delegation` today) refuses with `mode_unsupported` before any
-   subject matching.
-2. Model and run-parameter admissibility: some decision, active or revoked, or
+1. Model and run-parameter admissibility: some decision, active or revoked, or
    the `legacy_policy` predicate, names the observed `(worker, provider, model)`
    under the observed mode, and the run's persisted parameters lie within that
    record's parameter scope. If none, refuse `model_mismatch`; this reproduces
@@ -327,7 +332,13 @@ Steps, in this order, each deterministic:
    is refused at step 4 with `registry_unreadable` rather than here. For the
    predicate the model
    clause is its provider and model-name pattern and its parameter clause is
-   decision 10's.
+   decision 10's. This step comes first because both workers check the model
+   before inspecting the platform or the client, so a run with an unsupported
+   model keeps `WORKER_MODEL_UNSUPPORTED` on every platform.
+2. Platform support; an unsupported platform refuses with
+   `platform_unsupported`. Mode support: a mode with no governed contract
+   (`governed_delegation` today) refuses with `mode_unsupported` before any
+   subject matching.
 3. Per-dispatch observations: a failed observation refuses with `probe_failed`
    or `credential_not_admitted`.
 4. Match the subject. Among the exact decisions for the observed subject, the
@@ -349,7 +360,7 @@ Steps, in this order, each deterministic:
    and its pinned configuration, protocol and platform clauses as
    `configuration_mismatch`, `protocol_mismatch` and `platform_mismatch`.
    Once a record matches, the run's persisted parameters must lie within the
-   parameter scope of _that_ record (step 2 only established that some record
+   parameter scope of _that_ record (step 1 only established that some record
    names the model); otherwise refuse `model_mismatch`. Parameters are not part
    of the subject, so a scope never extends to another subject's runs.
 5. Validity window: a matched decision before its `notBefore` is refused with
@@ -389,7 +400,7 @@ exact: `model_mismatch` maps to `WORKER_MODEL_UNSUPPORTED`; every other reason
 maps to `WORKER_UNAVAILABLE`. The run-level model-selection outcomes
 `WORKER_MODEL_CONFLICT` and `WORKER_MODEL_REQUIRED` (routing and
 `--worker-model` rules) are decided before admission and are unaffected. WC-05
-pins this table, and the order of steps 2 and 3, with tests that the shadow
+pins this table, and the order of steps 1 to 3, with tests that the shadow
 comparison runs.
 
 ### 6. Bounded execution and governed delegation
@@ -526,7 +537,10 @@ therefore changes a pinned dimension and ends the exception for the changed
 adapter until the predicate is updated by a reviewed change; the refusal names
 `configuration_mismatch`, `protocol_mismatch` or `platform_mismatch`. The predicate lives
 in source with the baseline records, is changed only by a reviewed change, and
-cannot be created, edited or extended by registry data. Every guarantee of the
+cannot be created, edited or extended by registry data. Changing the predicate
+or any of its pinned values, including the configuration digest, is a reviewed
+source change that the owner must approve; re-pinning does not by itself add
+evidence. Every guarantee of the
 record is `unverified`, with the flags the adapter passes listed as `declared`
 evidence. It is shown as what it is in diagnostics, provenance and the parity
 assessment, and it exists so that WC-05 reproduces today's behavior. The Claude
