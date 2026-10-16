@@ -1891,7 +1891,8 @@ knowledge guidance contract GP-15, and their dependency graph, acceptance criter
 and non-goals are in the
 [Generic Core & Domain Packs plan](generic-core-domain-packs.md). The
 [accepted core/pack boundary ADR](../adr/ADR-0026-core-domain-pack-boundary.md)
-is the GP-02 architectural decision, not an implemented Runtime contract. The
+is the GP-02 architectural target, delivered incrementally; PR #168 implements
+its run-pinning clause, while the remaining Runtime clauses belong to M16.5. The
 [M15-4 decision](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
 supplies its four authority/evidence prerequisites; GP-02 reviewed the
 contract against them after M15-4 integration. The AI
@@ -1954,8 +1955,8 @@ and disable of a pack workflow, a derived workflow view, and upgrade rules
 that reuse GP-08, GP-11 and GP-12. It adds forward SQLite and PostgreSQL
 migrations that admit workflow overrides and portable archive format 9. It
 does not touch the pipeline engine, pipeline runs, pins, approvals or guards;
-runs do not pin pack configuration yet, and blocking a change on in-flight
-pinned runs is deferred to GP-24. GP-09 adds a versioned, read-only legacy
+PR #168 subsequently added pack-configuration pins. Blocking a change on
+in-flight pinned runs remains deferred to GP-24's scope. GP-09 adds a versioned, read-only legacy
 development profile and `project:configuration:legacy`: a deterministic,
 digest-pinned description of the office, roles, agents, task-kind routing and
 pipelines the Runtime reads from a legacy project today. It proves
@@ -2076,9 +2077,10 @@ Tests resolve these through a test-supplied catalog; no production catalog
 registers the pack, no project adopts it and the Runtime does not consume it.
 Aliases remain planned work of M16; automatic selection,
 remote marketplace/downloads and executable validators remain deferred.
-Runtime enforcement from pack policies (`a45ddb12`), adoption (GP-10C-2) and
-Runtime execution from packs are planned for M16.5. M16 remains incomplete
-until its re-scoped exit criteria are met.
+Runtime enforcement from pack policies and execution from packs belong to
+M16.5 activation (`aa10a111`); `a45ddb12` proves execution parity, and
+GP-10C-2 owns production adoption. These do not reopen M16's completed,
+re-scoped definition-layer exit.
 
 ### Post-GP-06 hardening follow-ups
 
@@ -2191,9 +2193,10 @@ core. Domain-specific adapters remain behind public ports and controlled
 actions.
 
 After M16, Domain Packs are a definition, customization and upgrade layer
-with reference fixtures. The Runtime does not yet execute from a pack: no run
-is created from a resolved configuration or pins one, no pack is registered
-in the production catalog, and no project adopts the development pack. An
+with reference fixtures. M16 itself did not execute from packs or pin their
+configuration. PR #168 subsequently added configuration pins for nonempty
+selections; pipeline selection remains manifest-driven, and production pack
+registration and adoption remain GP-10C-2 work. An
 accepted ADR alone does not satisfy the exit. Runtime execution that consumes
 the resolved configuration leaves the M16 exit and is expected to become the
 exit of M16.5.
@@ -2248,7 +2251,7 @@ still scoped by its own record before work:
   M165-GP12-FU).
 
 GP-14B, which left M16.5 for M11.6 on 2026-10-15 (requirement GP-14B-M116,
-task `d991b5be`), owns the Phase B contract it depends on and is not an M16.5
+task `d991b5be`), depends on M11.6's Phase B contract and is not an M16.5
 item.
 
 Exit: to be defined with the scope proposal. It is expected to carry the
@@ -2265,8 +2268,9 @@ ADR-0026 status and the extent of activation), all since ruled on. It records
 no acceptance criteria; the one delivered exception is the pin-only first
 slice, in which a pipeline run records the resolved pack-configuration
 identity it started under (migration 0051, no change to pipeline, stage or
-role selection), was explicitly requested and is implemented. The rest of the
-proposal is not approved. Opening the closed `officeTaskKinds` list, once listed
+role selection), was explicitly requested and is implemented. The remaining
+items follow the recorded rulings and require their own task scope and
+acceptance criteria. Opening the closed `officeTaskKinds` list, once listed
 there as an open decision, was resolved separately as a standalone change that
 does not deliver or approve M16.5.
 
