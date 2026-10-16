@@ -72,12 +72,20 @@ const forbiddenControls =
   // eslint-disable-next-line no-control-regex
   /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
 
+const invisibleCodePoints =
+  // eslint-disable-next-line no-misleading-character-class -- explicit code points
+  /[\p{Cf}\p{Co}\p{Cs}\u034f\u115f\u1160\u3164\uffa0\ufffc\u{e0100}-\u{e01ef}]/u;
+
 /**
  * Code points that enable display or log-line spoofing in a later projection:
  * bidi marks, overrides and isolates, zero-width and byte-order marks, line and
  * paragraph separators, and lone surrogates (invalid UTF-16).
  */
 function hasSpoofingCodePoint(text: string): boolean {
+  // Format (Cf: bidi, zero-width, word joiner, soft hyphen, tag characters),
+  // private-use and surrogate categories, plus invisible fillers and
+  // ideographic variation selectors that no general category covers.
+  if (invisibleCodePoints.test(text)) return true;
   for (const character of text) {
     const code = character.codePointAt(0) ?? 0;
     if (
@@ -104,19 +112,24 @@ const credentialPatterns: readonly RegExp[] = [
   /\bbearer\s+(?:[A-Za-z0-9._~+/=-]{20,}|(?=[A-Za-z0-9._~+/=-]*[0-9])[A-Za-z0-9._~+/=-]{12,})/i,
   // Basic: base64-shaped, with a digit, '+', '/', '=' or an interior capital.
   /\b[Bb][Aa][Ss][Ii][Cc]\s+(?=[A-Za-z0-9+/]*(?:[0-9+/]|[a-z][A-Z]))[A-Za-z0-9+/]{16,}={0,2}/,
-  /\b(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}/,
-  /\bsk-[A-Za-z0-9_-]{20,}/,
-  /\bxox[abprs]-[A-Za-z0-9-]{10,}/,
-  /\bAKIA[0-9A-Z]{16}\b/,
+  /(?<![A-Za-z0-9])(?:gh[pousr]_|github_pat_|glpat-)[A-Za-z0-9_-]{16,}/,
+  /(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}/,
+  /(?<![A-Za-z0-9])[sr]k_(?:live|test)_[A-Za-z0-9]{16,}/,
+  /(?<![A-Za-z0-9])xox[abprs]-[A-Za-z0-9-]{10,}/,
+  /(?<![A-Z0-9])A[KS]IA[0-9A-Z]{16}(?![A-Z0-9])/,
+  /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
+  // URL userinfo carrying a password.
+  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i,
   /\bauthorization\s*[:=]\s*(?:bearer|basic|token|digest)\s+\S{8,}/i,
-  // name=value where the value has letters and digits, at least 6 characters.
-  /\b(?:api[_-]?key|secret|token|password|passwd|credential)s?\s*[:=]\s*["']?(?=[^\s"']*[0-9])(?=[^\s"']*[A-Za-z])[^\s"']{6,}/i,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  // name=value (a quoted name is allowed) where the value has letters and
+  // digits, at least 6 characters; lookaheads are capped to stay linear.
+  /\b(?:api[_-]?key|secret|token|password|passwd|pwd|passphrase|credential)s?["']?\s*[:=]\s*["']?(?=[^\s"']{0,256}[0-9])(?=[^\s"']{0,256}[A-Za-z])[^\s"']{6,}/i,
+  /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/,
 ];
 
 // Token-usage metering names are data, not secrets; a bare `token` is not.
 const meteringKeyPattern =
-  /^(?:input|output|total|prompt|completion|cached|max)?tokens(?:used|count)?$/;
+  /^(?:(?:input|output|total|prompt|completion|cached|reasoning|max|cacheread|cachecreation)(?:input)?)?tokens(?:used|count)?$/;
 
 function isSensitiveDataKey(key: string): boolean {
   const normalized = normalizeSensitiveFieldKey(key);
@@ -132,13 +145,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Module-private so the boundary can tell a rejection raised by this parser
+ * from a `DomainValidationError` thrown by a hostile Proxy trap or getter.
+ */
+class StageResultRejection extends DomainValidationError {}
+
 function invalid(reason: string): never {
   // Messages name the failing field only; they never echo the rejected value.
-  throw new DomainValidationError(`Invalid stage result: ${reason}`);
+  throw new StageResultRejection(`Invalid stage result: ${reason}`);
 }
 
 function assertSafeText(text: string, field: string): void {
-  if (forbiddenControls.test(text) || hasSpoofingCodePoint(text))
+  // CR is allowed only as part of CRLF: a lone CR can overwrite a rendered line.
+  if (
+    forbiddenControls.test(text) ||
+    /\r(?!\n)/.test(text) ||
+    hasSpoofingCodePoint(text)
+  )
     invalid(`${field} contains forbidden characters`);
   if (credentialPatterns.some((pattern) => pattern.test(text)))
     invalid(`${field} contains credential-like content`);
@@ -155,13 +179,16 @@ function boundedText(
   // before any trimming, scanning or encoding of an oversized string.
   if (value.length > maxBytes)
     return invalid(`${field} exceeds ${maxBytes} bytes`);
+  // Limits and character checks apply to the raw input; trimming happens only
+  // afterwards, so padding cannot hide an oversized value or a forbidden
+  // boundary character (for example a trailing BOM).
+  if (byteLength(value) > maxBytes)
+    return invalid(`${field} exceeds ${maxBytes} bytes`);
+  if (options.multiline !== true && /[\t\n\r]/.test(value))
+    return invalid(`${field} must be a single line`);
+  assertSafeText(value, field);
   const text = value.trim();
   if (text === "") return invalid(`${field} cannot be empty`);
-  if (byteLength(text) > maxBytes)
-    return invalid(`${field} exceeds ${maxBytes} bytes`);
-  if (options.multiline !== true && /[\t\n\r]/.test(text))
-    return invalid(`${field} must be a single line`);
-  assertSafeText(text, field);
   return text;
 }
 
@@ -176,8 +203,17 @@ function snapshotRecord(
   value: Record<string, unknown>,
   field: string,
 ): Record<string, unknown> {
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null)
+    return invalid(`${field} must contain plain data properties`);
+  const keys = Object.keys(value);
+  if (keys.length > stageResultLimits.dataNodes)
+    return invalid(`${field} has too many properties`);
+  // Symbol and non-enumerable properties are refused, not silently dropped.
+  if (Reflect.ownKeys(value).length !== keys.length)
+    return invalid(`${field} must contain plain data properties`);
   const entries: [string, unknown][] = [];
-  for (const key of Object.keys(value)) {
+  for (const key of keys) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (descriptor === undefined || !("value" in descriptor))
       return invalid(`${field} must contain plain data properties`);
@@ -226,6 +262,7 @@ function parseError(input: unknown): StageResultError {
   const { code, message } = value;
   if (typeof code !== "string" || !errorCodePattern.test(code))
     return invalid("error.code is malformed");
+  assertSafeText(code, "error.code");
   return Object.freeze({
     code,
     message: boundedText(
@@ -271,6 +308,8 @@ function guardData(value: unknown, depth: number, budget: DataBudget): unknown {
   if (Array.isArray(value)) {
     if (value.length > stageResultLimits.dataNodes)
       invalid("data has too many nodes");
+    if (Object.getPrototypeOf(value) !== Array.prototype)
+      invalid("data is not canonical JSON");
     // Indices plus `length`: extra, symbol or hidden properties are refused
     // rather than silently dropped by the snapshot.
     if (Reflect.ownKeys(value).length !== value.length + 1)
@@ -278,7 +317,11 @@ function guardData(value: unknown, depth: number, budget: DataBudget): unknown {
     const items: unknown[] = [];
     for (let index = 0; index < value.length; index += 1) {
       const descriptor = Object.getOwnPropertyDescriptor(value, index);
-      if (descriptor === undefined || !("value" in descriptor))
+      if (
+        descriptor === undefined ||
+        !("value" in descriptor) ||
+        descriptor.enumerable !== true
+      )
         invalid("data is not canonical JSON");
       items.push(guardData(descriptor.value, depth + 1, budget));
     }
@@ -293,6 +336,8 @@ function guardData(value: unknown, depth: number, budget: DataBudget): unknown {
   // Symbol and non-enumerable properties are refused, not silently dropped.
   if (Reflect.ownKeys(value).length !== keys.length)
     invalid("data is not canonical JSON");
+  if (keys.length > stageResultLimits.dataNodes - budget.nodes)
+    invalid("data has too many nodes");
   const entries: [string, unknown][] = [];
   for (const key of keys) {
     // UTF-8 bytes never fewer than UTF-16 units: cheap check, then exact.
@@ -341,7 +386,9 @@ export function parseStageResultEnvelope(value: unknown): StageResultEnvelope {
   try {
     return parseEnvelope(value);
   } catch (error) {
-    if (error instanceof DomainValidationError) throw error;
+    // Only this parser's own rejections pass through; any other error, even a
+    // DomainValidationError thrown by a hostile trap, is replaced.
+    if (error instanceof StageResultRejection) throw error;
     // Exotic hostile input (for example a revoked Proxy) must still surface
     // as the typed, sanitized validation error, never as an arbitrary one.
     return invalid("envelope cannot be read");

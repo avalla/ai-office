@@ -492,6 +492,7 @@ describe("assessStageResultDelivery", () => {
       currentAgentRunId: "run-1",
     });
     expect(first.decision).toBe("accepted");
+    expect(first.preemptsBoundRun).toBe(true);
     expect(
       assessStageResultDelivery(valid, { ...current, recorded: first.envelope })
         .decision,
@@ -506,7 +507,11 @@ describe("assessStageResultDelivery", () => {
 
   test("assessment has no side effects and exposes no retry decision", () => {
     const result = assessStageResultDelivery(valid, current);
-    expect(Object.keys(result).sort()).toEqual(["decision", "envelope"]);
+    expect(Object.keys(result).sort()).toEqual([
+      "decision",
+      "envelope",
+      "preemptsBoundRun",
+    ]);
   });
 });
 
@@ -684,4 +689,144 @@ describe("stage result hardening, second pass", () => {
       ).toContain("forbidden characters");
     },
   );
+});
+
+describe("stage result hardening, third pass", () => {
+  const agent = { kind: "agent_run", agentRunId: "run-1" } as const;
+  const operator = { kind: "operator", actorLabel: "andrea" } as const;
+  const current = { deliveredBy: agent, currentAgentRunId: "run-1" };
+  const operatorResult = { ...valid, producer: operator };
+  const text = (summary: string) => ({ ...valid, summary });
+  const asSummary = (summary: string) =>
+    parseStageResultEnvelope(text(summary));
+
+  test("validates the raw text before trimming it", () => {
+    expect(rejection(text("é".repeat(999) + "   "))).toContain("exceeds");
+    expect(rejection(text("ok\ufeff"))).toContain("forbidden characters");
+    expect(
+      rejection({
+        ...valid,
+        producer: { kind: "operator", actorLabel: "ana\n" },
+      }),
+    ).toContain("single line");
+  });
+
+  test("rejects invisible format characters and a lone carriage return", () => {
+    for (const hidden of ["\u2060", "\u{e0049}", "\u00ad", "\u3164"])
+      expect(rejection(text(`ok${hidden}ok`))).toContain("forbidden");
+    expect(rejection(text("FAILED\rok"))).toContain("forbidden");
+    expect(asSummary("line one\r\nline two").summary).toContain("line two");
+  });
+
+  test("passes through only its own rejections, not an error thrown by a trap", () => {
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new DomainValidationError("Invalid stage result: SECRET=abc");
+        },
+      },
+    );
+    expect(rejection(hostile)).toBe(
+      "Invalid stage result: envelope cannot be read",
+    );
+  });
+
+  test("refuses hidden properties on arrays, envelope and producer", () => {
+    const hiddenIndex = [1];
+    Object.defineProperty(hiddenIndex, "0", { value: 1, enumerable: false });
+    expect(rejection({ ...valid, data: { list: hiddenIndex } })).toContain(
+      "canonical JSON",
+    );
+    class Items extends Array<number> {}
+    expect(rejection({ ...valid, data: { list: Items.from([1]) } })).toContain(
+      "canonical JSON",
+    );
+    const hiddenEnvelope = { ...valid };
+    Object.defineProperty(hiddenEnvelope, "approved", {
+      value: true,
+      enumerable: false,
+    });
+    expect(rejection(hiddenEnvelope)).toContain("plain data properties");
+    class Producer {
+      kind = "agent_run";
+      agentRunId = "run-1";
+    }
+    expect(rejection({ ...valid, producer: new Producer() })).toContain(
+      "plain data properties",
+    );
+  });
+
+  test("refuses credential-shaped content that earlier patterns missed", () => {
+    const ghp = "ghp_" + "a1".repeat(18);
+    for (const secret of [
+      `foo_${ghp}`,
+      "x AKIAIOSFODNN7EXAMPLE_x",
+      "sk_live_" + "a1".repeat(12),
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghij",
+      "https://user:hunter2pass@example.com/path",
+      '{"token":"ab12cd34ef56"}',
+      "pwd=ab12cd34ef56",
+    ])
+      expect(rejection(text(secret))).toContain("credential-like");
+    expect(
+      rejection({
+        ...valid,
+        outcome: "failed",
+        data: undefined,
+        error: { code: ghp.toLowerCase(), message: "x" },
+      }),
+    ).toContain("credential-like");
+  });
+
+  test("accepts provider usage metering keys", () => {
+    for (const key of [
+      "cache_read_input_tokens",
+      "cache_creation_input_tokens",
+      "reasoning_tokens",
+    ])
+      expect(
+        parseStageResultEnvelope({ ...valid, data: { [key]: 5 } }).data,
+      ).toEqual({ [key]: 5 });
+  });
+
+  test("bounds the work for a very wide object", () => {
+    const wide = Object.fromEntries(
+      Array.from({ length: 600 }, (_, i) => [`k${i}`, i]),
+    );
+    expect(rejection({ ...valid, data: wide })).toContain("too many");
+    expect(rejection({ ...valid, ...wide })).toContain("too many properties");
+  });
+
+  test("revalidates the recorded result and reads the context once", () => {
+    const recorded = { ...valid, summary: " Implemented the change " } as never;
+    expect(
+      assessStageResultDelivery(valid, { ...current, recorded }).decision,
+    ).toBe("duplicate");
+    expect(() =>
+      assessStageResultDelivery(valid, {
+        ...current,
+        recorded: { ...valid, error: undefined, version: 9 } as never,
+      }),
+    ).toThrow(DomainValidationError);
+    let reads = 0;
+    const context = {
+      get deliveredBy() {
+        reads += 1;
+        return reads === 1
+          ? current.deliveredBy
+          : { kind: "operator" as const, actorLabel: "ana" };
+      },
+      currentAgentRunId: "run-9",
+    };
+    expect(assessStageResultDelivery(valid, context).decision).toBe("stale");
+    expect(reads).toBe(1);
+  });
+
+  test("an operator delivery with no bound run does not pre-empt anything", () => {
+    expect(
+      assessStageResultDelivery(operatorResult, { deliveredBy: operator })
+        .preemptsBoundRun,
+    ).toBe(false);
+  });
 });

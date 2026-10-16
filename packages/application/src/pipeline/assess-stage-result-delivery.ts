@@ -20,6 +20,13 @@ export type StageResultDeliveryDecision =
 export interface StageResultDeliveryAssessment {
   readonly decision: StageResultDeliveryDecision;
   readonly envelope: StageResultEnvelope;
+  /**
+   * True only for an `accepted` operator delivery while an AgentRun is still
+   * bound to the stage. That is a pre-emption of the run, not a plain
+   * acceptance: a caller that applies it must record it through the existing
+   * attributed override path (with a reason), never as an ordinary completion.
+   */
+  readonly preemptsBoundRun: boolean;
 }
 
 export interface StageResultDeliveryContext {
@@ -49,20 +56,34 @@ export function assessStageResultDelivery(
   delivered: unknown,
   context: StageResultDeliveryContext,
 ): StageResultDeliveryAssessment {
+  // The context is read once so a getter-backed context cannot change the
+  // decision between checks.
+  const { deliveredBy, currentAgentRunId, recorded: recordedInput } = context;
   const envelope = parseStageResultEnvelope(delivered);
-  if (!sameStageResultProducer(envelope.producer, context.deliveredBy))
-    return { decision: "producer_mismatch", envelope };
-  const { recorded } = context;
+  if (!sameStageResultProducer(envelope.producer, deliveredBy))
+    return { decision: "producer_mismatch", envelope, preemptsBoundRun: false };
+  // A recorded result is re-validated, so a rehydrated row is compared in
+  // canonical form and a malformed one fails with the typed error.
+  const recorded =
+    recordedInput === undefined
+      ? undefined
+      : parseStageResultEnvelope(recordedInput);
   if (
     recorded !== undefined &&
     canonicalStageResult(recorded) === canonicalStageResult(envelope)
   )
-    return { decision: "duplicate", envelope };
+    return { decision: "duplicate", envelope, preemptsBoundRun: false };
   if (
-    context.deliveredBy.kind === "agent_run" &&
-    context.deliveredBy.agentRunId !== context.currentAgentRunId
+    deliveredBy.kind === "agent_run" &&
+    deliveredBy.agentRunId !== currentAgentRunId
   )
-    return { decision: "stale", envelope };
-  if (recorded !== undefined) return { decision: "conflict", envelope };
-  return { decision: "accepted", envelope };
+    return { decision: "stale", envelope, preemptsBoundRun: false };
+  if (recorded !== undefined)
+    return { decision: "conflict", envelope, preemptsBoundRun: false };
+  return {
+    decision: "accepted",
+    envelope,
+    preemptsBoundRun:
+      deliveredBy.kind === "operator" && currentAgentRunId !== undefined,
+  };
 }
