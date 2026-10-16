@@ -329,8 +329,10 @@ ai-office task:reconcile --project <id> --fix --approve <planHash>
 ```
 
 `--fix` never runs without `--approve`, following the same convention as
-`client:apply` and `runtime:purge`. The hash covers the exact repairs listed, so
-a plan that has gone stale is refused rather than reapplied to different state.
+`client:apply` and `runtime:purge`. The hash covers the exact repairs listed —
+for a review-exit repair including the exits themselves, since the repair's
+audit reason is derived from them — so a plan that has gone stale is refused
+rather than reapplied to different state.
 Every repair goes through the lifecycle service, so the domain guard and the
 audit event are the ones a manual command would produce.
 
@@ -357,7 +359,15 @@ stalls the dependent reversibly: the repair is `task:block`, undone by
 their audit reason (`reconciled: prerequisite <id> exited review to
 <status>`). The batch repair is **refused while the dependent has an active
 pipeline or agent run**, because it deliberately does not stop live execution;
-the finding then suggests running `task:cancel` or `task:block` directly.
+the finding then suggests the direct command instead — `task:cancel`, or
+`task:block --reason <text>` carrying the exit as its mandatory reason.
+
+**One task takes at most one repair per approved plan.** A repair changes the
+task's status, so a second transition derived from the same inspection would
+target a state the first one already left and the plan could never be
+applied. When a terminal pipeline and a review exit both point at the same
+task, the plan carries the dependency repair and the pipeline finding is
+reported as covered by it.
 
 Everything else is reported and refused:
 

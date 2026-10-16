@@ -284,7 +284,9 @@ describe.skipIf(connectionString === undefined)(
         severity: "warning",
         repairable: true,
         repairOperation: "block",
-        suggestedCommand: "task:block",
+        suggestedCommand: `task:block --reason ${JSON.stringify(
+          `reconciled: prerequisite ${f.prerequisiteId} exited review to blocked`,
+        )}`,
         reviewExits: [
           {
             taskId: f.prerequisiteId,

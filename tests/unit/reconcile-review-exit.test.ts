@@ -21,6 +21,7 @@ import {
   type ProjectId,
 } from "@ai-office/domain/project/project.ts";
 import {
+  maximumTaskReasonLength,
   Task as TaskAggregate,
   type Task,
   type TaskId,
@@ -347,16 +348,19 @@ async function reviewExitFixture(
 }
 
 describe("review-exit findings", () => {
+  const blockedSuggestion = `task:block --reason ${JSON.stringify(
+    "reconciled: prerequisite upstream exited review to blocked",
+  )}`;
   test.each([
-    ["blocked", "running", "block", "warning"],
-    ["blocked", "waiting_review", "block", "warning"],
-    ["failed", "running", "cancel", "inconsistent"],
-    ["failed", "waiting_review", "cancel", "inconsistent"],
-    ["cancelled", "running", "cancel", "inconsistent"],
-    ["cancelled", "waiting_review", "cancel", "inconsistent"],
+    ["blocked", "running", "block", "warning", blockedSuggestion],
+    ["blocked", "waiting_review", "block", "warning", blockedSuggestion],
+    ["failed", "running", "cancel", "inconsistent", "task:cancel"],
+    ["failed", "waiting_review", "cancel", "inconsistent", "task:cancel"],
+    ["cancelled", "running", "cancel", "inconsistent", "task:cancel"],
+    ["cancelled", "waiting_review", "cancel", "inconsistent", "task:cancel"],
   ] as const)(
     "prerequisite exit to %s with dependent %s suggests %s at %s severity",
-    async (exit, dependentStatus, operation, severity) => {
+    async (exit, dependentStatus, operation, severity, suggestion) => {
       const context = await reviewExitFixture(exit, dependentStatus);
 
       const report = await context.reconcile.inspect("project-1");
@@ -369,7 +373,7 @@ describe("review-exit findings", () => {
         severity,
         repairable: true,
         repairOperation: operation,
-        suggestedCommand: `task:${operation}`,
+        suggestedCommand: suggestion,
         refusalReason: null,
         reviewExits: [{ taskId: "upstream", from: "waiting_review", to: exit }],
       });
@@ -566,6 +570,44 @@ describe("review-exit findings", () => {
     );
     expect(context.events.events).toEqual([]);
   });
+
+  test("a plan hash does not survive a review exit it did not name", async () => {
+    const context = await fixture(
+      [
+        task("upstream", "failed"),
+        task("second", "waiting_review"),
+        task("dependent", "running"),
+      ],
+      [
+        { taskId: "dependent", dependsOnTaskId: "second" },
+        { taskId: "dependent", dependsOnTaskId: "upstream" },
+      ],
+    );
+    const first = await context.reconcile.inspect("project-1");
+    expect(first.planHash).not.toBeNull();
+
+    // Between inspection and approval the second prerequisite leaves review.
+    // Task, finding, from-status and operation are unchanged — only the exit
+    // list differs — so a hash that ignored reviewExits would still match and
+    // the repair would record a reason naming an exit the operator never saw.
+    const moved = context.taskStore.values.get("second")!;
+    await context.taskStore.save(
+      TaskAggregate.restore({ ...moved.snapshot(), status: "cancelled" }),
+    );
+    const second = await context.reconcile.inspect("project-1");
+    expect(second.planHash).not.toBe(first.planHash);
+    await expect(
+      context.reconcile.repair({
+        projectId: "project-1",
+        approvedPlanHash: first.planHash!,
+        actorId: "operator",
+      }),
+    ).rejects.toBeInstanceOf(TaskReconciliationApprovalError);
+    expect(context.taskStore.values.get("dependent")?.snapshot().status).toBe(
+      "running",
+    );
+    expect(context.events.events).toEqual([]);
+  });
 });
 
 describe("review-exit repairs", () => {
@@ -661,5 +703,45 @@ describe("review-exit repairs", () => {
       "running",
     );
     expect(context.events.events).toEqual([]);
+  });
+
+  test("caps the repair reason so a plan with many exits stays appliable", async () => {
+    const exits = Array.from(
+      { length: 25 },
+      (_, index) => `upstream-${String(index).padStart(2, "0")}`,
+    );
+    const context = await fixture(
+      [...exits.map((id) => task(id, "blocked")), task("dependent", "running")],
+      exits.map((id) => ({ taskId: "dependent", dependsOnTaskId: id })),
+    );
+
+    const report = await context.reconcile.inspect("project-1");
+    const issue = report.issues.find(
+      (value) => value.finding === "blocking_prerequisite_incomplete",
+    );
+    // The finding keeps every exit; only the human-readable reason is elided.
+    expect(issue?.reviewExits).toHaveLength(25);
+
+    const result = await context.reconcile.repair({
+      projectId: "project-1",
+      approvedPlanHash: report.planHash!,
+      actorId: "operator",
+    });
+    expect(result.applied).toEqual([
+      {
+        taskId: "dependent",
+        from: "running",
+        to: "blocked",
+        operation: "block",
+      },
+    ]);
+    const payload = context.events.events.at(-1)!.snapshot()
+      .payload as { reason: string };
+    expect(payload.reason).toBe(
+      "reconciled: prerequisite upstream-00 exited review to blocked, " +
+        "prerequisite upstream-01 exited review to blocked, " +
+        "prerequisite upstream-02 exited review to blocked, and 22 more",
+    );
+    expect(payload.reason.length).toBeLessThanOrEqual(maximumTaskReasonLength);
   });
 });

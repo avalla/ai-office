@@ -307,6 +307,19 @@ export class ReconcileTasks {
                     .map((item) => `${item.taskId} (${item.status})`)
                     .join(", ")}`,
                 );
+              const reviewExits = exits.map((item) => ({
+                taskId: item.taskId,
+                from: "waiting_review" as const,
+                to: item.status,
+              }));
+              const repairReason = reviewExitRepairReason(reviewExits);
+              // `task:block` is refused without its mandatory --reason, so
+              // the suggestion carries it — the report's contract is that a
+              // suggestion is executable from the status shown beside it.
+              const suggestion =
+                operation === "block"
+                  ? `${taskLifecycleOperations.block.command} --reason ${JSON.stringify(repairReason)}`
+                  : taskLifecycleOperations[operation].command;
               // Batch repair goes through `applyWithinCurrentTransaction`,
               // which deliberately skips agent-run cancellation. With a
               // pipeline or agent run in flight the finding is therefore
@@ -323,17 +336,13 @@ export class ReconcileTasks {
                 // a recoverable stall is a warning.
                 severity: terminal ? "inconsistent" : "warning",
                 summary: `started under review-ready admission; ${clauses.join("; ")}`,
-                suggestedCommand: taskLifecycleOperations[operation].command,
+                suggestedCommand: suggestion,
                 repairOperation: executing ? null : operation,
                 repairable: !executing,
                 refusalReason: executing
                   ? "an active pipeline or agent run is executing this task; the batch repair does not stop live execution, so apply the suggested command directly once that work is accounted for"
                   : null,
-                reviewExits: exits.map((item) => ({
-                  taskId: item.taskId,
-                  from: "waiting_review" as const,
-                  to: item.status,
-                })),
+                reviewExits,
               });
             } else {
               issues.push({
@@ -472,7 +481,20 @@ export class ReconcileTasks {
             statusByTask,
             "completion",
           ).length > 0;
-        const repairable = !ambiguous && reachable && !prerequisitesOpen;
+        // One task takes at most one repair per plan: a repair earlier in the
+        // plan (a review-exit cancel or block) changes this task's status, so
+        // a second transition derived from the same inspection would target a
+        // state the first one already left — the approved plan could never be
+        // applied. Dependency findings are pushed before pipeline findings
+        // for the same task, so the covering repair is already listed here.
+        const covering = issues.find(
+          (issue) => issue.taskId === task.id && issue.repairable,
+        );
+        const repairable =
+          !ambiguous &&
+          reachable &&
+          !prerequisitesOpen &&
+          covering === undefined;
         issues.push({
           ...base,
           finding: "terminal_pipeline_open_task",
@@ -490,11 +512,13 @@ export class ReconcileTasks {
           repairable,
           refusalReason: ambiguous
             ? "pipelines for this task disagree or one is still active"
-            : reachable
-              ? prerequisitesOpen
-                ? "completion requires every prerequisite to be completed"
-                : null
-              : `task cannot move from ${task.status} to ${target}`,
+            : covering !== undefined
+              ? `already covered by the ${covering.finding} repair in this plan; one task takes at most one repair per approved plan`
+              : reachable
+                ? prerequisitesOpen
+                  ? "completion requires every prerequisite to be completed"
+                  : null
+                : `task cannot move from ${task.status} to ${target}`,
         });
       }
 
@@ -717,13 +741,20 @@ function correctionCommandFor(from: TaskStatus, to: TaskStatus): string | null {
  * The audit rationale of a review-exit repair: which prerequisites left
  * review, and where to. Deterministic from the finding, so the plan the
  * operator approved and the record the repair writes cannot drift apart.
+ *
+ * The clause list is capped: the reason is validated against
+ * `maximumTaskReasonLength` inside the lifecycle, so an unbounded join would
+ * make a plan with many exits unappliable. The full exit list stays on the
+ * finding and in the plan hash; only the human-readable reason is elided.
  */
 function reviewExitRepairReason(
   exits: NonNullable<TaskReconciliationIssue["reviewExits"]>,
 ): string {
-  return `reconciled: ${exits
+  const named = exits.slice(0, 3);
+  const rest = exits.length - named.length;
+  return `reconciled: ${named
     .map((exit) => `prerequisite ${exit.taskId} exited review to ${exit.to}`)
-    .join(", ")}`;
+    .join(", ")}${rest === 0 ? "" : `, and ${rest} more`}`;
 }
 
 function similarTaskTitles(left: string, right: string): boolean {
@@ -755,8 +786,13 @@ function planHash(
           finding: issue.finding,
           from: issue.status,
           // The operation, not the human-facing suggestion: the hash must
-          // cover what would be executed.
+          // cover what would be executed. The review exits are included for
+          // the same reason: the repair's audit reason is derived from them,
+          // so an exit the operator never saw must not enter an approved plan.
           operation: issue.repairOperation,
+          ...(issue.reviewExits === undefined
+            ? {}
+            : { reviewExits: issue.reviewExits }),
         })),
       }),
       "utf8",

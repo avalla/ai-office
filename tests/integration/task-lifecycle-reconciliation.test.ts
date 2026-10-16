@@ -1778,16 +1778,19 @@ describe("task reconciliation", () => {
       );
     }
 
+    const blockedSuggestion = `task:block --reason ${JSON.stringify(
+      "reconciled: prerequisite upstream exited review to blocked",
+    )}`;
     test.each([
-      ["blocked", "running", "block", "warning"],
-      ["blocked", "waiting_review", "block", "warning"],
-      ["failed", "running", "cancel", "inconsistent"],
-      ["failed", "waiting_review", "cancel", "inconsistent"],
-      ["cancelled", "running", "cancel", "inconsistent"],
-      ["cancelled", "waiting_review", "cancel", "inconsistent"],
+      ["blocked", "running", "block", "warning", blockedSuggestion],
+      ["blocked", "waiting_review", "block", "warning", blockedSuggestion],
+      ["failed", "running", "cancel", "inconsistent", "task:cancel"],
+      ["failed", "waiting_review", "cancel", "inconsistent", "task:cancel"],
+      ["cancelled", "running", "cancel", "inconsistent", "task:cancel"],
+      ["cancelled", "waiting_review", "cancel", "inconsistent", "task:cancel"],
     ] as const)(
       "prerequisite exit to %s with dependent %s suggests %s at %s severity",
-      async (exit, dependentStatus, operation, severity) => {
+      async (exit, dependentStatus, operation, severity, suggestion) => {
         const context = await fixture();
         await reviewExitScenario(context, { exit, dependentStatus });
 
@@ -1797,7 +1800,7 @@ describe("task reconciliation", () => {
           severity,
           repairable: true,
           repairOperation: operation,
-          suggestedCommand: `task:${operation}`,
+          suggestedCommand: suggestion,
           refusalReason: null,
           reviewExits: [
             { taskId: "upstream", from: "waiting_review", to: exit },
@@ -2032,6 +2035,97 @@ describe("task reconciliation", () => {
       expect(issue?.refusalReason).toContain("active pipeline or agent run");
       expect(issue?.refusalReason).toContain("suggested command");
       expect(report.planHash).toBeNull();
+    });
+
+    test("a plan carries at most one repair per task", async () => {
+      const context = await fixture();
+      await seedProject(context, "project-1");
+      await seedTask(context, "project-1", "upstream");
+      await seedTask(context, "project-1", "dependent");
+      await context.dependencyCommands.link({
+        projectId: "project-1",
+        taskId: "dependent",
+        dependsOnTaskId: "upstream",
+        actorId: "operator",
+      });
+      const task = (taskId: string) => ({
+        projectId: "project-1",
+        taskId,
+        actorId: "operator",
+      });
+      await context.lifecycle.start(task("upstream"));
+      await context.lifecycle.submitForReview(task("upstream"));
+      await context.lifecycle.start(task("dependent"));
+      await seedManifest(context);
+      await seedAgent(context);
+      // A stale terminal pipeline for the same dependent, admitted while the
+      // prerequisite was still in review — the storage guard refuses pipeline
+      // inserts after the exit. On its own this would be a second repairable
+      // cancel, and the second transition would deterministically fail
+      // against the status the first one left.
+      const run = PipelineRun.create({
+        id: "pipeline-1",
+        projectId: "project-1",
+        taskId: "dependent",
+        manifestRevisionId: "manifest-1",
+        manifestRevision: 1,
+        definition: manifest.pipelines[0]!,
+        startedBy: "operator",
+        stageRunIds: ["pipeline-1-stage"],
+        now,
+      });
+      await context.pipelines.insert(run);
+      const version = run.snapshot().version;
+      run.cancel("operator", now);
+      expect(run.snapshot().status).toBe("cancelled");
+      expect(await context.pipelines.save(run, version)).toBe(true);
+      await context.lifecycle.fail({
+        ...task("upstream"),
+        reason: "Review rejected the change",
+      });
+
+      const report = await context.reconcile.inspect("project-1");
+      const repairable = report.issues.filter((issue) => issue.repairable);
+      expect(
+        repairable.map((issue) => [issue.taskId, issue.finding]),
+      ).toEqual([["dependent", "blocking_prerequisite_incomplete"]]);
+      const covered = report.issues.find(
+        (issue) => issue.finding === "terminal_pipeline_open_task",
+      );
+      expect(covered).toMatchObject({
+        taskId: "dependent",
+        repairable: false,
+        repairOperation: null,
+      });
+      expect(covered?.refusalReason).toContain(
+        "covered by the blocking_prerequisite_incomplete repair",
+      );
+
+      // The approved plan applies end to end, once.
+      const result = await context.reconcile.repair({
+        projectId: "project-1",
+        approvedPlanHash: report.planHash!,
+        actorId: "local-operator",
+      });
+      expect(result.applied).toEqual([
+        {
+          taskId: "dependent",
+          from: "running",
+          to: "cancelled",
+          operation: "cancel",
+        },
+      ]);
+      const events = auditEvents(context, "task.status_changed");
+      expect(JSON.parse(events.at(-1)!.payload_json)).toEqual({
+        operation: "cancel",
+        from: "running",
+        to: "cancelled",
+        reason: "reconciled: prerequisite upstream exited review to failed",
+      });
+      // The covering repair resolved the subject of both findings.
+      const after = await context.reconcile.inspect("project-1");
+      expect(after.issues).toEqual([]);
+      expect(after.planHash).toBeNull();
     });
   });
 });
