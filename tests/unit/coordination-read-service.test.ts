@@ -286,7 +286,7 @@ describe("coordination read service", () => {
     ).toEqual(["r2", "r1"]);
   });
 
-  test("unchanged state is projected once across reads", async () => {
+  test("pages and status served from the cached projection match a fresh service", async () => {
     let reads = 0;
     const counting = new CoordinationReadService(
       new GetPlanningSnapshot({

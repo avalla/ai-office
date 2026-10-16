@@ -262,6 +262,22 @@ describe("credential scrubber", () => {
     );
   });
 
+  test("redacts every word of an unterminated quoted value, to the end of its line", () => {
+    expect(
+      scrubCredentials(["Note pass", 'word: "correct horse battery staple'].join("")),
+    ).toBe(`Note ${redactionMarker}`);
+    expect(
+      scrubCredentials(["pass", 'word: "ab\\"cdefghij more words'].join("")),
+    ).toBe(redactionMarker);
+    expect(
+      scrubCredentials(
+        ["sec", "ret='two words here\nNext line stays"].join(""),
+      ),
+    ).toBe(`${redactionMarker}\nNext line stays`);
+    // A short closed quote is not a credential value by this rule.
+    expect(scrubCredentials('pwd="short" plan')).toBe('pwd="short" plan');
+  });
+
   test("bounds the code-point conversion of huge text", () => {
     const item = exposeItem(
       "milestones",

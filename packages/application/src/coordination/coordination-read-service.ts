@@ -163,6 +163,11 @@ const exposedCollections = [
   "runnable",
 ] as const satisfies readonly CoordinationExposedCollection[];
 
+/** Code-unit order: locale-independent, as in the read model. */
+function compareText(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
 /**
  * The whole scope as it may leave the Runtime, and its identity. The
  * coordination `snapshotId` is the digest of this exposed projection, not
@@ -170,10 +175,6 @@ const exposedCollections = [
  * tail of a title must not change an identity a caller can see, or the
  * identity would confirm a guessed secret.
  */
-function compareText(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
 function exposedProjection(
   snapshot: PlanningSnapshot,
   counts: Record<PlanningSnapshotCollection, number>,
