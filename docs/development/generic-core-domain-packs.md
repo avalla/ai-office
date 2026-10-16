@@ -3461,13 +3461,13 @@ Anti-goal:
 > the pack must not become authoritative for Runtime execution without a
 > separately approved task
 
-GP-25 is a definition layer, like GP-11, GP-12 and GP-13. A policy is a
-declaration. Nothing is enforced from it: the Runtime still reads only the
-pipelines of the OfficeManifest, and no pipeline, run, pin, approval, guard,
-grant or capability decision is created, read or changed by a policy.
-Executing from a resolved configuration, including its policies, is the
-Runtime task "Runtime resolved-configuration execution parity"
-(`a45ddb12-3159-4b60-9b8b-c26516720834`), which depends on GP-25.
+GP-25 delivered a definition layer, like GP-11, GP-12 and GP-13. It did not
+make policy declarations authoritative for execution or change pipelines,
+runs, pins, approvals, guards, grants or capability decisions. The separately
+scoped M16.5 activation task (`aa10a111`) owns consumption of resolved
+workflows and their pack policies. Runtime task "Runtime resolved-configuration
+execution parity" (`a45ddb12-3159-4b60-9b8b-c26516720834`) proves equivalence
+with legacy execution after activation; it depends on GP-25 and activation.
 
 ### Decisions
 
