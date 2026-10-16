@@ -281,6 +281,25 @@ describe("credential scrubber", () => {
     expect(
       scrubCredentials(["tok", 'en: "longsecretvalue\\\nkept'].join("")),
     ).toBe(`${redactionMarker}\nkept`);
+    expect(
+      scrubCredentials(["sec", "ret: 'two words\\\r\nkept"].join("")),
+    ).toBe(`${redactionMarker}\r\nkept`);
+    // An odd run of backslashes, and an escaped closing quote, still end in
+    // an unterminated value.
+    expect(scrubCredentials(["pass", 'word: "abc\\\\\\'].join(""))).toBe(
+      redactionMarker,
+    );
+    expect(
+      scrubCredentials(["pass", 'word: "longsecret\\"\nkept'].join("")),
+    ).toBe(`${redactionMarker}\nkept`);
+    // Accepted over-redaction: an opening quote with nothing after it.
+    expect(scrubCredentials(["pass", 'word: "'].join(""))).toBe(redactionMarker);
+    // A long backslash run is scanned in bounded time.
+    const started = performance.now();
+    expect(
+      scrubCredentials(["pass", 'word: "', "\\".repeat(4096)].join("")),
+    ).toBe(redactionMarker);
+    expect(performance.now() - started).toBeLessThan(1000);
     // A short closed quote is not a credential value by this rule.
     expect(scrubCredentials('pwd="short" plan')).toBe('pwd="short" plan');
   });
