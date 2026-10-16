@@ -49,9 +49,11 @@ authoritative transaction; removal previewed and blocked while active pinned
 runs or project-owned references need the pack; a previewed, explicit
 migration to a development-pack binding; fail-closed resolution and policy
 composition; and cross-domain fixtures (development, legal, manufacturing,
-empty/custom) exercising the same Runtime contracts. The M16 doc itself
-records these parts as accepted-but-unmet and reserved for M16.5
-(`generic-core-domain-packs.md:5693-5697`).
+empty/custom) exercising the same Runtime contracts. The
+[M16 exit record](generic-core-domain-packs.md#m16-exit-re-scope-owner-decision-2026-10-06)
+reserved these clauses for M16.5 rather than claiming them at the M16 exit.
+PR #168 subsequently delivered run pinning; the remaining execution,
+removal and adoption clauses are still task-owned work.
 
 The [roadmap's M16.5 record](roadmap.md#m165--domain-pack-runtime-activation)
 assigns Runtime activation to task `aa10a111-9658-4f11-b99f-7074fe522588`

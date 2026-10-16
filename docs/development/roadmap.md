@@ -1892,7 +1892,8 @@ and non-goals are in the
 [Generic Core & Domain Packs plan](generic-core-domain-packs.md). The
 [accepted core/pack boundary ADR](../adr/ADR-0026-core-domain-pack-boundary.md)
 is the GP-02 architectural target, delivered incrementally; PR #168 implements
-its run-pinning clause, while the remaining Runtime clauses belong to M16.5. The
+its run-pinning clause. Activation, removal guarding and adoption remain M16.5
+work; evidence and validator enforcement belongs to M11.6. The
 [M15-4 decision](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
 supplies its four authority/evidence prerequisites; GP-02 reviewed the
 contract against them after M15-4 integration. The AI
