@@ -2000,7 +2000,7 @@ deliberately not delivered as written.
   configuration, runs do not pin it and the production pack catalog is empty,
   so a run cannot be refused by a pack contract today, and no run is. The run
   gate is M16.5 task `f8d75709` (owner decision 2026-10-15), after Runtime
-  activation and GP-24, which persists the pins a gate would check.
+  activation, which persists the run pins, and GP-24, which uses them.
 - **Abstract operations.** An operation is a concrete connector operation
   name, not a provider-independent contract ID (decision 2). The registry
   namespaces every operation by its connector, so two providers cannot offer
@@ -5681,7 +5681,7 @@ order, and each entry is set by the item's scope proposal.
 | Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`   | GP-10B-1, GP-10B-2, GP-25; activation | Execution parity: compare execution from a resolved configuration with legacy execution.                                                                                                                                                                      |
 | GP-14B — Evidence and validator enforcement           | GP-14A; M11.6 Phase B                 | Stale evidence and invalid validator output fail closed; version-bound review, atop the generic version/provenance/review contracts.                                                                                                                          |
 | GP-10C-2 — Development pack adoption                  | GP-10C-1; activation                  | Previewed explicit adoption of the development pack and its catalog registration, preserving old bindings; legacy snapshot, approval, action and provenance regression tests.                                                                                 |
-| GP-16 run gate                                        | GP-16; activation                     | Bind registered providers at bootstrap and reject a missing required provider before runs. The merged GP-16 row records only the definition layer; the owner ruled on 2026-10-15 that the run gate is its own task `f8d75709`, after Runtime activation and GP-24 (which owns the run pin), so neither `a45ddb12` nor GP-24 owns it.                                                                     |
+| GP-16 run gate                                        | GP-16; activation; GP-24              | Bind registered providers at bootstrap and reject a missing required provider before runs. The merged GP-16 row records only the definition layer; the owner ruled on 2026-10-15 that the run gate is its own task `f8d75709`, after Runtime activation and GP-24 (which owns the run pin), so neither `a45ddb12` nor GP-24 owns it.                                                                     |
 
 **Left open by this decision.**
 

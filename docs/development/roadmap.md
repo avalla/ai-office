@@ -2216,22 +2216,23 @@ still scoped by its own record before work:
   configuration, and a new run persists its configuration digest and exact
   source pack tuples with its existing pins. The pin is delivered; selection
   from the pack is not.
-- GP-24: block a pack removal while an active run pins that pack. Whether
-  it also blocks a workflow change on such a run is set by its scope
-  proposal. It needs the persisted pins, which activation is expected to
-  deliver.
 - Execution parity, Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`:
   compare execution from a resolved configuration with legacy execution.
-- GP-14B moved to M11.6 (requirement GP-14B-M116, task `d991b5be`), which
-  owns the Phase B contract it depends on. It is no longer an M16.5 item.
 - GP-10C-2: previewed explicit adoption of the development pack and its
   registration, preserving old bindings.
+- GP-24: block a pack removal while an active run pins that pack. Whether
+  it also blocks a workflow change on such a run is set by its scope
+  proposal. It uses the pins that activation already persists.
 - The GP-16 run gate (requirement GP-16-RG, the split-off half of GP-16; the
   delivered half is GP-16A in M16): bind registered providers at bootstrap and reject a
   missing required provider before runs. It is Runtime task `f8d75709`, after
   Runtime activation and GP-24; neither `a45ddb12` nor GP-24 owns it.
 - The two GP-12 follow-up tasks `57a1833f` and `e003843f` (requirement
   M165-GP12-FU).
+
+GP-14B, which left M16.5 for M11.6 on 2026-10-15 (requirement GP-14B-M116,
+task `d991b5be`), owns the Phase B contract it depends on and is not an M16.5
+item.
 
 Exit: to be defined with the scope proposal. It is expected to carry the
 clauses that left the M16 exit: Runtime execution consumes the generic
