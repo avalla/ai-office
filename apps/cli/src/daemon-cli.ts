@@ -171,6 +171,7 @@ const projectScopedCommands = new Set([
   "task:link-requirement",
   "task:unlink-requirement",
   "task:reconcile",
+  "planning:snapshot",
   "agent:sync",
   "agent:list",
   "agent:models",

@@ -117,6 +117,11 @@ import { handleAgentCommand } from "./commands/agent.ts";
 import { handleCostCommand } from "./commands/cost.ts";
 import { handleGovernanceCommand } from "./commands/governance.ts";
 import { handleRequirementCommand } from "./commands/requirement.ts";
+import { handlePlanningCommand } from "./commands/planning.ts";
+import {
+  PlanningScopeNotFoundError,
+  PlanningSnapshotQueryError,
+} from "@ai-office/application/coordination/get-planning-snapshot.ts";
 import { handleProjectCommand } from "./commands/project.ts";
 import { handleRunCommand } from "./commands/run.ts";
 import {
@@ -274,6 +279,7 @@ const commands = [
   "task:link-requirement",
   "task:unlink-requirement",
   "task:reconcile",
+  "planning:snapshot",
   "agent:sync",
   "agent:list",
   "agent:models",
@@ -423,6 +429,7 @@ const handlers = [
   handleCostCommand,
   handleGovernanceCommand,
   handleRequirementCommand,
+  handlePlanningCommand,
   handleMemoryCommand,
   handleKnowledgeCommand,
   handleDeliverySetupCommand,
@@ -470,6 +477,8 @@ function formatKnownError(error: unknown): string | null {
     error instanceof InvalidTaskTransitionError ||
     error instanceof InvalidTaskCorrectionError ||
     error instanceof RequirementNotFoundError ||
+    error instanceof PlanningSnapshotQueryError ||
+    error instanceof PlanningScopeNotFoundError ||
     error instanceof TaskReconciliationApprovalError ||
     error instanceof TaskCompletionApprovalError ||
     error instanceof TaskLockActiveError ||

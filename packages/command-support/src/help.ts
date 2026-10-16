@@ -122,6 +122,7 @@ Commands:
   milestone:set-status --project <id> --milestone <id> --status <planned|active|completed|cancelled|archived>
   requirement:create --project <id> --key <key> --title <title> --description <description> [--milestone <id>]  # without --milestone the requirement's tasks appear under no milestone
   requirement:list --project <id> [--json]  # lists exact requirement IDs for linking
+  planning:snapshot --project <id> [--milestone <id>] [--collection <milestones|tasks|requirements|dependencies|runnable|active|blockers|decisions|inconsistencies>] [--offset <n>] [--limit <1-200>] [--classes <P|P,T>]  # read-only JSON page of the minimized planning read model; snapshotId is stable across pages
   requirement:validate --project <id> --requirement <id> --model <provider:model> [--json]  # advisory, metered LLM analysis; does not change status
   requirement:update --project <id> --requirement <id> [--title <title>] [--description <text>]  # proposed requirements only; key, milestone and status are immutable here
   requirement:assign-milestone --project <id> --requirement <id> --milestone <id>  # proposed requirements without a milestone only; assigns once, never moves

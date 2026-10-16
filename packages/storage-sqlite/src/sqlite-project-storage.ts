@@ -10,6 +10,7 @@ import { SqliteJobOutboxRepository } from "./repositories/sqlite-job-outbox.repo
 import { SqliteMemoryReferenceRepository } from "./repositories/sqlite-memory-reference.repository.ts";
 import { SqliteOfficeManifestRepository } from "./repositories/sqlite-office-manifest.repository.ts";
 import { SqliteOperationalReadRepository } from "./repositories/sqlite-operational-read.repository.ts";
+import { SqlitePlanningReadRepository } from "./repositories/sqlite-planning-read.repository.ts";
 import { SqlitePipelineRunRepository } from "./repositories/sqlite-pipeline-run.repository.ts";
 import { SqliteProjectMemoryProvenanceRepository } from "./repositories/sqlite-project-memory-provenance.repository.ts";
 import { SqliteProjectProfileRepository } from "./repositories/sqlite-project-profile.repository.ts";
@@ -49,6 +50,7 @@ export function createSqliteProjectStorage(database: Database): ProjectStorage {
       database,
     ),
     operationalReads: new SqliteOperationalReadRepository(database),
+    planningReads: new SqlitePlanningReadRepository(database),
     taskDeliverySetup: new SqliteTaskDeliverySetupRepository(database),
     transactions: new SqliteTransactionRunner(database),
     jobOutbox: new SqliteJobOutboxRepository(database),
