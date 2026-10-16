@@ -828,12 +828,12 @@ describe.skipIf(connectionString === undefined)(
           repositoryA.saveRun(first),
           repositoryB.saveRun(second),
         ]);
-        expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(
-          1,
-        );
-        expect(results.filter((result) => result.status === "rejected")).toHaveLength(
-          1,
-        );
+        expect(
+          results.filter((result) => result.status === "fulfilled"),
+        ).toHaveLength(1);
+        expect(
+          results.filter((result) => result.status === "rejected"),
+        ).toHaveLength(1);
         const persisted = await f.runtime.findRun(run.snapshot().id);
         expect(persisted?.snapshot().status).toMatch(/preparing|cancelled/);
         expect(

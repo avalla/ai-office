@@ -231,12 +231,12 @@ export function defineAgentRuntimeRepositoryContracts(
         harness.runtime.saveRun(first),
         harness.runtime.saveRun(second),
       ]);
-      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(
-        1,
-      );
-      expect(results.filter((result) => result.status === "rejected")).toHaveLength(
-        1,
-      );
+      expect(
+        results.filter((result) => result.status === "fulfilled"),
+      ).toHaveLength(1);
+      expect(
+        results.filter((result) => result.status === "rejected"),
+      ).toHaveLength(1);
       const persisted = await harness.runtime.findRun(run.snapshot().id);
       expect(persisted?.snapshot().status).toMatch(/preparing|cancelled/);
       expect(
@@ -265,6 +265,115 @@ export function defineAgentRuntimeRepositoryContracts(
       expect(
         (await harness.runtime.findRun(run.snapshot().id))?.snapshot().status,
       ).toBe("queued");
+    });
+
+    test.each(["completed", "failed", "cancelled"] as const)(
+      "rejects a stale %s writer with a later timestamp and recovers from a fresh read",
+      async (terminalStatus) => {
+        const run = AgentRun.create({
+          id: `${harness.idPrefix}-later-stale`,
+          projectId: harness.projectId,
+          taskId: harness.taskId,
+          agentId: harness.agentId,
+          now: harness.now,
+        });
+        await harness.runtime.saveRun(run);
+        run.transition("preparing", harness.now);
+        await harness.runtime.saveRun(run);
+        run.transition("running", harness.now);
+        await harness.runtime.saveRun(run);
+        const stale = (await harness.runtime.findRun(run.snapshot().id))!;
+        const staleToken = stale.snapshot().persistenceToken;
+        run.transition("reviewing", new Date(harness.now.getTime() + 1), {
+          result: { summary: "accepted" },
+        });
+        await harness.runtime.saveRun(run);
+        stale.transition(terminalStatus, new Date(harness.now.getTime() + 2));
+        await expect(harness.runtime.saveRun(stale)).rejects.toBeInstanceOf(
+          AgentRunPersistenceConflictError,
+        );
+        expect(stale.snapshot().persistenceToken).toEqual(staleToken);
+        const fresh = (await harness.runtime.findRun(run.snapshot().id))!;
+        expect(fresh.snapshot()).toEqual(run.snapshot());
+        fresh.transition(terminalStatus, new Date(harness.now.getTime() + 3));
+        await harness.runtime.saveRun(fresh);
+        expect(
+          (await harness.runtime.findRun(run.snapshot().id))?.snapshot(),
+        ).toEqual(fresh.snapshot());
+        expect(
+          (await harness.runtime.listRunEvents(run.snapshot().id)).map(
+            (event) => event.status,
+          ),
+        ).toEqual([
+          "queued",
+          "preparing",
+          "running",
+          "reviewing",
+          terminalStatus,
+        ]);
+      },
+    );
+
+    test.each(["missing", "stale"] as const)(
+      "refreshes a %s token on an identical replay without duplicating events",
+      async (tokenKind) => {
+        const run = AgentRun.create({
+          id: `${harness.idPrefix}-replay-token`,
+          projectId: harness.projectId,
+          taskId: harness.taskId,
+          agentId: harness.agentId,
+          now: harness.now,
+        });
+        await harness.runtime.saveRun(run);
+        const previousToken = run.snapshot().persistenceToken!;
+        run.transition("preparing", new Date(harness.now.getTime() + 1));
+        await harness.runtime.saveRun(run);
+        const replayProps = run.snapshot();
+        if (tokenKind === "missing") delete replayProps.persistenceToken;
+        else replayProps.persistenceToken = previousToken;
+        const replay = AgentRun.restore(replayProps);
+        await harness.runtime.saveRun(replay);
+        expect(replay.snapshot().persistenceToken).toEqual(
+          run.snapshot().persistenceToken,
+        );
+        replay.transition("running", new Date(harness.now.getTime() + 2));
+        await harness.runtime.saveRun(replay);
+        expect(
+          (await harness.runtime.listRunEvents(run.snapshot().id)).map(
+            (event) => event.status,
+          ),
+        ).toEqual(["queued", "preparing", "running"]);
+      },
+    );
+
+    test("rejects a token with the right status but a different timestamp", async () => {
+      const run = AgentRun.create({
+        id: `${harness.idPrefix}-wrong-token-time`,
+        projectId: harness.projectId,
+        taskId: harness.taskId,
+        agentId: harness.agentId,
+        now: harness.now,
+      });
+      await harness.runtime.saveRun(run);
+      const mismatched = AgentRun.restore({
+        ...run.snapshot(),
+        persistenceToken: {
+          status: "queued",
+          updatedAt: new Date(harness.now.getTime() - 1),
+        },
+      });
+      mismatched.transition("preparing", new Date(harness.now.getTime() + 1));
+      await expect(harness.runtime.saveRun(mismatched)).rejects.toBeInstanceOf(
+        AgentRunPersistenceConflictError,
+      );
+      expect(
+        (await harness.runtime.findRun(run.snapshot().id))?.snapshot(),
+      ).toEqual(run.snapshot());
+      expect(
+        (await harness.runtime.listRunEvents(run.snapshot().id)).map(
+          (event) => event.status,
+        ),
+      ).toEqual(["queued"]);
     });
 
     test("rejects a stale snapshot after a newer status transition", async () => {

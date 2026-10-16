@@ -33,6 +33,7 @@ interface StoredRow {
 // update must come from an object whose token matches the stored row.
 class TokenStore {
   row: StoredRow | undefined;
+  releasedLocks = 0;
 
   readonly repository = {
     saveRun: async (run: AgentRun): Promise<void> => {
@@ -48,7 +49,10 @@ class TokenStore {
       this.row = { status: value.status, updatedAt: value.updatedAt };
       run.markPersisted();
     },
-    releaseTaskLock: async (): Promise<boolean> => true,
+    releaseTaskLock: async (): Promise<boolean> => {
+      this.releasedLocks += 1;
+      return true;
+    },
   } as unknown as AgentRuntimeRepository;
 
   // Stands in for the acceptance fence persisting the reviewing transition.
@@ -57,9 +61,11 @@ class TokenStore {
   }
 }
 
-function setup(
-  accept: (store: TokenStore, at: Date) => Promise<boolean>,
-): { store: TokenStore; execute: () => ReturnType<ExecuteAgentRun["execute"]> } {
+function setup(accept: (store: TokenStore, at: Date) => Promise<boolean>): {
+  store: TokenStore;
+  run: AgentRun;
+  execute: () => ReturnType<ExecuteAgentRun["execute"]>;
+} {
   const store = new TokenStore();
   const prepared: PreparedAgentExecution = {
     provenance: {
@@ -86,6 +92,7 @@ function setup(
   });
   return {
     store,
+    run,
     execute: async () => {
       await store.repository.saveRun(run);
       return new ExecuteAgentRun(
@@ -99,6 +106,13 @@ function setup(
 }
 
 describe("ExecuteAgentRun acceptance and the persistence token", () => {
+  test("requires acceptance callbacks to report whether they persisted", () => {
+    const legacyAccept = async (): Promise<void> => {};
+    // @ts-expect-error A legacy void callback cannot report persistence.
+    const accept: PreparedAgentExecution["accept"] = legacyAccept;
+    expect(accept).toBe(legacyAccept);
+  });
+
   test("follows an acceptance that persisted the reviewing transition", async () => {
     const { store, execute } = setup(async (s, at) => {
       s.persistReviewing(at);
@@ -123,5 +137,38 @@ describe("ExecuteAgentRun acceptance and the persistence token", () => {
       status: "interrupted",
       error: { code: "RUN_STATE_PERSISTENCE_FAILED" },
     });
+  });
+
+  test("persists failure when acceptance throws before persisting", async () => {
+    const { store, run, execute } = setup(async () => {
+      throw new Error("acceptance rejected");
+    });
+    await expect(execute()).resolves.toMatchObject({
+      status: "failed",
+      error: { code: "EXECUTION_FAILED" },
+    });
+    expect(store.row?.status).toBe("failed");
+    expect(run.snapshot().persistenceToken).toEqual(store.row);
+    expect(store.releasedLocks).toBe(1);
+  });
+
+  test("preserves persisted reviewing for recovery if acceptance throws after commit", async () => {
+    const { store, run, execute } = setup(async (s, at) => {
+      s.persistReviewing(at);
+      throw new Error("acceptance acknowledgement lost");
+    });
+    await expect(execute()).resolves.toMatchObject({
+      status: "interrupted",
+      error: { code: "RUN_STATE_PERSISTENCE_FAILED" },
+    });
+    expect(store.row).toEqual({
+      status: "reviewing",
+      updatedAt: new Date(start.getTime() + 3),
+    });
+    expect(run.snapshot().persistenceToken).toEqual({
+      status: "running",
+      updatedAt: new Date(start.getTime() + 2),
+    });
+    expect(store.releasedLocks).toBe(0);
   });
 });
