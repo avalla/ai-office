@@ -64,8 +64,8 @@ AI Office keeps different kinds of documentation separate so current product tru
   planned gap analysis and contract for replacing the static worker version and
   model allowlists with exactly-bound subjects, a four-state guarantee model,
   evidence kept apart from owner certification decisions, a host-local
-  content-addressed revocable registry, one fail-closed admission function with
-  typed diagnostics, offline probes, authorized live certification and release
+  content-addressed revocable registry, one admission function that refuses with
+  typed diagnostics on missing, mismatched, revoked or drifted evidence, offline probes, authorized live certification and release
   monitoring that enables nothing; proposed decision gate, not accepted current
   architecture; nothing implemented.
 - [Professional-work verticals](development/professional-work-verticals.md):

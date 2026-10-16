@@ -2539,8 +2539,9 @@ their allowlists, model routing and local configuration are unchanged.
 
 Goal: replace the static version and model allowlists in the worker adapters
 (`auditedCodexVersions`, `auditedBoundedCodexModels`, the Claude version floor)
-with one fail-closed admission function over exactly-bound subjects: worker,
-client version, model, effective configuration, output protocol, platform and
+with one admission function that refuses on missing, mismatched, revoked or
+drifted evidence, over exactly-bound subjects: worker, client version,
+provider, model, effective configuration, output protocol, platform and
 execution mode. Guarantees are classified `enforced`, `verified`, `unverified` or
 `unsupported` with evidence proportional to risk; technical evidence is kept
 apart from the owner's certification decision, and a digest proves integrity,

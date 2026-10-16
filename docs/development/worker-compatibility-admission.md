@@ -28,8 +28,8 @@ comments, hand-run checks and a few fake-CLI tests:
 - Admitting a new version, model, feature or plan claim is a production-code
   change, a release and a manual re-verification ("re-verified by hand for each
   audited version", roadmap M12 follow-ups).
-- Every failure of that admission is `WORKER_UNAVAILABLE`: version, feature
-  listing, login, plan claim, platform and probe failure are indistinguishable.
+- Version, feature-listing, login, plan-claim, platform and probe failures are
+  all `WORKER_UNAVAILABLE`, so they are indistinguishable to the operator.
 - Dispatch provenance records the client version (`adapterVersion`) and the
   model selection. It does not record which audit admitted the run, what that
   audit asserted, or whether the configuration that ran is the one audited.
@@ -78,6 +78,10 @@ protocol it parses. The current allowlists name one of the four.
 - **AWS-10-R2 / AWS-11-T5** consume admission as a read-only preflight and report
   `not_checked` when it was not evaluated.
 
+Identifiers such as `M12-WORKER-PORT`, `AWS-10-R2`, `AWS-11-T5` and `MAEC-01`
+refer to requirement and task records in the Runtime; their plan documents are
+not all in the repository yet, so this plan links only to documents that are.
+
 Non-goals: enabling any new version, model or worker; changing a current
 allowlist, flag, admission rule or guarantee; automatic real-provider tests;
 Windows worker support; hook-adapter audits; a general plugin system; replacing
@@ -85,21 +89,21 @@ controlled actions, grants or approvals; repository-editing execution.
 
 ## Gap analysis
 
-| Dimension         | Codex today                                                        | Claude today                              | Target (ADR-0037)                                                                 |
-| ----------------- | ------------------------------------------------------------------ | ----------------------------------------- | --------------------------------------------------------------------------------- |
-| Version           | exact set, one entry                                               | floor `>= 2.1.259`, no ceiling            | exact version in the subject                                                      |
-| Model             | exact set, independent of version                                  | syntax pattern only                       | exact model in the same subject                                                   |
-| Configuration     | flags and `isolationConfig` in source; not part of the identity    | flags in source; not part of the identity | effective-configuration digest in the subject                                     |
-| Capability probe  | `codex features list` compared with an audited state               | none                                      | deterministic probes per worker, recorded as evidence                             |
-| Provider metadata | not pinned; one drift (`multi_agent v2`) found and patched by hand | not applicable                            | metadata dependencies per guarantee, drift refuses when it touches a required one |
-| Output protocol   | strict JSONL parser, no declared version                           | JSON parser, no declared version          | named protocol id in the subject                                                  |
-| Evidence          | comments, hand checks, fake CLI, one opt-in real-CLI replay        | none                                      | digest-addressed evidence bundles, sufficiency by risk tier                       |
-| Authority         | source change and release                                          | source change (floor bump)                | operator decision over evidence, plan/approval-bound, revocable                   |
-| Refusal           | `WORKER_UNAVAILABLE` for every cause                               | `WORKER_UNAVAILABLE`                      | closed typed reasons naming the failed dimension                                  |
-| Provenance        | client version                                                     | client version                            | basis, decision digest, generation, effective guarantees                          |
-| Decision sites    | adapter and `run.ts`                                               | adapter                                   | one admission function                                                            |
-| Delegation        | refused through knowledge of one model's metadata                  | not applicable (no tools)                 | explicit mode and guarantee namespace, unsupported until governed                 |
-| Legacy            | allowlist is the audit                                             | floor presented as support                | Claude floor carried as a labelled `legacy_policy`, never as certified            |
+| Dimension         | Codex today                                                             | Claude today                              | Target (ADR-0037)                                                                 |
+| ----------------- | ----------------------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------- |
+| Version           | exact set, one entry                                                    | floor `>= 2.1.259`, no ceiling            | exact version in the subject                                                      |
+| Model             | exact set, independent of version                                       | syntax pattern only                       | exact model in the same subject                                                   |
+| Configuration     | flags and `isolationConfig` in source; not part of the identity         | flags in source; not part of the identity | effective-configuration digest in the subject                                     |
+| Capability probe  | `codex features list` compared with an audited state                    | none                                      | deterministic probes per worker, recorded as evidence                             |
+| Provider metadata | not pinned; one drift (`multi_agent v2`) found and patched by hand      | not applicable                            | metadata dependencies per guarantee, drift refuses when it touches a required one |
+| Output protocol   | strict JSONL parser, no declared version                                | JSON parser, no declared version          | named protocol id in the subject                                                  |
+| Evidence          | comments, hand checks, fake CLI, one opt-in real-CLI replay             | none                                      | digest-addressed evidence bundles, sufficiency by risk tier                       |
+| Authority         | source change and release                                               | source change (floor bump)                | operator decision over evidence, plan/approval-bound, revocable                   |
+| Refusal           | `WORKER_UNAVAILABLE` for version, feature, login, plan and probe causes | `WORKER_UNAVAILABLE`                      | closed typed reasons naming the failed dimension                                  |
+| Provenance        | client version                                                          | client version                            | basis, decision digest, generation, effective guarantees                          |
+| Decision sites    | adapter and `run.ts`                                                    | adapter and `run.ts` (model syntax check) | one admission function                                                            |
+| Delegation        | refused through knowledge of one model's metadata                       | not applicable (no tools)                 | explicit mode and guarantee namespace, unsupported until governed                 |
+| Legacy            | allowlist is the audit                                                  | floor presented as support                | Claude floor carried as a labelled `legacy_policy`, never as certified            |
 
 Non-CLI baseline: the gateway worker is admitted by provider descriptors and the
 metered gateway, which the Runtime itself enforces. It is the reference for what
@@ -139,22 +143,22 @@ configurationProfile, outputProtocol, platform, mode)`; certification of one
 
 Recorded in the Runtime as WC-R01 … WC-R14 under the M24 milestone.
 
-| Id     | Requirement                                                                                                                                                                                                                                                                                                                    |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| WC-R01 | No regression: baseline records reproduce every current admit/refuse decision of the Codex and Claude workers exactly, proved by a differential test over a version × model × feature matrix in shadow mode before cutover.                                                                                                    |
-| WC-R02 | Exact subject: worker, exact version, provider, exact model, effective-configuration digest, output protocol, platform and mode. No ranges and no implicit extension: certifying one subject certifies no other.                                                                                                               |
-| WC-R03 | Guarantee taxonomy: four states and risk tiers; unknown capabilities are `unverified`; a client or provider declaration never raises a state; the Claude legacy policy is labelled `legacy_policy` and never presented as certified.                                                                                           |
-| WC-R04 | Bounded single-agent execution and governed delegation are separate modes; native client delegation is unsupported absent Runtime admission.                                                                                                                                                                                   |
-| WC-R05 | Evidence proportional to risk: digest-addressed evidence bundles from named versioned suites, with a deterministic sufficiency table by tier; evidence is separate from the certification decision.                                                                                                                            |
-| WC-R06 | Registration by data: a valid decision for an implemented configuration profile and output protocol is registered without production-code change; a new profile or protocol is code.                                                                                                                                           |
-| WC-R07 | Authority: registration and revocation are operator-only, plan/approval-bound and audited; probes and live runs only propose; the approval authentication class is recorded; the same-user limit (M10) is documented, not claimed. The registry is host-local, content-addressed, immutable, atomically updated and revocable. |
-| WC-R08 | Typed refusal diagnostics: closed reason set naming the failed dimension and the nearest decision, before dispatch and before the login is read, without secrets; public error codes preserved.                                                                                                                                |
-| WC-R09 | Provenance: basis, decision digest, registry generation, observed-subject digest, effective guarantees and authentication class recorded per dispatch immutably; history reads `not recorded`; SQLite/PostgreSQL parity and a forward migration.                                                                               |
-| WC-R10 | Automated offline probes: deterministic, credential-free, runnable in the standard suite and CI against a supplied binary, using a scripted provider endpoint; a skipped probe supports nothing.                                                                                                                               |
-| WC-R11 | Live certification only under an explicit authorization per execution naming worker, exact version, provider, model, credential and a USD ceiling; never in standard tests or CI; evidence only.                                                                                                                               |
-| WC-R12 | Release monitoring and recertification: CI and the monitor detect new Codex CLI and Claude Code releases and report compatibility; they enable nothing and need no credentials; a documented recertification procedure covers the triggers.                                                                                    |
-| WC-R13 | Drift and revocation: metadata drift affecting a required guarantee refuses new runs with a typed reason; informational drift is advisory; decisions can be revoked or superseded; expiry is opt-in and never overrides security checks.                                                                                       |
-| WC-R14 | Parity: the Claude and Codex guarantee matrices are published with an evidence class per cell; WC-07 evaluates the unproven Claude guarantees and proposes a transition to uniform admission; any change of Claude admission is a separate owner decision.                                                                     |
+| Id     | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WC-R01 | No regression: baseline records reproduce every current admit/refuse decision of the Codex and Claude workers exactly, proved by a differential test over a version × model × feature matrix in shadow mode before cutover.                                                                                                                                                                                                                                                                                                                                 |
+| WC-R02 | Exact subject: worker, exact version, provider, exact model, effective-configuration digest, output protocol, platform and mode. No ranges and no implicit extension: certifying one subject certifies no other.                                                                                                                                                                                                                                                                                                                                            |
+| WC-R03 | Guarantee taxonomy: four states and risk tiers; unknown capabilities are `unverified`; a client or provider declaration never raises a state; the Claude legacy policy is labelled `legacy_policy` and never presented as certified.                                                                                                                                                                                                                                                                                                                        |
+| WC-R04 | Bounded single-agent execution and governed delegation are separate modes; native client delegation is unsupported absent Runtime admission.                                                                                                                                                                                                                                                                                                                                                                                                                |
+| WC-R05 | Evidence proportional to risk: digest-addressed evidence bundles from named versioned suites, with a deterministic sufficiency table by tier; evidence is separate from the certification decision.                                                                                                                                                                                                                                                                                                                                                         |
+| WC-R06 | Registration by data: a valid decision for an implemented configuration profile and output protocol is registered without production-code change; a new profile or protocol is code.                                                                                                                                                                                                                                                                                                                                                                        |
+| WC-R07 | Authority: registration and revocation are operator-only, plan/approval-bound and audited; probes and live runs only propose; no Runtime-dispatched worker or tool has a path to registration, and the approval authentication class is recorded; a same-account process, including an external coding agent, is not distinguished from the operator until M10, so its separation is an operational rule; the same-user limit (M10) is documented, not claimed. The registry is host-local, content-addressed, immutable, atomically updated and revocable. |
+| WC-R08 | Typed refusal diagnostics: closed reason set naming the failed dimension and the nearest decision, before dispatch, without secrets, with a table from each reason to the unchanged public code; public error codes preserved.                                                                                                                                                                                                                                                                                                                              |
+| WC-R09 | Provenance: basis, decision digest, registry generation, observed-subject digest, effective guarantees and authentication class recorded per dispatch immutably; history reads `not recorded`; SQLite/PostgreSQL parity and a forward migration.                                                                                                                                                                                                                                                                                                            |
+| WC-R10 | Automated offline probes: deterministic, credential-free, runnable in the standard suite and CI against a supplied binary, using a scripted provider endpoint; a skipped probe supports nothing.                                                                                                                                                                                                                                                                                                                                                            |
+| WC-R11 | Live certification only under an explicit authorization per execution naming worker, exact version, provider, model, credential and a USD ceiling; never in standard tests or CI; evidence only.                                                                                                                                                                                                                                                                                                                                                            |
+| WC-R12 | Release monitoring and recertification: CI and the monitor detect new Codex CLI and Claude Code releases and report compatibility; they enable nothing and need no credentials; a documented recertification procedure covers the triggers.                                                                                                                                                                                                                                                                                                                 |
+| WC-R13 | Drift and revocation: metadata drift affecting a required guarantee refuses new runs with a typed reason; informational drift is advisory; decisions can be revoked or superseded; expiry is opt-in and never overrides security checks.                                                                                                                                                                                                                                                                                                                    |
+| WC-R14 | Parity: the Claude and Codex guarantee matrices are published with an evidence class per cell; WC-07 evaluates the unproven Claude guarantees and proposes a transition to uniform admission; any change of Claude admission is a separate owner decision.                                                                                                                                                                                                                                                                                                  |
 
 ## Delivery graph and tasks
 
@@ -172,13 +176,15 @@ Recorded in the Runtime as WC-01 … WC-08.
 | WC-08 | Operator documentation, rollout gates and milestone exit                                                                                                                                                      | R01 … R14                       | WC-05, WC-06, WC-07                 |
 
 ```text
-WC-01 ──► WC-02 ──┐
-   │              ├─► WC-04 ──┐
-   └────► WC-03 ──┤           ├─► WC-07 ─┐
-                  ├─► WC-05 ──┼──────────┼─► WC-08
-                  └─► WC-06 ──┘          │
-                                         ┘
+WC-01 ──► WC-02 ──┬──► WC-04 ──┐
+   │              │            ├──► WC-07 ──┐
+   └────► WC-03 ──┼────────────┘            │
+                  ├──► WC-05 ───────────────┼──► WC-08
+                  └──► WC-06 ───────────────┘
 ```
+
+WC-02 and WC-03 both feed WC-04 and WC-05; WC-03 alone feeds WC-06 and, with
+WC-04, WC-07; WC-05, WC-06 and WC-07 feed WC-08.
 
 WC-02 onward start only after ADR-0037 is accepted by the owner. WC-04 also needs
 a separate authorization that names worker, version, provider, model, credential

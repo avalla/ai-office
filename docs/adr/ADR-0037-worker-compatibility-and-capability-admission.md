@@ -27,8 +27,10 @@ client version and a model may run is made by constants in adapter source:
   every `anthropic:` model whose name matches a syntax pattern; its guarantees
   are the flags it passes, and no probe checks that a newer client still honors
   them;
-- the model gate is repeated in `run.ts`;
-- every refusal is `WORKER_UNAVAILABLE`, whatever the cause;
+- the model gate is repeated in `run.ts` (the Codex allowlist, and the Claude
+  model-name syntax check for `--worker-model`);
+- version, feature-listing, login, plan-claim, platform and probe failures are
+  all `WORKER_UNAVAILABLE`, so the cause is not visible to the operator;
 - dispatch provenance records the client version and the model selection, not
   what admitted the run.
 
@@ -66,14 +68,19 @@ outputProtocol, platform, mode)`:
 Certification of one subject certifies no other. A new version, a new model, a
 changed configuration, a new protocol version, another platform or another mode
 is a different subject that needs its own evidence and its own decision. No rule
-copies, ranges over or inherits from another subject; "supersedes" is an
-explicit link that moves attention, never admission.
+copies, ranges over or inherits from another subject. The only record kind that
+matches more than one subject is the source-shipped `legacy_policy` of decision
+10, which is a closed, named predicate and not a range feature. At most one
+active decision exists per subject; replacing a decision revokes the old one
+with reason `superseded` in the same manifest generation (decision 4).
 
 ### 2. Guarantees, states and risk tiers
 
 A _guarantee_ is a named, versioned property of an execution, from a catalogue
 that is part of the contract and changes only through reviewed code. A record
-can assert only catalogue ids; an unknown id makes the record invalid.
+can assert only catalogue ids; an unknown id makes the record invalid. A
+decision must declare every metadata dependency its catalogue entries list for
+the guarantees it asserts; a missing declaration makes the decision invalid.
 
 Each catalogue entry has a definition, a **risk tier** and zero or more
 **metadata dependencies** (the provider-supplied model metadata projections the
@@ -135,8 +142,11 @@ Evidence kinds, weakest first:
 4. `behavioral_live`: the real client against the real provider under an
    explicit authorization (decision 8).
 5. `runtime_enforced`: tests of Runtime or OS enforcement.
-6. `historical_manual`: checks done by hand before this contract existed, used
-   only by a baseline import (decision 9) and always labelled so.
+
+`historical_manual` (checks done by hand before this contract existed) is not
+part of this ordering and satisfies no row of the table below. It exists only
+inside source-shipped baseline records (decision 9), is labelled as such in
+provenance, and can never be cited by a registered decision.
 
 **Sufficiency by tier** is a deterministic table owned by the contract, not a
 judgment of the approver or of a model. The minimum for `verified`:
@@ -165,15 +175,21 @@ of the approval and a reference to the approval evidence.
 reason code (`evidence_invalidated`, `metadata_drift`, `defect_found`,
 `superseded`, `operator_withdrawn`), the effective time and the approver. A
 record is never deleted or edited; revocation takes effect for new admissions
-immediately and never rewrites the provenance of past runs.
+at the next snapshot load, which registration and revocation trigger (decision
+4), and never rewrites the provenance of past runs.
 
-**A digest proves integrity, not trustworthiness.** Trust comes from three
-independent checks, all deterministic: the decision's evidence satisfies the
-tier table for every asserted state (recomputed at registration and at load, not
-read from the record); the approval is of the authentication class the registry
-accepts; and the evidence was produced by harness code and not by the worker
-under test or a model's own statement. A record that fails any check is ignored
-with a diagnostic and never admits.
+**A digest proves integrity, not trustworthiness.** Two checks are
+deterministic and recomputed at registration and at load, never read from the
+record: the decision's evidence satisfies the tier table for every asserted
+state, and the approval is of an authentication class the registry accepts. A
+third property is a recorded claim that the approver reviews, not a
+deterministic verification: that the evidence was produced by harness code and
+not by the worker under test or a model's own statement. A bundle's producer
+kind and harness revision are fields its writer sets, so the Runtime cannot
+verify them until a Runtime command runs the suite itself and records its own
+observation (WC-03 designs that path; hardening against a forged bundle is M10).
+A record that fails a deterministic check is ignored with a diagnostic and never
+admits.
 
 The authentication class of an approval is what the Runtime can establish. Until
 the cryptographic approval of ADR-0003 (M10) exists, approval is a
@@ -189,31 +205,46 @@ A host-local registry, because the facts describe the clients installed on one
 host and the Runtime has no host-level database; PostgreSQL authority is
 unaffected.
 
-- **Layout.** Objects (evidence bundles, decisions, revocations) are files named
-  by digest under an owner-only directory in the Runtime home, created
-  exclusively and never rewritten. A _manifest_ lists the active set.
-- **Atomic update.** A change writes its objects first, then publishes a new
-  manifest by writing a temporary file and renaming it over the previous one.
-  The manifest carries a generation number and the digest of the previous
-  manifest. A reader sees either the old complete set or the new complete set.
-  Concurrent registrations are serialized, and a registration states the
-  generation it was planned against; a mismatch is refused, never merged.
-  The chain of manifests makes reordering and silent removal evident; it does
-  not make them impossible for a process that can write the directory (see
-  decision 7).
-- **Loading.** At Runtime start, and on an explicit reload between schedules, the
-  registry is read into an immutable snapshot after verifying every digest,
-  every sufficiency check and every approval class. An unreadable manifest
-  admits nothing (`registry_unreadable`); an invalid object is excluded and
-  reported; a valid snapshot stays in force until a verified newer one replaces
-  it.
+- **Layout.** Objects (evidence bundles, decisions, revocations and manifests)
+  are files named by digest under an owner-only directory in the Runtime home,
+  created exclusively and never rewritten. A _manifest_ object lists the active
+  set; a single _current pointer_ names the current manifest.
+- **Atomic update.** A change writes its objects first (including the new
+  manifest, which carries a generation number and the digest of the previous
+  manifest), then moves the current pointer by writing a temporary file and
+  renaming it over the old pointer. Every earlier manifest stays on disk. A
+  reader sees either the old complete set or the new complete set. Concurrent
+  registrations are serialized, and a registration states the generation it was
+  planned against; a mismatch is refused, never merged.
+- **At most one active decision per subject.** A registration that would create
+  a second active decision for the same subject is refused; replacing a decision
+  is one generation that adds the new decision and a revocation of the old one
+  with reason `superseded`.
+- **Rollback and tampering.** The Runtime records the last accepted generation
+  and manifest digest in its own state and refuses a pointer that names a lower
+  generation or a manifest whose chain does not contain the recorded one.
+  Revocation objects are honored whether or not the current manifest lists
+  them. The retained chain makes reordering, rollback and silent removal
+  evident to the Runtime and to a later verifier; it does not prevent them for a
+  process that can write the directory and the Runtime state (decision 7).
+- **Loading.** At Runtime start, and on a reload that registration and
+  revocation trigger and an operator may also request, the registry is read into
+  an immutable snapshot after verifying every digest, every sufficiency check
+  and every approval class. An invalid object is excluded and reported. A valid
+  snapshot stays in force until a verified newer one replaces it, except that a
+  failed reload after a revocation was published refuses the revoked subjects.
+  An absent registry is an empty registry. A registry that exists but whose
+  manifest or pointer is unreadable, or that fails the rollback check, refuses
+  every subject with `registry_unreadable`, source-shipped baselines included,
+  because revocations cannot be ruled out.
 - **Revocation** is a new record in a new generation. Removing trust is always
   allowed to the operator; adding trust always needs a decision.
-- **Baseline.** The current Codex allowlist entry and the current Claude policy
-  are carried as reviewed in-repository records of basis `baseline_import` and
-  `legacy_policy` (decisions 9 and 10), so behavior is reproduced without a
-  second code path. Only baseline records may ship in source; every other
-  decision lives in the registry.
+- **Source-shipped records.** The `baseline_import` and `legacy_policy` records
+  of decisions 9 and 10 are reviewed in-repository data and are the only records
+  that ship in source. The registry rejects any decision whose basis is
+  `baseline_import` or `legacy_policy`; every other decision lives in the
+  registry and has basis `certified`. A registry revocation may revoke a
+  source-shipped record.
 
 ### 5. Admission and drift
 
@@ -225,42 +256,69 @@ admitted(basis, decision, effective guarantees, advisories) | refused(reasons)`.
 `requirements` are the guarantees a role, stage or pack requests, plus the named
 set the mode implies (`bounded_profile`, decision 6). A request grants nothing.
 Adapters report the observed subject and metadata and consume the result; they
-no longer decide, and the decision is made once, before dispatch and before any
-login is read.
+no longer decide which subjects are admitted. The decision is made once, before
+dispatch.
+
+The per-dispatch checks that today live in the adapters are **inputs to
+admission, not replaced by it**: the feature-listing verification and the login,
+plan-claim and token-expiry admission of the Codex worker, and the Claude
+version parse. Their current order is unchanged (the Codex login is admitted
+before any client process runs, probes included, and this ADR does not reverse
+that). A failed check is reported to `admit` as an observation and becomes the
+reason `probe_failed` (client or feature probe) or `credential_not_admitted`
+(login, plan claim or token). A later task may move a check into offline probes
+only if the check also remains at dispatch.
 
 Steps, in this order, each deterministic:
 
-1. Platform support; an unsupported platform refuses.
-2. Select decisions whose subject equals the observed subject in every field. If
+0. Registry state: `registry_unreadable` per decision 4, otherwise continue.
+1. Platform support; an unsupported platform refuses with
+   `platform_unsupported`. Mode support: a mode with no governed contract
+   (`governed_delegation` today) refuses with `mode_unsupported` before any
+   subject matching.
+2. Per-dispatch observations: a failed observation refuses with `probe_failed`
+   or `credential_not_admitted`.
+3. Select the active decision whose subject equals the observed subject in every
+   field; the `legacy_policy` record applies instead only under decision 10. If
    none: refuse `no_matching_audit` and report the _nearest_ decision by number
    of differing dimensions with the differing dimensions named
    (`version_mismatch`, `model_mismatch`, `configuration_mismatch`,
    `protocol_mismatch`, `platform_mismatch`, `mode_mismatch`) and expected and
    observed values.
-3. Exclude revoked decisions (`audit_revoked`) and, where a decision opted in to
-   expiry, expired ones (`evidence_expired`).
-4. Drift. For each required guarantee, every metadata dependency is compared
+4. Exclude a revoked decision (`audit_revoked`) and, where it opted in to expiry,
+   an expired one (`decision_expired`).
+5. Drift. For each required guarantee, every metadata dependency is compared
    with the audited projection digest. A mismatch refuses
    (`metadata_drift_invalidates_guarantee`) for new runs of that subject. A
    difference in a projection no _required_ guarantee depends on is an advisory
    diagnostic and refuses nothing. A dependency declared `unobservable` cannot be
-   compared: admission proceeds and discloses the unobservable dependency in
-   the result and the provenance (open decision O1).
-5. Each required guarantee must be satisfied by the asserted state
+   compared; what admission does then is open decision O1, and until it is
+   decided the imported baseline is admitted with the unobservable dependency
+   disclosed in the result and the provenance, as today's behavior does. Whether
+   a dependency is observable for Codex is a finding of WC-03: the metadata is
+   fetched by the client with the login at session start, so observing it may
+   need a client process run, not a pre-dispatch read.
+6. Each required guarantee must be satisfied by the asserted state
    (`guarantee_unverified`, `guarantee_unsupported`).
 
-Expiry is opt-in per decision and is evaluated only as part of step 3. It can
-only add a refusal; it never admits what steps 2 to 5 refuse, and it never
-overrides a drift or revocation result. A time-based condition therefore cannot
-prevail over a security check in either direction.
+Expiry is opt-in per decision and is evaluated only in step 4. It can only add a
+refusal; it never admits what any other step refuses, and it never overrides a
+drift or revocation result. A time-based condition therefore cannot prevail over
+a security check in either direction.
 
-Reasons are a closed set: `no_matching_audit`, the six `*_mismatch` values,
-`audit_revoked`, `evidence_expired`, `metadata_drift_invalidates_guarantee`,
-`guarantee_unverified`, `guarantee_unsupported`, `mode_unsupported`,
-`probe_failed`, `registry_unreadable`. A refusal carries its reasons, the nearest
-decision and bounded, secret-free detail. The public error codes
-(`WORKER_UNAVAILABLE`, `WORKER_MODEL_UNSUPPORTED`, …) stay at the boundary for
-compatibility; the reasons are added diagnostics.
+Reasons are a closed set: `registry_unreadable`, `platform_unsupported`,
+`mode_unsupported`, `probe_failed`, `credential_not_admitted`,
+`no_matching_audit`, the six `*_mismatch` values, `audit_revoked`,
+`decision_expired`, `metadata_drift_invalidates_guarantee`,
+`guarantee_unverified` and `guarantee_unsupported`. A refusal carries its
+reasons, the nearest decision and bounded, secret-free detail.
+
+Public codes are unchanged and the reason is added diagnostics: every reason
+maps to `WORKER_UNAVAILABLE`, except `model_mismatch`, which maps to
+`WORKER_MODEL_UNSUPPORTED` where that code is returned today. The run-level
+model-selection outcomes `WORKER_MODEL_CONFLICT` and `WORKER_MODEL_REQUIRED`
+(routing and `--worker-model` rules) are decided before admission and are
+unaffected. WC-05 pins this table with tests.
 
 ### 6. Bounded execution and governed delegation
 
@@ -286,22 +344,31 @@ implies the other.
 
 ### 7. Authority and self-certification
 
-- Registration and revocation are operator-only Runtime commands. They are not
-  an agent tool, a controlled action, a connector, a routing or run option, or
-  anything the read-only Coordination Bridge (ADR-0036) exposes.
+- Registration and revocation are operator commands on the Runtime. No
+  Runtime-dispatched worker or agent run, agent tool, controlled action,
+  connector, routing or run option has a path to them, and nothing the read-only
+  Coordination Bridge (ADR-0036) exposes does.
 - A registration follows plan, local approval bound to the plan hash, apply, and
   is audited. A probe run, a live certification and a baseline importer produce
   evidence and a _proposed_ decision; none can approve one. An agent may run the
   probe suite, as it may run any test; what it produces is a proposal that an
   operator must plan and approve.
 - A worker or model cannot supply evidence about itself: evidence is produced by
-  harness code the worker under test does not control.
+  harness code the worker under test does not control, with the limit stated in
+  decision 3.
 - **Limit.** The Runtime is not a boundary against another process of the same
-  user. That process can write the registry directory, or the Runtime home. The
-  protection is that no _Runtime-mediated_ path lets an agent certify itself,
-  and that the manifest chain, digests and re-verification make tampering
-  evident to a later verifier. Tamper-resistance against a hostile same-user
-  process, and signed approvals, are M10 scope and are not claimed.
+  user (ADR-0003 option A, ADR-0014). A same-account process, including an
+  external coding agent that the operator runs, can reach the operator commands
+  over the Runtime socket and can write the registry directory and the Runtime
+  state. Keeping such a process away from registration and approval is an
+  operational rule until M10, not an enforcement, and this ADR does not claim
+  that an agent cannot certify itself under those conditions. What the design
+  does provide is that no Runtime-mediated path exists for a dispatched worker or
+  for tooling the Runtime exposes, and that digests, the retained manifest chain,
+  the recorded last accepted generation, re-verification and the recorded
+  approval authentication class make tampering and approvals evident to a later
+  verifier. Tamper-resistance against a hostile same-user process, signed
+  approvals and unforgeable harness provenance are M10 scope.
 
 ### 8. Probes, live certification, monitoring and recertification
 
@@ -333,38 +400,55 @@ implies the other.
 ### 9. Baseline import and no regression
 
 The Codex combination now allowed (`codex-cli` `0.160.0`, `gpt-5.5`, the current
-configuration) is imported as a `baseline_import` decision whose evidence is of
-kind `historical_manual`, referencing the recorded oracle fixture and the
-documented findings, with the limitations the agent runtime guide already states
-(including that filesystem read confidentiality is unsupported). It reproduces
-today's behavior; it is not presented as a fresh certification, and
-`baseline_import` satisfies a required guarantee only if the import record lists
-that guarantee.
+configuration) is carried as a source-shipped `baseline_import` record whose
+evidence is of kind `historical_manual`, referencing the recorded oracle fixture
+and the documented findings, with the limitations the agent runtime guide
+already states (including that filesystem read confidentiality is unsupported).
+A `baseline_import` record is exempt from the sufficiency table by rule: it is
+valid only from source, is reviewed as code, carries the basis in every
+diagnostic and provenance record, can never be cited by a registered decision,
+and satisfies a required guarantee only if the record lists that guarantee. It
+reproduces today's behavior; it is not presented as a fresh certification, and
+recertifying the combination replaces it with a `certified` decision.
 
 WC-05 introduces the registry in _shadow mode_: the legacy allowlists keep
 deciding, the registry result is computed beside them, and any disagreement is a
 defect found by a differential test over a version × model × feature matrix.
-Cutover happens only when no disagreement remains. Registry data can only make a
-decision stricter than the allowlist after cutover through an operator's
-revocation, never looser without a decision. This ADR and WC-01 change no
-allowlist and no admission rule.
+Cutover happens only when no disagreement remains. After cutover the registry
+can make an admission stricter than the allowlist was only through an operator's
+revocation, and can make it looser only through a new `certified` decision. This
+ADR and WC-01 change no allowlist and no admission rule.
 
 ### 10. The legacy Claude policy is not a certificate
 
-The version floor of the Claude worker is represented as a record of basis
-`legacy_policy`: every guarantee `unverified`, with the flags the adapter passes
-listed as `declared` evidence. It exists so that WC-05 reproduces today's
-behavior, and it is shown as what it is in diagnostics, provenance and the parity
-assessment. The Claude admission rules are not modified by M24 up to WC-06. WC-07
-evaluates each unproven guarantee explicitly and proposes the transition to
-uniform admission; any change of the Claude rules is a separate owner decision
-after it.
+The Claude worker's current admission is represented by one source-shipped
+record of basis `legacy_policy`. It is not a general range feature. It is the
+closed, named predicate `claude-legacy-floor@1`, which holds exactly when
+`worker = claude-code`, `mode = bounded_single_agent`, the reported version
+parses and satisfies the floor and pre-release rule of the current adapter
+(`>= 2.1.259`, no pre-release beyond the floor), the provider is `anthropic` and
+the model matches the adapter's current model-name pattern. The predicate lives
+in source with the baseline records, is changed only by a reviewed change, and
+cannot be created, edited or extended by registry data. Every guarantee of the
+record is `unverified`, with the flags the adapter passes listed as `declared`
+evidence. It is shown as what it is in diagnostics, provenance and the parity
+assessment, and it exists so that WC-05 reproduces today's behavior. The Claude
+admission rules are not modified by M24 up to WC-06. WC-07 evaluates each
+unproven guarantee explicitly and proposes the transition to uniform admission;
+any change of the Claude rules is a separate owner decision after it.
 
-`legacy_policy` is the single permitted exception to the refusal of
-uncertified subjects that require bounded guarantees, and only because of the
-owner's decision D3 (open decision O2 asks to confirm this reading). It
-satisfies the implicit legacy dispatch only: it never satisfies a guarantee that
-a role, stage or pack requests explicitly, and no role does so today.
+`legacy_policy` is the single permitted exception to the refusal of uncertified
+subjects that require bounded guarantees, and only because of the owner's
+decision D3 (open decision O2 asks to confirm this reading). It applies in step 3
+only to _implicit legacy dispatch_: the requirement set is exactly
+`bounded_profile@1` as implied by the mode, with nothing requested by a role,
+stage or pack. When any explicit requirement exists, step 3 does not use the
+record, so `no_matching_audit` or `guarantee_unverified` refuses the run. In step 6 the
+record is deemed to satisfy the implicit `bounded_profile@1` of the mode and
+nothing else; the effective guarantees it reports stay `unverified`, and the
+result carries the basis `legacy_policy`. The exception therefore cannot satisfy
+a required guarantee, cannot apply to another worker or mode, and cannot be
+reached through the registry.
 
 ### 11. Provenance
 
@@ -422,10 +506,10 @@ Provenance never contains registry paths, credentials or raw probe output.
 
 | Id  | Question                                                                                                                                                                                          | Recommendation                                                                                                                                                                          |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| O1  | A required T1 guarantee whose metadata dependency is `unobservable`: admit with disclosure, or refuse                                                                                             | Admit with disclosure for the imported baseline to avoid a regression; WC-03 determines whether the dependency can be observed, and refusal can then be made the rule for new decisions |
+| O1  | A required T1 guarantee whose metadata dependency is `unobservable`: admit with disclosure, or refuse. Until decided, step 5 admits the imported baseline with disclosure                         | Admit with disclosure for the imported baseline to avoid a regression; WC-03 determines whether the dependency can be observed, and refusal can then be made the rule for new decisions |
 | O2  | Confirm that D3 plus the instruction to keep refusing uncertified subjects that require bounded guarantees mean: `legacy_policy` is the one labelled exception, for implicit legacy dispatch only | Confirm                                                                                                                                                                                 |
 | O3  | Approve the evidence sufficiency table (T1 needs scripted adversarial evidence plus drift observation or live confirmation of metadata)                                                           | Approve as the baseline of WC-02                                                                                                                                                        |
-| O4  | Accept `local_operator` approvals until M10, recorded as such                                                                                                                                     | Accept, with the class visible everywhere and a policy hook to require a stronger one later                                                                                             |
+| O4  | Accept `local_operator` approvals until M10, recorded as such, knowing that a same-account process (including an external coding agent) is not distinguished from the operator                    | Accept, with the class visible everywhere, the separation of agents from the approval surface stated as an operational rule, and a policy hook to require a stronger class later        |
 | O5  | Initial guarantee catalogue contents                                                                                                                                                              | Freeze in WC-02 from the documented guarantees, reviewed by the owner                                                                                                                   |
 
 ## Decision gates for WC-02 onward
