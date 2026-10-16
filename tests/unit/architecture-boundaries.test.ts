@@ -123,10 +123,11 @@ test("M16.5 activation: pipeline-run creation reads the resolved configuration f
   ];
   // No other derived view may influence which pipeline, stage, role or
   // policy runs: activation materializes no role, agent or definition.
-  // Any access form counts: `.`, `?.`, `!.`, or destructuring the views.
+  // Any access form counts: `.`, `?.`, `!.`, a quoted bracket key, or
+  // destructuring the views. Aliasing the whole configuration is not detected.
   const viewAccess = (view: string): RegExp =>
     new RegExp(
-      `configuration[!?]?\\.${view}\\b|\\{[^}]*\\b${view}\\b[^}]*\\}\\s*=\\s*(input\\.)?configuration`,
+      `configuration[!?]?\\.${view}\\b|configuration[!?]?\\.?\\[\\s*["'\`]${view}["'\`]\\s*\\]|\\{[^}]*\\b${view}\\b[^}]*\\}\\s*=\\s*(input\\.)?configuration`,
       "u",
     );
   for (const view of [

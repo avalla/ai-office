@@ -5988,8 +5988,8 @@ and project-owned roles that share a local ID are satisfied by one Runtime role;
 no authority is gained, since grants and stage guards are unchanged. The
 manifest revision and the manifest pipeline are read before the run-start
 transaction, as for every run, so a concurrent `office:apply` can race the
-ambiguity check. The resolved closure includes workflows of dependency packs of
-a selected pack. A project with no selected pack refuses an unknown or guidance
+ambiguity check. Workflows of a dependency pack of a selected pack are resolved
+but never started implicitly: only a workflow of a selected pack (or a project-owned one) starts. A project with no selected pack refuses an unknown or guidance
 manifest pipeline before any transaction opens, as it always did.
 
 **Not delivered here.** Execution parity (`a45ddb12`), GP-10C-2 adoption and

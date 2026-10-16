@@ -15,6 +15,7 @@ import { ManagePipelineRuns } from "@ai-office/application/pipeline/manage-pipel
 import { ReadProjectConfiguration } from "@ai-office/application/domain-pack/read-project-configuration.ts";
 import { OfficePipelineNotFoundError } from "@ai-office/application/errors.ts";
 import {
+  PackPipelineUnsupportedError,
   PipelineDefinitionAmbiguousError,
   PipelineRoleUnavailableError,
 } from "@ai-office/application/pipeline-errors.ts";
@@ -486,5 +487,148 @@ describe("pack workflow selection (M16.5 Runtime activation)", () => {
     expect(await h.storage.pipelines.findActiveByTask(taskId, projectId)).toBe(
       null,
     );
+  });
+
+  describe("workflows of a dependency pack", () => {
+    // A pack that only depends on the legal pack: the legal pack is resolved,
+    // but the project never selected it.
+    async function selectOnlyDependent(h: Harness, projectId: string) {
+      const legalBytes = readFileSync(
+        new URL(
+          "../../packages/domain-pack-legal/manifest.json",
+          import.meta.url,
+        ),
+      );
+      const legal = h.catalog.register({
+        bytes: legalBytes,
+        artifactDigest: computeArtifactDigest(legalBytes),
+        provenance: { installerId: "selection", reference: "legal" },
+      });
+      const encoder = new TextEncoder();
+      const draft = {
+        schemaVersion: 1,
+        id: "org.example.dependent",
+        version: "1.0.0",
+        manifestDigest: `sha256:${"0".repeat(64)}`,
+        coreContract: { minInclusive: 1, maxExclusive: 3 },
+        metadata: { name: "dependent", description: "Depends on legal" },
+        dependencies: [
+          {
+            id: legal.id,
+            version: legal.version,
+            manifestDigest: legal.manifestDigest,
+          },
+        ],
+        contributions: Object.fromEntries(
+          contributionKinds.map((kind) => [kind, []]),
+        ),
+      };
+      const bytes = encoder.encode(
+        JSON.stringify({
+          ...draft,
+          manifestDigest: computeManifestDigest(
+            parseDomainPackManifest(encoder.encode(JSON.stringify(draft))),
+          ),
+        }),
+      );
+      const dependent = h.catalog.register({
+        bytes,
+        artifactDigest: computeArtifactDigest(bytes),
+        provenance: { installerId: "selection", reference: "dependent" },
+      });
+      await h.storage.packBindings.replace(projectId, 0, [dependent], now);
+      return { legal, dependent };
+    }
+
+    test("an enforced workflow of an unselected dependency pack is not startable", async () => {
+      const h = harness();
+      const { projectId, taskId } = await seed(h, {
+        pipelines: [delivery],
+        roles: legalRoles,
+        selectLegal: false,
+      });
+      await selectOnlyDependent(h, projectId);
+      const resolved = await h.configuration.read(projectId);
+      // The workflow is resolved and governed by an enforced policy ...
+      expect(resolved.workflows.map((w) => w.workflowId)).toContain(
+        "pack:org.ai-office.legal/workflows/matter-workflow",
+      );
+
+      const attempt = h.manager.start({
+        projectId,
+        taskId,
+        pipelineId: "matter-workflow",
+        principal: localOperatorPrincipal,
+      });
+      // ... yet starting it is refused for the selection, not for roles.
+      await expect(attempt).rejects.toBeInstanceOf(
+        PackPipelineUnsupportedError,
+      );
+      await expect(attempt).rejects.toThrow(/dependency pack/);
+      expect(
+        await h.storage.pipelines.findActiveByTask(taskId, projectId),
+      ).toBe(null);
+      expect(auditPayloads(h)).not.toContain("pipeline.started");
+    });
+
+    test("--source pack does not make a dependency workflow startable either", async () => {
+      const h = harness();
+      const { projectId, taskId } = await seed(h, {
+        pipelines: [delivery],
+        roles: legalRoles,
+        selectLegal: false,
+      });
+      await selectOnlyDependent(h, projectId);
+      await expect(
+        h.manager.start({
+          projectId,
+          taskId,
+          pipelineId: "matter-workflow",
+          source: "pack",
+          principal: localOperatorPrincipal,
+        }),
+      ).rejects.toBeInstanceOf(PackPipelineUnsupportedError);
+    });
+
+    test("a same-ID manifest pipeline still starts without ambiguity", async () => {
+      const h = harness();
+      const { projectId, taskId } = await seed(h, {
+        pipelines: [delivery, manifestMatter],
+        roles: [...legalRoles, "developer"],
+        selectLegal: false,
+      });
+      await selectOnlyDependent(h, projectId);
+      const run = await h.manager.start({
+        projectId,
+        taskId,
+        pipelineId: "matter-workflow",
+        principal: localOperatorPrincipal,
+      });
+      expect(run.snapshot().definition.name).toBe("Manifest matter");
+      expect(run.snapshot().configurationPin).toBeDefined();
+    });
+
+    test("the same workflow starts once its pack is selected explicitly", async () => {
+      const h = harness();
+      const { projectId, taskId } = await seed(h, {
+        pipelines: [delivery],
+        roles: legalRoles,
+        selectLegal: false,
+      });
+      const { legal, dependent } = await selectOnlyDependent(h, projectId);
+      await h.storage.packBindings.replace(
+        projectId,
+        1,
+        [dependent, legal],
+        now,
+      );
+      const run = await h.manager.start({
+        projectId,
+        taskId,
+        pipelineId: "matter-workflow",
+        principal: localOperatorPrincipal,
+      });
+      expect(run.snapshot().definition.name).toBe("Matter review");
+    });
   });
 });

@@ -2,7 +2,7 @@
 
 AI Office is a local-first, auditable multi-agent office for software delivery. It keeps project and governance state under an authoritative Runtime, coordinates agents and pipelines, meters model usage and cost, and routes protected side effects through explicit capability and approval boundaries.
 
-> **Current scope:** AI Office is software-development-first today. M16 has public pack contracts, a host-local catalog and explicit project pack selection. Selected packs do not yet produce an effective Runtime configuration or change execution.
+> **Current scope:** AI Office is software-development-first today. M16 has public pack contracts, a host-local catalog and explicit project pack selection. A project that selected a pack can start a pipeline run from one of that pack's enforced workflows (`pipeline:start`, with `--source` when an ID is ambiguous), and the run pins the resolved pack configuration; projects without a selected pack keep manifest pipelines unchanged. Adopting the development pack, removal blocking and the provider run gate are not delivered yet.
 
 Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Andrea Valla.
 

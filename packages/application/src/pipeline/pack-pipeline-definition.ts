@@ -27,16 +27,40 @@ export function localDefinitionId(stableId: string): string {
 }
 
 /**
- * The resolved workflow whose local ID is `localId`, or `undefined`. Two
- * workflows sharing a local ID cannot be told apart by a pipeline ID, so the
- * lookup refuses rather than choosing one.
+ * Whether a workflow may start a run. A project-owned workflow always may. A
+ * pack-owned workflow may only when its pack is one the project selected: a
+ * pack that is merely resolved as a dependency of a selected pack contributes
+ * definitions but is never started implicitly.
+ */
+function isStartable(
+  configuration: ResolvedProjectConfiguration,
+  workflow: ResolvedWorkflow,
+): boolean {
+  const owner = /^pack:([^/]+)\//.exec(workflow.workflowId)?.[1];
+  if (owner === undefined) return true;
+  return configuration.selectedPacks.some((pack) => pack.id === owner);
+}
+
+function workflowsWithLocalId(
+  configuration: ResolvedProjectConfiguration,
+  localId: string,
+): ResolvedWorkflow[] {
+  return configuration.workflows.filter(
+    (workflow) => localDefinitionId(workflow.workflowId) === localId,
+  );
+}
+
+/**
+ * The startable resolved workflow whose local ID is `localId`, or
+ * `undefined`. Two startable workflows sharing a local ID cannot be told
+ * apart by a pipeline ID, so the lookup refuses rather than choosing one.
  */
 export function findPackWorkflow(
   configuration: ResolvedProjectConfiguration,
   localId: string,
 ): ResolvedWorkflow | undefined {
-  const matches = configuration.workflows.filter(
-    (workflow) => localDefinitionId(workflow.workflowId) === localId,
+  const matches = workflowsWithLocalId(configuration, localId).filter(
+    (workflow) => isStartable(configuration, workflow),
   );
   if (matches.length > 1)
     throw new PackPipelineUnsupportedError(
@@ -44,6 +68,18 @@ export function findPackWorkflow(
       "more than one resolved workflow has this local ID (a manifest pipeline can still be started with --source manifest)",
     );
   return matches[0];
+}
+
+/** True when only a dependency pack's workflow carries this local ID. */
+export function isDependencyOnlyWorkflow(
+  configuration: ResolvedProjectConfiguration,
+  localId: string,
+): boolean {
+  const matches = workflowsWithLocalId(configuration, localId);
+  return (
+    matches.length > 0 &&
+    matches.every((workflow) => !isStartable(configuration, workflow))
+  );
 }
 
 function activePolicy(

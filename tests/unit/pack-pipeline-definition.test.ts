@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   findPackWorkflow,
+  isDependencyOnlyWorkflow,
   localDefinitionId,
   packWorkflowPipeline,
 } from "@ai-office/application/pipeline/pack-pipeline-definition.ts";
@@ -58,8 +59,13 @@ const policy = (
 const configuration = (
   workflows: ResolvedWorkflow[],
   policies: ResolvedPolicy[] = [],
+  selectedPackIds: string[] = ["org.example"],
 ): ResolvedProjectConfiguration =>
-  ({ workflows, policies }) as unknown as ResolvedProjectConfiguration;
+  ({
+    workflows,
+    policies,
+    selectedPacks: selectedPackIds.map((id) => ({ id })),
+  }) as unknown as ResolvedProjectConfiguration;
 
 describe("packWorkflowPipeline", () => {
   test("takes the local ID after the last slash", () => {
@@ -148,5 +154,36 @@ describe("packWorkflowPipeline", () => {
       findPackWorkflow(configuration([first, second]), "case-flow"),
     ).toThrow(PackPipelineUnsupportedError);
     expect(findPackWorkflow(configuration([first]), "missing")).toBeUndefined();
+  });
+
+  test("a workflow of a pack that is not selected is not startable", () => {
+    const w = workflow("case-flow");
+    const dependencyOnly = configuration([w], [], ["org.other"]);
+    expect(findPackWorkflow(dependencyOnly, "case-flow")).toBeUndefined();
+    expect(isDependencyOnlyWorkflow(dependencyOnly, "case-flow")).toBe(true);
+    expect(isDependencyOnlyWorkflow(configuration([w]), "case-flow")).toBe(
+      false,
+    );
+    expect(isDependencyOnlyWorkflow(dependencyOnly, "missing")).toBe(false);
+  });
+
+  test("a dependency workflow neither collides with nor hides a startable one", () => {
+    const dependency = workflow("case-flow", {
+      workflowId: "pack:org.dependency/workflows/case-flow",
+    });
+    const own = workflow("case-flow");
+    const config = configuration([dependency, own]);
+    expect(findPackWorkflow(config, "case-flow")).toBe(own);
+    expect(isDependencyOnlyWorkflow(config, "case-flow")).toBe(false);
+  });
+
+  test("a project-owned workflow is always startable", () => {
+    const own = workflow("case-flow", {
+      workflowId: "project:workflows/case-flow",
+      origin: "project_owned",
+    });
+    expect(findPackWorkflow(configuration([own], [], []), "case-flow")).toBe(
+      own,
+    );
   });
 });
