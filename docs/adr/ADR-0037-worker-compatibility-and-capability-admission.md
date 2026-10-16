@@ -309,6 +309,10 @@ Steps, in this order, each deterministic:
    `platform_mismatch`, `mode_mismatch`) and expected and observed values. For
    the predicate the dimensions are its named clauses: the floor clause is
    reported as `version_mismatch`, the model-name clause as `model_mismatch`.
+   Once a record matches, the run's persisted parameters must lie within the
+   parameter scope of _that_ record (step 2 only established that some record
+   names the model); otherwise refuse `model_mismatch`. Parameters are not part
+   of the subject, so a scope never extends to another subject's runs.
 5. Expiry: where the matched decision opted in to expiry and has expired, refuse
    with `decision_expired`.
 6. Drift. For each required guarantee, every metadata dependency is compared
@@ -430,6 +434,8 @@ configuration) is carried as a source-shipped `baseline_import` record whose
 evidence is of kind `historical_manual`, referencing the recorded oracle fixture
 and the documented findings, with the limitations the agent runtime guide
 already states (including that filesystem read confidentiality is unsupported).
+Its parameter scope is the one the adapter enforces today: no output-token cap,
+and a reasoning effort, if any, in `low`, `medium`, `high` or `xhigh`.
 A `baseline_import` record is exempt from the sufficiency table by rule: it is
 valid only from source, is reviewed as code, carries the basis in every
 diagnostic and provenance record, can never be cited by a registered decision,
