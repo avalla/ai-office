@@ -11,11 +11,7 @@
 
 import { describe, expect, test } from "vitest";
 import type { Agent } from "@ai-office/domain/agent/agent.ts";
-import type { AgentExecutionProvenance } from "@ai-office/domain/agent/agent-execution.ts";
-import {
-  AgentRun,
-  type AgentRunStatus,
-} from "@ai-office/domain/agent/agent-run.ts";
+import { AgentRun } from "@ai-office/domain/agent/agent-run.ts";
 import type { Role } from "@ai-office/domain/agent/role.ts";
 import type { AgentExecutionResult } from "@ai-office/agent-runtime/executor.ts";
 import type { AuditEvent } from "@ai-office/domain/event/audit-event.ts";
