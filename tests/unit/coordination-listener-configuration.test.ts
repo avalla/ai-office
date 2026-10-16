@@ -122,6 +122,32 @@ describe("coordination listener configuration file", () => {
     );
   });
 
+  test("a FIFO is refused without blocking Runtime start", () => {
+    const directory = home();
+    const path = join(directory, "coordination-listener.json");
+    expect(Bun.spawnSync(["mkfifo", path]).exitCode).toBe(0);
+    // A blocking open would wait forever for a writer; run it in a child so
+    // a regression fails on the deadline instead of hanging the suite.
+    const child = Bun.spawnSync(
+      [
+        process.execPath,
+        "-e",
+        `const { loadCoordinationListenerConfiguration } = await import(${JSON.stringify(
+          new URL(
+            "../../apps/daemon/src/coordination-listener-configuration-file.ts",
+            import.meta.url,
+          ).pathname,
+        )}); console.log(JSON.stringify(loadCoordinationListenerConfiguration(${JSON.stringify(directory)})));`,
+      ],
+      { timeout: 10_000 },
+    );
+    expect(child.exitCode).toBe(0);
+    expect(JSON.parse(child.stdout.toString().trim())).toEqual({
+      state: "misconfigured",
+      reason: "the configuration is not a regular file",
+    });
+  });
+
   test("a file other users can write is misconfigured", () => {
     const directory = home();
     const path = join(directory, "coordination-listener.json");

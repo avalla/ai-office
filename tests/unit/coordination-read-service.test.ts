@@ -222,6 +222,50 @@ describe("coordination read service", () => {
     expect(JSON.stringify(page)).not.toContain("kkkk");
   });
 
+  test("the exposed identity cannot confirm a scrubbed secret or a cut title tail", async () => {
+    const withTitle = (title: string) =>
+      service(() => ({
+        ...state(),
+        milestones: [
+          { id: "m1", title, status: "active", createdAt: new Date(0) },
+        ],
+      }));
+    const secret = (value: string) =>
+      `Deploy ${["gh", "p_", value].join("")}`;
+    const tail = (value: string) => `${"x".repeat(256)}${value}`;
+    const pairs: [string, string][] = [
+      [secret("a".repeat(36)), secret("b".repeat(36))],
+      [tail("guess-one"), tail("guess-two")],
+    ];
+    for (const [left, right] of pairs) {
+      for (const operation of ["status", "milestones", "tasks"]) {
+        const one = await withTitle(left).execute({ projectId: "p", operation });
+        const two = await withTitle(right).execute({
+          projectId: "p",
+          operation,
+        });
+        // Byte-identical: neither snapshotId nor pageDigest differs.
+        expect(JSON.stringify(one)).toBe(JSON.stringify(two));
+      }
+    }
+    // A change that is visible in the exposed projection changes it.
+    const visible = await withTitle("Milestone two").execute({
+      projectId: "p",
+      operation: "status",
+    });
+    const base = await service().execute({ projectId: "p", operation: "status" });
+    expect(visible.snapshotId).not.toBe(base.snapshotId);
+    // Without T, a title change is not visible and the identity holds.
+    const onlyP = { kind: "exposure" as const, projects: new Map([["p", ["P"] as const]]) };
+    expect(
+      (await withTitle("Milestone two").execute({ projectId: "p", operation: "status" }, onlyP))
+        .snapshotId,
+    ).toBe(
+      (await service().execute({ projectId: "p", operation: "status" }, onlyP))
+        .snapshotId,
+    );
+  });
+
   test("a caller cannot receive a class that is not allowed", async () => {
     const reads = service();
     const onlyP = {

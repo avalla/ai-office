@@ -31,7 +31,12 @@ export function loadCoordinationListenerConfiguration(
   const path = join(runtimeHome, coordinationListenerConfigurationFile);
   let descriptor: number;
   try {
-    descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    // O_NONBLOCK: a FIFO at the path must not block Runtime start before the
+    // regular-file check refuses it; it does not change regular-file reads.
+    descriptor = openSync(
+      path,
+      constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+    );
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT")

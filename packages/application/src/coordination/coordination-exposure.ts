@@ -97,7 +97,7 @@ const credentialPatterns: readonly RegExp[] = [
   /npm_[A-Za-z0-9]{36}/g,
   /[sr]k_(?:live|test)_[A-Za-z0-9]{16,}/g,
   /sk-[A-Za-z0-9_-]{20,}/g,
-  /xox[abposr]-[A-Za-z0-9-]{10,}/g,
+  /xox[a-z]-[A-Za-z0-9-]{10,}/g,
   /(?:AKIA|ASIA)[0-9A-Z]{16}/g,
   /AIza[0-9A-Za-z_-]{35}/g,
   /ya29\.[A-Za-z0-9_-]{20,}/g,
@@ -106,17 +106,27 @@ const credentialPatterns: readonly RegExp[] = [
   // Credentials in URL userinfo: scheme://user:password@host.
   /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/gi,
   // Assignments such as password=..., api_key: ...
-  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|aws_secret_access_key|client[_-]?secret)\s*[:=]\s*\S{8,}/gi,
+  // A quoted value is redacted up to its closing quote; a JSON-style quoted
+  // key is matched too.
+  /\b(?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|aws_secret_access_key|client[_-]?secret)["']?\s*[:=]\s*(?:"[^"]{6,}"|'[^']{6,}'|[^\s"']{8,})/gi,
 ];
 
 /** Zero-width and format characters that could split a token past a pattern. */
-const invisibleCharacters = /[\u00AD\u200B-\u200F\u2060-\u2064\uFEFF]/g;
+const invisibleCharacters =
+  // U+034F is a combining mark, so it stays outside the character class.
+  /\u034F|[\u00AD\u180E\u200B-\u200F\u2028\u2029\u2060-\u2064\uFEFF]/g;
 
+/**
+ * Matching runs on a copy without invisible characters, so a token split by
+ * one is still caught. Text with no credential is returned unchanged, so
+ * joiners and direction marks of ordinary titles survive.
+ */
 export function scrubCredentials(value: string): string {
-  let result = value.replace(invisibleCharacters, "");
+  const visible = value.replace(invisibleCharacters, "");
+  let result = visible;
   for (const pattern of credentialPatterns)
     result = result.replace(pattern, redactionMarker);
-  return result;
+  return result === visible ? value : result;
 }
 
 /**
@@ -162,12 +172,14 @@ export function exposeItem(
     const value = values[field];
     if (value === undefined) continue;
     if (exposure.text === true && typeof value === "string") {
-      // Scrubbing cost stays bounded whatever the stored length.
-      const points = Array.from(value);
+      // The patterns only ever scan a bounded prefix of the stored text.
+      // At most two UTF-16 units per code point, so this slice bounds the
+      // conversion as well as the scan.
+      const bound = coordinationExposureLimits.maxScannedTextLength;
       const scanned =
-        points.length > coordinationExposureLimits.maxScannedTextLength
-          ? points
-              .slice(0, coordinationExposureLimits.maxScannedTextLength)
+        value.length > bound
+          ? Array.from(value.slice(0, bound * 2))
+              .slice(0, bound)
               .join("")
           : value;
       const bounded = truncate(scrubCredentials(scanned));

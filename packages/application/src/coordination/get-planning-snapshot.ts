@@ -101,6 +101,16 @@ export class GetPlanningSnapshot {
   ) {}
 
   async execute(query: PlanningSnapshotQuery): Promise<PlanningSnapshotPage> {
+    return (await this.executeWithSnapshot(query)).page;
+  }
+
+  /**
+   * The page together with the complete snapshot it was cut from, from one
+   * read, for callers that also need the whole scope.
+   */
+  async executeWithSnapshot(
+    query: PlanningSnapshotQuery,
+  ): Promise<{ snapshot: PlanningSnapshot; page: PlanningSnapshotPage }> {
     const collection = query.collection ?? "tasks";
     if (!isCollection(collection))
       throw new PlanningSnapshotQueryError(
@@ -121,7 +131,10 @@ export class GetPlanningSnapshot {
       planningSnapshotLimits.maxLimit,
     );
     const snapshot = await this.readSnapshot(query);
-    return planningSnapshotPage(snapshot, collection, { offset, limit });
+    return {
+      snapshot,
+      page: planningSnapshotPage(snapshot, collection, { offset, limit }),
+    };
   }
 
   /** The complete snapshot of one validated scope, before pagination. */

@@ -72,10 +72,20 @@ const busy = (message: string) =>
 
 export class CoordinationQueryApi {
   private inFlight = 0;
+  private closed = false;
 
   constructor(private readonly options: CoordinationQueryApiOptions) {}
 
+  /**
+   * Called when the host stops: new reads are refused, and a read still
+   * retrying past the stop (its storage now closed) is not logged as a fault.
+   */
+  close(): void {
+    this.closed = true;
+  }
+
   async handle(request: Request): Promise<Response> {
+    if (this.closed) return busy("The Runtime is stopping");
     if (request.method !== "GET")
       return errorResponse(
         "METHOD_NOT_ALLOWED",
@@ -143,7 +153,8 @@ export class CoordinationQueryApi {
         return busy("A write is in progress; retry");
       // Internal failures never leak a message or a stack trace to the
       // client; the operator log names only the error type.
-      console.error(
+      if (!this.closed)
+        console.error(
         `Coordination listener read failed: ${error instanceof Error ? error.name : "unknown error"}`,
       );
       return errorResponse("INTERNAL_ERROR", "Query execution failed", 500);

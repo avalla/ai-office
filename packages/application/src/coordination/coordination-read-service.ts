@@ -25,6 +25,7 @@ import {
 import {
   planningSnapshotPage,
   type PlanningDataClass,
+  type PlanningSnapshot,
   type PlanningSnapshotCollection,
   type PlanningSnapshotScope,
   type planningSnapshotSchemaVersion,
@@ -153,6 +154,58 @@ function sha256(value: unknown): string {
 
 const ownerClasses: readonly PlanningDataClass[] = ["P", "T"];
 
+const exposedCollections = [
+  "milestones",
+  "tasks",
+  "requirements",
+  "dependencies",
+  "blockers",
+  "runnable",
+] as const satisfies readonly CoordinationExposedCollection[];
+
+/**
+ * The whole scope as it may leave the Runtime, and its identity. The
+ * coordination `snapshotId` is the digest of this exposed projection, not
+ * the CB-02 identity over stored values: a scrubbed credential or the cut
+ * tail of a title must not change an identity a caller can see, or the
+ * identity would confirm a guessed secret.
+ */
+function exposedProjection(
+  snapshot: PlanningSnapshot,
+  counts: Record<PlanningSnapshotCollection, number>,
+): {
+  snapshotId: string;
+  collections: Record<CoordinationExposedCollection, CoordinationExposedItem[]>;
+} {
+  const collections = {
+    milestones: snapshot.authoritative.milestones,
+    tasks: snapshot.authoritative.tasks,
+    requirements: snapshot.authoritative.requirements,
+    dependencies: snapshot.authoritative.dependencies,
+    blockers: snapshot.derived.blockers,
+    runnable: snapshot.derived.runnable,
+  } satisfies Record<CoordinationExposedCollection, readonly object[]>;
+  const exposed = Object.fromEntries(
+    exposedCollections.map((name) => [
+      name,
+      collections[name].map((item) =>
+        exposeItem(name, item, snapshot.classes),
+      ),
+    ]),
+  ) as Record<CoordinationExposedCollection, CoordinationExposedItem[]>;
+  return {
+    snapshotId: `snapshot:sha256:${sha256({
+      coordinationApiVersion,
+      schemaVersion: snapshot.schemaVersion,
+      scope: snapshot.scope,
+      classes: snapshot.classes,
+      counts,
+      collections: exposed,
+    })}`,
+    collections: exposed,
+  };
+}
+
 export class CoordinationReadService {
   constructor(private readonly snapshots: GetPlanningSnapshot) {}
 
@@ -217,7 +270,7 @@ export class CoordinationReadService {
       coordinationApiVersion,
       operation: "status",
       schemaVersion: snapshot.schemaVersion,
-      snapshotId: snapshot.snapshotId,
+      snapshotId: exposedProjection(snapshot, counts).snapshotId,
       scope: snapshot.scope,
       classes: snapshot.classes,
       counts,
@@ -230,7 +283,7 @@ export class CoordinationReadService {
     collection: CoordinationExposedCollection,
     classes: PlanningDataClass[],
   ): Promise<CoordinationCollectionResponse> {
-    const page = await this.snapshots.execute({
+    const { snapshot, page } = await this.snapshots.executeWithSnapshot({
       projectId: query.projectId,
       milestoneId: query.milestoneId,
       collection,
@@ -238,11 +291,12 @@ export class CoordinationReadService {
       limit: query.limit,
       classes,
     });
+    const exposed = exposedProjection(snapshot, page.counts);
     const header = {
       coordinationApiVersion,
       operation: collection,
       schemaVersion: page.schemaVersion,
-      snapshotId: page.snapshotId,
+      snapshotId: exposed.snapshotId,
       scope: page.scope,
       classes: page.classes,
       counts: page.counts,
@@ -250,8 +304,9 @@ export class CoordinationReadService {
       section: page.section,
       page: page.page,
     };
-    const items = page.items.map((item) =>
-      exposeItem(collection, item, page.classes),
+    const items = exposed.collections[collection].slice(
+      page.page.offset,
+      page.page.offset + page.items.length,
     );
     return {
       ...header,

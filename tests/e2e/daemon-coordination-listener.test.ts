@@ -589,6 +589,37 @@ describe("coordination listener", () => {
       foreign.kill("SIGKILL");
       await foreign.exited;
     }
+    rmSync(where.coordinationSocket, { force: true });
+
+    // A live server that accepts connections but never answers (another
+    // protocol, or just slow) is inconclusive, not stale: left alone too.
+    const silent = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `require("node:net").createServer(() => {}).listen(${JSON.stringify(where.coordinationSocket)}, () => console.log("ready")); setInterval(() => {}, 1000);`,
+      ],
+      { stdout: "pipe" },
+    );
+    // An inode number can be reused by a replacement file, so the evidence is
+    // the host's explicit refusal to start the listener.
+    const silentErrors = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    try {
+      await silent.stdout.getReader().read();
+      await withRuntime(where, async ({ run }) => {
+        await run(["task:list", "--project", projectId]);
+      });
+      expect(silentErrors).toHaveBeenCalledWith(
+        "Coordination listener could not start; it stays disabled until the Runtime restarts.",
+      );
+      expect(statSync(where.coordinationSocket).isSocket()).toBe(true);
+    } finally {
+      silentErrors.mockRestore();
+      silent.kill("SIGKILL");
+      await silent.exited;
+    }
   });
 
   test("replaces a stale socket but never another file at the socket path", async () => {

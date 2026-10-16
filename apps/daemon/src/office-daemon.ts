@@ -1,4 +1,5 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
+import { createConnection } from "node:net";
 import { dirname, resolve } from "node:path";
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import {
@@ -50,6 +51,8 @@ export interface PersistentRuntimeHostOptions {
 export interface CoordinationListener {
   socketPath: string;
   handle(request: Request): Promise<Response>;
+  /** Refuses further work; called before the listener stops. */
+  close(): void;
 }
 
 function json(value: unknown, status = 200): Response {
@@ -118,6 +121,7 @@ export class PersistentRuntimeHost {
           await this.options.onStopping?.();
           // Reads hold no stream or state, so in-flight ones are not awaited:
           // a slow client cannot delay the Runtime stop.
+          this.options.coordinationListener?.close();
           await coordinationServer?.stop(true);
           await server.stop(false);
           await this.options.events.execute({
@@ -384,22 +388,27 @@ export class PersistentRuntimeHost {
   }
 
   /**
-   * Removes a stale coordination socket. Any HTTP answer, whatever its
-   * status, proves something is serving there, so the file is left alone.
+   * Removes a stale coordination socket. Only a refused connection proves
+   * nothing listens there; an accepted connection (whatever the protocol), a
+   * timeout or any other error leaves the file alone and the listener closed.
    */
   private async prepareCoordinationSocket(socketPath: string): Promise<void> {
     if (!existsSync(socketPath)) return;
-    let answered = false;
-    try {
-      await fetch("http://localhost/", {
-        unix: socketPath,
-        signal: AbortSignal.timeout(500),
-      });
-      answered = true;
-    } catch {
-      // Connection refused or timed out: nothing is serving the file.
-    }
-    if (answered) throw new RuntimeHostAlreadyRunningError(socketPath);
+    const outcome = await new Promise<"refused" | "other">((resolve) => {
+      const connection = createConnection(socketPath);
+      const settle = (value: "refused" | "other") => {
+        clearTimeout(timer);
+        connection.destroy();
+        resolve(value);
+      };
+      const timer = setTimeout(() => settle("other"), 500);
+      connection.once("connect", () => settle("other"));
+      connection.once("error", (error: NodeJS.ErrnoException) =>
+        settle(error.code === "ECONNREFUSED" ? "refused" : "other"),
+      );
+    });
+    if (outcome !== "refused")
+      throw new RuntimeHostAlreadyRunningError(socketPath);
     this.removeSocket(socketPath);
   }
 

@@ -88,6 +88,28 @@ describe("coordination query API transport", () => {
     expect((await read(target)).status).toBe(200);
   });
 
+  test("after close, reads are refused and an interrupted read is not logged", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      let fail!: (error: Error) => void;
+      const pending = new Promise<never>((_, reject) => (fail = reject));
+      const target = api(() => pending);
+      const interrupted = read(target);
+      target.close();
+      const refused = await read(target);
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toMatchObject({
+        error: { code: "RUNTIME_BUSY", message: "The Runtime is stopping" },
+      });
+      // The storage closed under the read: a 500, but no operator fault log.
+      fail(new Error("database closed"));
+      expect((await interrupted).status).toBe(500);
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   test("a failed read releases its in-flight slot", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     try {

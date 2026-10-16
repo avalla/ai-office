@@ -156,6 +156,40 @@ describe("offline runtime purge CLI", () => {
     );
   });
 
+  test("refuses to purge while a coordination listener still answers without the main socket", async () => {
+    const root = temporaryRoot("ai-office-purge-live-");
+    const state = join(root, ".ai-office");
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, "project.sqlite"), "authoritative state");
+    const socket = join(state, "coordination.sock");
+    const holder = Bun.spawn(
+      [
+        process.execPath,
+        "-e",
+        `Bun.serve({ unix: ${JSON.stringify(socket)}, fetch: () => new Response("") }); console.log("ready"); setInterval(() => {}, 1000);`,
+      ],
+      { stdout: "pipe" },
+    );
+    try {
+      await holder.stdout.getReader().read();
+      const output = captureIo();
+      expect(
+        await runDaemonCli(["runtime:purge"], {
+          projectRoot: root,
+          io: output.io,
+        }),
+      ).toBe(1);
+      expect(output.stderr.join("\n")).toContain(
+        "its coordination listener socket is still accepting connections",
+      );
+      expect(existsSync(join(state, "project.sqlite"))).toBe(true);
+      expect(existsSync(socket)).toBe(true);
+    } finally {
+      holder.kill("SIGKILL");
+      await holder.exited;
+    }
+  });
+
   test("rejects stale approval when runtime state changes after planning", async () => {
     const root = temporaryRoot("ai-office-runtime-purge-stale-");
     const state = join(root, ".ai-office");

@@ -235,6 +235,40 @@ describe("credential scrubber", () => {
     expect(scrubbed).toBe(`before ${redactionMarker} after`);
   });
 
+  test("redacts JSON-style and quoted secret values whole", () => {
+    expect(
+      scrubCredentials(['config {"pass', 'word":"hunter2hunter2"} ok'].join("")),
+    ).toBe(`config {"${redactionMarker}} ok`);
+    expect(
+      scrubCredentials(['pass', 'word: "correct horse battery" done'].join("")),
+    ).toBe(`${redactionMarker} done`);
+    expect(scrubCredentials(["xo", "xe-", "1".repeat(20)].join(""))).toBe(
+      redactionMarker,
+    );
+    expect(
+      scrubCredentials(["gh", "p_", "r".repeat(10), "͏", "r".repeat(26)].join("")),
+    ).toBe(redactionMarker);
+  });
+
+  test("bounds the code-point conversion of huge text", () => {
+    const item = exposeItem(
+      "milestones",
+      { milestoneId: "m", title: "😀".repeat(500_000), status: "active" },
+      ["P", "T"],
+    );
+    expect(Array.from(item.title as string)).toHaveLength(256);
+    expect(item.truncatedFields).toEqual(["title"]);
+  });
+
+  test("keeps joiners and direction marks of text without a credential", () => {
+    for (const text of [
+      "Family 👨‍👩‍👧 offsite",
+      "Arabic title ‏مرحبا‏",
+      "Soft­hyphen",
+    ])
+      expect(scrubCredentials(text)).toBe(text);
+  });
+
   test("redacts URL credentials and keeps the host", () => {
     expect(
       scrubCredentials(

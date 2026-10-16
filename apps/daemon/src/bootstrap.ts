@@ -550,6 +550,7 @@ export async function bootstrap(
               options.coordinationSocketPath ??
               join(runtimePaths.runtimeHome, "coordination.sock"),
             handle: (request: Request) => coordinationApi.handle(request),
+            close: () => coordinationApi.close(),
           }
         : undefined;
 
