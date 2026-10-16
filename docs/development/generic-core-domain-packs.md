@@ -5585,16 +5585,20 @@ Limits and follow-ups, none of them changed here:
 The owner approved this on 2026-10-06. It is a planning record: it changes
 which work the M16 exit requires and delivers no code.
 
-**Decision.** M16 exits at the definition and contract layer plus reference
-fixtures. Work that needs the Runtime to execute from a pack, or that needs
-the M11.6 Phase B artifact contract, is planned for the successor milestone
-**M16.5 — Domain Pack Runtime Activation** (see the [roadmap](roadmap.md)).
+**Decision as recorded on 2026-10-06.** M16 exits at the definition and
+contract layer plus reference fixtures. At that time, both Runtime execution
+from packs and work needing the M11.6 Phase B artifact contract were assigned
+to the successor **M16.5 — Domain Pack Runtime Activation** milestone.
+**Superseded in part on 2026-10-15:** GP-14B moved wholly to M11.6 with its
+Phase B dependency. M16.5 retains activation and the ordered follow-ups below,
+without that dependency (see the [roadmap](roadmap.md)).
 
-**Product claim.** After M16, Domain Packs are a definition, customization
-and upgrade layer with reference fixtures. The Runtime does not yet execute
-from a pack: pipeline runs are still created from the OfficeManifest, no run
-pins a pack configuration, the production catalog holds no pack and no
-project has adopted the development pack.
+**Product claim at the 2026-10-06 decision.** M16 delivered a definition,
+customization and upgrade layer with reference fixtures. Runs still came
+from the OfficeManifest without pack pins; the production catalog held no
+pack and no project had adopted the development pack. PR #168 subsequently
+delivered run pinning. Later M16.5 activation status is recorded in the
+addenda below and the roadmap.
 
 **Why.** The points below are the rationale recorded with the decision.
 
