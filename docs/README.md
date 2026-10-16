@@ -59,6 +59,15 @@ AI Office keeps different kinds of documentation separate so current product tru
   [architecture](architecture/coordination-bridge.md) and
   [protocol v1](development/coordination-protocol.md): accepted M23 design
   baseline; not implemented, and not current architecture until delivered.
+- [M24 worker compatibility and capability admission plan](development/worker-compatibility-admission.md)
+  and [proposed ADR-0037](adr/ADR-0037-worker-compatibility-and-capability-admission.md):
+  planned gap analysis and contract for replacing the static worker version and
+  model allowlists with exactly-bound subjects, a four-state guarantee model,
+  evidence kept apart from owner certification decisions, a host-local
+  content-addressed revocable registry, one fail-closed admission function with
+  typed diagnostics, offline probes, authorized live certification and release
+  monitoring that enables nothing; proposed decision gate, not accepted current
+  architecture; nothing implemented.
 - [Professional-work verticals](development/professional-work-verticals.md):
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and
