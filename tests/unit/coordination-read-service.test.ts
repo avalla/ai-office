@@ -267,7 +267,8 @@ describe("coordination read service", () => {
   });
 
   test("requirements are ordered by their exposed key, not the stored one", async () => {
-    const token = (fill: string) => ["gh", "p_", fill.repeat(36)].join("");
+    const below = ["AKIA", "Q".repeat(16)].join("");
+    const above = ["gh", "p_", "z".repeat(36)].join("");
     const withKey = (key: string) =>
       service(() => ({
         ...state(),
@@ -278,8 +279,9 @@ describe("coordination read service", () => {
       }));
     // Stored keys sort on opposite sides of "R-2"; exposed, both read
     // "[redacted]", so the order and every byte must match.
-    const low = await withKey(token("A")).execute({ projectId: "p", operation: "requirements" });
-    const high = await withKey(token("z")).execute({ projectId: "p", operation: "requirements" });
+    expect(below < "R-2" && above > "R-2").toBe(true);
+    const low = await withKey(below).execute({ projectId: "p", operation: "requirements" });
+    const high = await withKey(above).execute({ projectId: "p", operation: "requirements" });
     expect(JSON.stringify(low)).toBe(JSON.stringify(high));
     expect(
       (low as CoordinationCollectionResponse).items.map((item) => item.requirementId),
