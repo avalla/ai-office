@@ -105,7 +105,7 @@ project that selected a pack: the workflow's stages and roles come from the
 resolved configuration, and approval, independent approval, separation of
 agents and stage operations come only from its single active enforced policy
 (GP-25). A workflow of a pack that is only a dependency of a selected pack is
-never started implicitly, a workflow without an active enforced policy is
+never startable, with or without `--source pack`, a workflow without an active enforced policy is
 refused as guidance, and every stage role must already exist in the Runtime:
 activation materializes no role or agent. A run of a project with a selected
 pack, from a pack workflow or a manifest pipeline, pins the resolved

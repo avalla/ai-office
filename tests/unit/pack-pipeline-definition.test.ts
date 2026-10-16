@@ -177,6 +177,25 @@ describe("packWorkflowPipeline", () => {
     expect(isDependencyOnlyWorkflow(config, "case-flow")).toBe(false);
   });
 
+  test("a customized workflow follows its pack; an unreadable pack owner fails closed", () => {
+    const customized = workflow("case-flow", { customization: "replace" });
+    expect(findPackWorkflow(configuration([customized]), "case-flow")).toBe(
+      customized,
+    );
+    expect(
+      findPackWorkflow(
+        configuration([customized], [], ["org.other"]),
+        "case-flow",
+      ),
+    ).toBeUndefined();
+    const malformed = workflow("case-flow", {
+      workflowId: "pack:/workflows/x",
+    });
+    expect(isDependencyOnlyWorkflow(configuration([malformed]), "x")).toBe(
+      true,
+    );
+  });
+
   test("a project-owned workflow is always startable", () => {
     const own = workflow("case-flow", {
       workflowId: "project:workflows/case-flow",

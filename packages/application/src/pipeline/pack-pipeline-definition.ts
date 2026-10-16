@@ -30,14 +30,16 @@ export function localDefinitionId(stableId: string): string {
  * Whether a workflow may start a run. A project-owned workflow always may. A
  * pack-owned workflow may only when its pack is one the project selected: a
  * pack that is merely resolved as a dependency of a selected pack contributes
- * definitions but is never started implicitly.
+ * definitions but is never startable, with or without `--source pack`.
  */
 function isStartable(
   configuration: ResolvedProjectConfiguration,
   workflow: ResolvedWorkflow,
 ): boolean {
+  if (workflow.origin !== "pack_owned") return true;
   const owner = /^pack:([^/]+)\//.exec(workflow.workflowId)?.[1];
-  if (owner === undefined) return true;
+  // A pack-owned workflow whose owner cannot be read fails closed.
+  if (owner === undefined) return false;
   return configuration.selectedPacks.some((pack) => pack.id === owner);
 }
 
