@@ -196,6 +196,72 @@ describe("planning snapshot over SQLite", () => {
     expect(after.counts.dependencies).toBe(1);
   });
 
+  test("never reads another project's milestones, requirements, links or edges", async () => {
+    const f = await fixture();
+    await f.project("p");
+    await f.project("other");
+    const own = await f.governance.createMilestone({
+      projectId: "p",
+      title: "Own",
+    });
+    await f.task("p", "a");
+    const foreignMilestone = await f.governance.createMilestone({
+      projectId: "other",
+      title: "Foreign",
+    });
+    const foreignRequirement = await f.governance.createRequirement({
+      projectId: "other",
+      key: "R-FOREIGN",
+      title: "Foreign req",
+      description: "foreign",
+      milestoneId: foreignMilestone,
+    });
+    await f.task("other", "x");
+    await f.task("other", "y");
+    await f.link("other", "x", foreignRequirement);
+    await f.depend("other", "y", "x");
+
+    const collections = [
+      "milestones",
+      "tasks",
+      "requirements",
+      "dependencies",
+      "runnable",
+      "active",
+      "blockers",
+      "decisions",
+      "inconsistencies",
+    ];
+    const pages = await Promise.all(
+      collections.map((collection) =>
+        f.service.execute({ projectId: "p", collection }),
+      ),
+    );
+    const serialized = JSON.stringify(pages);
+    for (const id of [
+      foreignMilestone,
+      foreignRequirement,
+      '"x"',
+      '"y"',
+      "R-FOREIGN",
+    ])
+      expect(serialized).not.toContain(id);
+    expect(pages[0]!.counts).toEqual({
+      milestones: 1,
+      tasks: 1,
+      requirements: 0,
+      dependencies: 0,
+      runnable: 1,
+      active: 0,
+      blockers: 0,
+      decisions: 0,
+      inconsistencies: 0,
+    });
+    expect(pages[0]!.items).toEqual([
+      { milestoneId: own, title: "Own", status: "planned" },
+    ]);
+  });
+
   test("reports an unknown project or a milestone of another project as not found", async () => {
     const f = await fixture();
     await f.project("p");

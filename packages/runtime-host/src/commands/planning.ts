@@ -17,7 +17,10 @@ function windowOption(
   return Number(value);
 }
 
-/** Read-only planning read model (CB-02). Writes nothing, not even audit. */
+/**
+ * Read-only planning read model (CB-02). Appends no planning or domain audit;
+ * the host still records its per-command envelope, as for every command.
+ */
 export async function handlePlanningCommand(
   command: string,
   args: string[],

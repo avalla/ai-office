@@ -31,17 +31,28 @@ export class SqlitePlanningReadRepository implements PlanningReadRepository {
         projectId,
         milestones: this.database
           .query<
-            { id: string; title: string; status: MilestoneStatus },
+            {
+              id: string;
+              title: string;
+              status: MilestoneStatus;
+              created_at: string;
+            },
             [string]
           >(
             `SELECT id, title,
-                    CASE WHEN archived_at IS NOT NULL THEN 'archived' ELSE status END AS status
+                    CASE WHEN archived_at IS NOT NULL THEN 'archived' ELSE status END AS status,
+                    created_at
              FROM milestone
              WHERE project_id = ?
              ORDER BY created_at, id`,
           )
           .all(projectId)
-          .map((row) => ({ id: row.id, title: row.title, status: row.status })),
+          .map((row) => ({
+            id: row.id,
+            title: row.title,
+            status: row.status,
+            createdAt: new Date(row.created_at),
+          })),
         tasks: this.database
           .query<
             { id: string; title: string; status: TaskStatus; priority: number },

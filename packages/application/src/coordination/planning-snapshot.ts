@@ -77,7 +77,10 @@ export interface PlanningTask {
   /** The recorded `task.status`; operational state is not planning state. */
   status: TaskStatus;
   priority: number;
-  /** Milestones reached through linked requirements. */
+  /**
+   * Milestones reached through linked requirements. Like `requirementIds`
+   * and `prerequisiteIds`, it may name items outside a milestone scope.
+   */
   milestoneIds: string[];
   requirementIds: string[];
   /** Direct prerequisites, whether or not they are inside the scope. */
@@ -98,7 +101,12 @@ export interface PlanningDependency {
   dependsOnTaskId: string;
 }
 
-/** A task whose work can start now: not started and admitted by its prerequisites. */
+/**
+ * A task whose work can start now: not started (`pending` or `assigned`) and
+ * admitted by the prerequisite start rule. Narrower than
+ * `task:readiness`'s `runnable`, which also holds for `running` and
+ * `waiting_review` tasks; those are listed under `active` here.
+ */
 export interface PlanningRunnableTask {
   taskId: string;
   status: TaskStatus;
@@ -132,7 +140,10 @@ export interface PlanningDecision {
 }
 
 export type PlanningInconsistencyCode =
-  /** Not started while every linked requirement is already terminal. */
+  /**
+   * Not started while every linked requirement is already terminal: the
+   * same rule as the task board's `contradictsRequirements`.
+   */
   | "TASK_CONTRADICTS_REQUIREMENTS"
   /** Completed while a prerequisite is not completed. */
   | "COMPLETED_WITH_INCOMPLETE_PREREQUISITE"
@@ -280,10 +291,17 @@ export function projectPlanningSnapshot(
     scope.milestoneId === null ||
     (milestonesOf.get(taskId) ?? []).includes(scope.milestoneId);
   const scopedTasks = tasks.filter((task) => inScopeTask(task.id));
-  const scopedMilestones = state.milestones.filter(
-    (milestone) =>
-      scope.milestoneId === null || milestone.id === scope.milestoneId,
-  );
+  // Roadmap order: creation time, then id, whatever order the adapter used.
+  const scopedMilestones = state.milestones
+    .filter(
+      (milestone) =>
+        scope.milestoneId === null || milestone.id === scope.milestoneId,
+    )
+    .sort(
+      (a, b) =>
+        a.createdAt.getTime() - b.createdAt.getTime() ||
+        compareText(a.id, b.id),
+    );
   const scopedRequirements = state.requirements
     .filter(
       (requirement) =>
@@ -512,6 +530,9 @@ export function planningSnapshotPage(
       truncated: window.offset + items.length < all.length,
     },
     pageDigest: `sha256:${sha256({
+      // Bound to the snapshot, so equal items of another scope or state
+      // never share a page digest.
+      snapshotId: snapshot.snapshotId,
       collection,
       offset: window.offset,
       limit: window.limit,

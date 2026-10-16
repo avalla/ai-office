@@ -24,8 +24,18 @@ function state(): PlanningStateRecord {
   return {
     projectId: "p",
     milestones: [
-      { id: "m1", title: "Milestone one", status: "active" },
-      { id: "m2", title: "Milestone two", status: "completed" },
+      {
+        id: "m1",
+        title: "Milestone one",
+        status: "active",
+        createdAt: new Date("2026-10-01T00:00:00.000Z"),
+      },
+      {
+        id: "m2",
+        title: "Milestone two",
+        status: "completed",
+        createdAt: new Date("2026-09-01T00:00:00.000Z"),
+      },
     ],
     tasks: [
       { id: "a", title: "Task A", status: "waiting_review", priority: 1 },
@@ -276,6 +286,7 @@ describe("planning read model", () => {
   test("is deterministic and independent of record order", () => {
     const first = projectPlanningSnapshot(state(), project, both);
     const shuffled = state();
+    shuffled.milestones.reverse();
     shuffled.tasks.reverse();
     shuffled.dependencies.reverse();
     shuffled.requirements.reverse();
@@ -296,6 +307,29 @@ describe("planning read model", () => {
       (value) => projectPlanningSnapshot(value, project, both).snapshotId,
     );
     expect(new Set([base, ...ids]).size).toBe(4);
+  });
+
+  test("orders milestones by creation time, not by record order", () => {
+    const snapshot = projectPlanningSnapshot(state(), project, both);
+    expect(snapshot.authoritative.milestones.map((m) => m.milestoneId)).toEqual(
+      ["m2", "m1"],
+    );
+    expect(JSON.stringify(snapshot)).not.toContain("2026-09-01");
+  });
+
+  test("binds the page digest to its snapshot", () => {
+    // Same collection, same window, same (empty) items, different scopes.
+    const whole = projectPlanningSnapshot(state(), project, both);
+    const m2 = projectPlanningSnapshot(
+      state(),
+      { projectId: "p", milestoneId: "m2" },
+      both,
+    );
+    const pages = [whole, m2].map((s) =>
+      planningSnapshotPage(s, "active", { offset: 10, limit: 1 }),
+    );
+    expect(pages.map((p) => p.items)).toEqual([[], []]);
+    expect(pages[0]!.pageDigest).not.toBe(pages[1]!.pageDigest);
   });
 
   test("keeps the snapshot identity across windows and digests each page", () => {

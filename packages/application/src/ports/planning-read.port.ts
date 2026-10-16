@@ -27,6 +27,8 @@ export interface PlanningMilestoneRecord {
   title: string;
   /** `archived` when the milestone carries an archive mark, as elsewhere. */
   status: MilestoneStatus;
+  /** Ordering key only; never part of the projection. */
+  createdAt: Date;
 }
 
 export interface PlanningRequirementRecord {
@@ -39,7 +41,7 @@ export interface PlanningRequirementRecord {
 
 export interface PlanningStateRecord {
   projectId: string;
-  /** In recorded order: creation time, then id. */
+  /** In any order; the projection orders them. */
   milestones: PlanningMilestoneRecord[];
   tasks: PlanningTaskRecord[];
   dependencies: { taskId: string; dependsOnTaskId: string }[];

@@ -70,7 +70,7 @@ function windowValue(
 
 /**
  * One page of the planning read model. Read-only: it reads one consistent
- * planning state and writes nothing, not even audit.
+ * planning state and appends no planning or domain audit.
  */
 export class GetPlanningSnapshot {
   constructor(private readonly reads: PlanningReadRepository) {}
