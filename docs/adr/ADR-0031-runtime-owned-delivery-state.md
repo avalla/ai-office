@@ -30,11 +30,13 @@ the separate `ai-office` skill; `skills/README.md` states the independence of
    a head commit, recorded through application commands behind the existing
    Runtime IPC. It records and reports; it authorizes nothing. Merge,
    approvals, and controlled actions keep their existing authority.
-2. Expose it as `delivery:next` (what the profile requires now, derived from
-   the recorded state) and `delivery:record` (record a gate result with
-   evidence). The skill uses them when a Runtime is available.
+2. Expose it as `delivery:next` (the gates the recorded state requires, never
+   labelled effective; see invariant 3) and `delivery:record` (record a gate
+   result with evidence). The skill uses them when a Runtime is available.
 3. Keep the skill usable without a Runtime. Without one, the skill keeps the
-   file handoff packet of step 1 and the same gate semantics.
+   file handoff packet of
+   [step 1 of the task-delivery profiles plan](../development/task-delivery-profiles.md)
+   and the same gate semantics.
 4. A delivery profile selects gates; it does not replace an enforced
    pipeline. When an enforced pipeline governs the task, the pipeline remains
    authoritative and the delivery run is subordinate evidence.
@@ -54,8 +56,9 @@ the separate `ai-office` skill; `skills/README.md` states the independence of
   an application service and port.
 - Daemon and CLI end-to-end coverage through the Unix-socket protocol.
 - Two run records (pipeline run and delivery run) must not drift; the relation
-  and any deduplication must be settled before implementation.
-- The CLI never falls back to an embedded writer. Step 1's `delivery:validate` is a Runtime-routed read that adds no offline path; that is an owner decision and an existing `AGENTS.md` invariant, not a consequence of this ADR, and it stands if this ADR is rejected.
+  is settled by invariants 1 and 2 below.
+- The CLI never falls back to an embedded writer. The `delivery:validate` of
+  [step 1 of the task-delivery profiles plan](../development/task-delivery-profiles.md) is a Runtime-routed read that adds no offline path; that is an owner decision and an existing `AGENTS.md` invariant, not a consequence of this ADR, and it stands if this ADR is rejected.
 - Any caller-local path argument is resolved by the CLI against its own working directory and sent as an absolute path, as `AGENTS.md` already requires; the Runtime rejects relative paths and never infers the caller's working directory.
 
 ## Owner decisions on the open questions (2026-10-15)
@@ -67,8 +70,8 @@ until it is explicitly accepted.
   to a pipeline run. It does not extend a task or a pipeline run: extending the
   pipeline run would bind the portable workflow to enforced pipelines (the
   rejected alternative above), and a task is not the right owner of gate
-  results. The reference is provenance only; the relation is bounded by
-  invariants 1 and 2 below, so the two records cannot drift.
+  results. The reference is provenance only; drift between the two records is
+  prevented by invariants 1 and 2 below.
 - **Evidence.** Only a reference and a content hash are stored, never the
   evidence itself, consistent with the gate evidence references of the
   file-based checkpoints.
@@ -90,8 +93,8 @@ Two pieces of delivery state already exist and predate this decision:
 
 ## Proposed answers to the remaining questions
 
-These two questions were put to an independent reviewer and are marked resolved
-in this proposal. Accepting the ADR accepts them.
+These are proposed answers, pending the owner's acceptance of the ADR. They
+were reviewed independently before being proposed, which is not an approval.
 
 - **Setup storage.** The delivery run is a separate aggregate with its own
   persistence and repository port, beside `delivery:setup:*`; it does not extend
@@ -112,20 +115,25 @@ in this proposal. Accepting the ADR accepts them.
 ## Invariants and failure modes
 
 These are constraints on a future implementation, not an implementation. Each
-failure is a typed error at the application boundary.
+failure is a typed error at the application boundary. Errors carry no foreign
+run identifiers, no paths beyond what the caller supplied, and no stack traces.
 
 1. **A linked pipeline run must belong to the same project and task.**
-   - A delivery run has a project and a task from creation. A pipeline run
-     reference is accepted only when the pipeline run's project and task both
-     equal the delivery run's. The application service validates this at
-     creation and in every command that supplies or changes the reference; a
-     foreign key to the run identifier alone cannot enforce ownership and is
-     only a backstop, as the cross-project rule in `AGENTS.md` requires.
-   - The reference is set at most once and is never repointed.
+   - A delivery run belongs to a project and a task. At creation the service
+     verifies that the task exists in that project; otherwise it fails with the
+     not-found error below.
+   - A pipeline run reference is accepted only when the pipeline run's project
+     and task both equal the delivery run's. The application service validates
+     this wherever a reference is set; a foreign key to the run identifier alone
+     cannot enforce ownership and is only a backstop, as the cross-project rule
+     in `AGENTS.md` requires.
+   - The reference may be set at creation or once afterwards. A second set is a
+     typed conflict and the reference is never repointed.
    - Failure modes: a pipeline run of another task or project, or one that does
      not exist, is rejected with the same typed not-found error, so a caller
-     cannot probe another project's runs; nothing is linked and no pipeline
-     state is read.
+     cannot probe another project's runs. The ownership check reads only the
+     pipeline run's project and task; on failure nothing is linked and no
+     pipeline state is returned.
 2. **Delivery gates and pipeline stages are independent.**
    - Delivery gates come from the delivery catalog. Pipeline stage identifiers
      are open strings declared by the office manifest. The ADR defines no mapping
@@ -134,6 +142,10 @@ failure is a typed error at the application boundary.
      the delivery run's own records and, separately, the stage state of the
      linked pipeline run read from the pipeline. Neither is copied into the
      other, and neither marks the other passed.
+   - Whether an enforced pipeline governs the task is determined independently
+     of the link. `delivery:next` reports it, and says so when the linked run
+     is not the governing one or when no run is linked. It never reports
+     readiness without that check.
    - Readiness stays the conjunction already defined in
      [task-delivery profiles](../development/task-delivery-profiles.md): the
      selected and floor-required gates, a required external review, and the
@@ -145,50 +157,70 @@ failure is a typed error at the application boundary.
      a pinned, versioned mapping.
 3. **The configuration snapshot is immutable and the floor is dynamic.**
    - At creation the run fixes the configuration effectively resolved at that
-     moment: its schema version, the resolved profile and the selected gates,
-     not only a profile name. Later setup changes never alter the run; adopting
-     them needs a new run.
-   - The floor is not part of the snapshot. It depends on the task, the diff
-     and the head commit, which the command does not receive, so the skill
+     moment: its schema version, the resolved profile and each selected gate
+     with its form (full or reduced, review rounds, independence), not only a
+     profile name. Later setup changes never alter the run; adopting them needs
+     a new run.
+   - The floor is not part of the snapshot and does not constrain setup: it
+     applies on top of whatever is configured and depends on the task, the diff
+     and the head commit, which the commands do not receive. The skill
      evaluates it where the profiles design says (at preflight, before
      `implementation` ends, before `ready_for_merge`, and when a new commit can
      change the classification) and it only moves up.
-   - The effective gate set is the snapshot's selected gates plus the gates the
-     floor made required. The run records each floor-required gate, with its
-     trigger and the head it was determined on, as an append-only addition. The
-     recorded set never shrinks within a run: a later head that no longer
-     triggers the floor does not remove it. A floor-required gate that ran in a
-     reduced form is run again in its full form, and the reduced evidence does
-     not cover it.
-   - Failure modes: if recording a floor addition fails, the skill still applies
-     the floor locally and the record is reconciled later; a missing record
-     never means the floor does not apply. `delivery:next` states that it does
-     not evaluate the floor itself, and a setup lowered below the computed floor
-     is refused, as the profiles design already requires.
+   - The effective gate set is the snapshot's selected gates plus the floor
+     additions. The run records each floor addition, with its trigger and the
+     head it was determined on, as an append-only entry. An addition may add a
+     gate or raise the form of an already selected one (for example reduced to
+     full), and is recorded as such. The recorded set never shrinks within a
+     run: a later head that no longer triggers the floor does not remove it. A
+     gate that ran in a reduced form and was then raised is run again in its
+     full form, and the reduced evidence does not cover it.
+   - `delivery:next` reports the snapshot plus the recorded floor additions,
+     is never labelled effective, and states that unrecorded additions may
+     exist. It does not evaluate the floor itself.
+   - Failure modes: if recording a floor addition fails, the skill still
+     applies the floor locally and the record is reconciled later; a missing
+     record never means the floor does not apply. An authorizer's attempt to
+     lower the effective gate set below the recorded floor additions is
+     refused, as the profiles design requires; setup configuration itself is
+     not refused.
 4. **Checkpoint registration is idempotent, conflict-explicit and pinned until
    registered.**
+   - A registration names an opaque, client-claimed identity: the delivery run,
+     the task directory key, the checkpoint sequence number and checkpoint
+     identifier, together with the SHA-256 of the published bytes. The Runtime
+     stores it and never dereferences it, so no client-local path is sent.
    - The file publication and `delivery:record` cannot share a transaction, so
-     the order is: publish the immutable checkpoint atomically to the file
-     store, then register its reference and hash on the delivery run.
-   - Registering the same checkpoint with the same hash again is harmless. A
-     reference already registered with a different hash is an explicit conflict,
+     the order is: make the pending marker durable, publish the immutable
+     checkpoint atomically to the file store, then register the checkpoint.
+   - Registering the same identity with the same hash again is harmless. An
+     identity already registered with a different hash is an explicit conflict,
      never an overwrite.
-   - A published checkpoint whose registration has not succeeded is pending.
-     The file store keeps a durable pending marker next to it. Retention pruning
-     never deletes a pending checkpoint, in addition to the latest and the
-     handoff-cited ones it already keeps. The marker is cleared only after a
-     successful registration or an explicit idempotent reconciliation, and it
-     survives process restarts.
-   - Reconciliation registers pending checkpoints in publication order, and
-     resume validates the file, hash, version and association to the run. A
+   - Pending applies only to checkpoints published for a Runtime delivery run;
+     the marker names that run. A checkpoint published with no delivery run,
+     including every checkpoint of the offline path, keeps the existing
+     retention rules unchanged.
+   - The marker is durable in the file store and is made durable before, or
+     atomically with, the publication that makes the checkpoint visible to
+     pruning, and it survives process restarts. Retention pruning never deletes
+     a pending checkpoint, in addition to the latest and the handoff-cited ones
+     it already keeps. Without that ordering a crash between publication and
+     marking would leave an unregistered checkpoint prunable. The marker is
+     cleared only after a successful registration or an explicit idempotent
+     reconciliation.
+   - Reconciliation registers pending checkpoints in publication order. A
+     conflict stops reconciliation at that checkpoint, keeps it and the later
+     ones pending, and is reported.
+   - Resume validates the file, hash, version and association to the run. A
      missing or invalid checkpoint makes resume from it fail explicitly; the
      system does not silently fall back to a possibly inconsistent state.
    - Failure modes: during a Runtime outage or repeated registration failures,
      pending checkpoints accumulate beyond the retention cap rather than being
-     pruned. The skill reports the pending count when it is non-zero. Pruning of
-     a registered checkpoint follows the existing retention rules only.
-     Capping the pending set, if ever needed, is a separate explicit decision
-     that must never delete an unregistered checkpoint silently.
+     pruned, and the skill reports the pending count when it is non-zero. A
+     registered checkpoint whose file was pruned under the existing retention
+     rules stays on the run but is reported as unavailable, never as a
+     candidate. Capping the pending set, if ever needed, is a separate explicit
+     decision that must never delete an unregistered checkpoint silently.
 
 ## Known limitations
 
