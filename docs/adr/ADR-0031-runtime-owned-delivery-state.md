@@ -214,7 +214,8 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
    - Runtime path. Once a delivery run exists for a task, the task stays on the
      Runtime path: an outage leaves entries pending and never switches the task
      to offline rules. A run created part-way through a task takes the floor
-     determinations already in the handoff packet as its initial additions. A
+     determinations already in the handoff packet as its initial additions,
+     supplied in the creation input (invariant 5). A
      task without a delivery run keeps the existing offline rules unchanged.
    - Run multiplicity. A task has at most one open delivery run, and creating a
      new one supersedes the previous. Pending entries and pending checkpoint
@@ -268,9 +269,15 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
    - The creation command takes the project, the task, the resolved
      configuration as structured data (schema version, profile, each selected
      gate with its form, and whether an external review command is
-     configured), and optionally the pipeline run reference of invariant 1. It
-     carries no path. Its name is left to the implementation plan; this
-     contract is what binds.
+     configured), optionally the pipeline run reference of invariant 1, and
+     optionally the floor additions already determined for the task (each with
+     its gate, target form, trigger and head), which the client reads from its
+     handoff packet or file store. It carries no path. Its name is left to the
+     implementation plan; this contract is what binds.
+   - Inherited floor additions are validated like any other (a known gate, a
+     valid target form, a well-formed head) and registered atomically with the
+     creation: the run does not become open until they are recorded, so a task
+     that already triggered the floor cannot start a Runtime run without them.
    - The Runtime re-validates the data against the schema and the cross-key
      rules (for example, the accepted stage keys, and that `review` and `qa`
      are not both off without an external review command). It never reads
@@ -280,8 +287,9 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      and a hash of its canonical form (a specified canonical encoding, so the
      hash is comparable across clients), and is not verified against the
      repository, consistent with the head-commit decision above.
-   - Failure modes: invalid or unsupported configuration fails with a typed
-     validation error and no run is created; a task that is not in the project
+   - Failure modes: invalid or unsupported configuration, or an invalid
+     inherited floor addition, fails with a typed validation error and no run
+     is created; a task that is not in the project
      fails as in invariant 1.
 
 ## Known limitations
