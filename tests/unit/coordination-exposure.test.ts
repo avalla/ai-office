@@ -314,6 +314,16 @@ describe("credential scrubber", () => {
     expect(scrubCredentials(["my_api", "_key=abcdefghijk"].join(""))).toBe(
       `my_${redactionMarker}`,
     );
+    // Common compound names, in snake case, camel case and JSON.
+    expect(scrubCredentials(["SECRET", "_KEY=abcdefghijk"].join(""))).toBe(
+      redactionMarker,
+    );
+    expect(
+      scrubCredentials(['{"access', 'Token":"abcdefghijk"}'].join("")),
+    ).toBe(`{"${redactionMarker}}`);
+    expect(scrubCredentials(["refresh", "Token: abcdefghijk"].join(""))).toBe(
+      redactionMarker,
+    );
     // A keyword glued to letters or digits is another word.
     expect(scrubCredentials("mytoken=abcdefghijk")).toBe("mytoken=abcdefghijk");
     // A short closed quote is not a credential value by this rule.
