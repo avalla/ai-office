@@ -17,11 +17,13 @@ export interface PipelineRunConfigurationPackIdentity {
 }
 
 /**
- * M16.5 Runtime activation, first slice (ADR-0026): the minimum evidence a
- * run pins about the Domain Pack configuration in effect when it started,
- * additively alongside the existing manifest/definition pins below. Absent
- * when the project had no pack selection at start time. Pinning this never
- * changes which pipeline, stage or role runs -- that stays manifest-driven.
+ * M16.5 Runtime activation (ADR-0026): the minimum evidence a run pins about
+ * the Domain Pack configuration in effect when it started, additively
+ * alongside the existing manifest/definition pins below. Absent when the
+ * project had no pack selection at start time. The pin is identity evidence
+ * only; which pipeline, stage and role a run freezes is decided when it starts
+ * (a manifest pipeline, or a pack workflow of a project with a selected pack)
+ * and is recorded in the frozen `definition`, not in this pin.
  */
 export interface PipelineRunConfigurationPin {
   readonly configurationDigest: string;

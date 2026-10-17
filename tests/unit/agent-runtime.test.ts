@@ -209,7 +209,7 @@ describe("agent runtime domain", () => {
         },
         usesWorktree: false,
         execute: async () => ({ summary: "prepared", artifacts: [] }),
-        accept: async () => undefined,
+        accept: async () => false,
       }),
       execute: async () => ({ summary: "unused", artifacts: [] }),
     });

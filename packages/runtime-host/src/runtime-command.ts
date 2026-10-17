@@ -117,6 +117,11 @@ import { handleAgentCommand } from "./commands/agent.ts";
 import { handleCostCommand } from "./commands/cost.ts";
 import { handleGovernanceCommand } from "./commands/governance.ts";
 import { handleRequirementCommand } from "./commands/requirement.ts";
+import { handlePlanningCommand } from "./commands/planning.ts";
+import {
+  PlanningScopeNotFoundError,
+  PlanningSnapshotQueryError,
+} from "@ai-office/application/coordination/get-planning-snapshot.ts";
 import { handleProjectCommand } from "./commands/project.ts";
 import { handleRunCommand } from "./commands/run.ts";
 import {
@@ -155,7 +160,10 @@ import {
   ActivePipelineRunExistsError,
   ConcurrentPipelineTransitionError,
   PipelineActorUnauthorizedError,
+  PackPipelineUnsupportedError,
+  PipelineDefinitionAmbiguousError,
   PipelineDefinitionNotEnforcedError,
+  PipelineRoleUnavailableError,
   PipelineRunNotFoundError,
 } from "@ai-office/application/pipeline-errors.ts";
 import { PipelineTransitionError } from "@ai-office/domain/pipeline/pipeline-run.ts";
@@ -274,6 +282,7 @@ const commands = [
   "task:link-requirement",
   "task:unlink-requirement",
   "task:reconcile",
+  "planning:snapshot",
   "agent:sync",
   "agent:list",
   "agent:models",
@@ -423,6 +432,7 @@ const handlers = [
   handleCostCommand,
   handleGovernanceCommand,
   handleRequirementCommand,
+  handlePlanningCommand,
   handleMemoryCommand,
   handleKnowledgeCommand,
   handleDeliverySetupCommand,
@@ -470,6 +480,8 @@ function formatKnownError(error: unknown): string | null {
     error instanceof InvalidTaskTransitionError ||
     error instanceof InvalidTaskCorrectionError ||
     error instanceof RequirementNotFoundError ||
+    error instanceof PlanningSnapshotQueryError ||
+    error instanceof PlanningScopeNotFoundError ||
     error instanceof TaskReconciliationApprovalError ||
     error instanceof TaskCompletionApprovalError ||
     error instanceof TaskLockActiveError ||
@@ -534,6 +546,9 @@ function formatKnownError(error: unknown): string | null {
     error instanceof ConcurrentPipelineTransitionError ||
     error instanceof PipelineActorUnauthorizedError ||
     error instanceof PipelineDefinitionNotEnforcedError ||
+    error instanceof PipelineDefinitionAmbiguousError ||
+    error instanceof PipelineRoleUnavailableError ||
+    error instanceof PackPipelineUnsupportedError ||
     error instanceof PipelineRunNotFoundError ||
     error instanceof PipelineTransitionError ||
     error instanceof PortableProjectArchiveError ||
@@ -668,7 +683,8 @@ export async function executeRuntimeCommand(
         definitions: projectStorage.definitions,
         transactions: projectStorage.transactions,
         catalog:
-          options.installedPacks ?? new InMemoryInstalledDomainPackCatalog(1, []),
+          options.installedPacks ??
+          new InMemoryInstalledDomainPackCatalog(1, []),
         providers: operationProviders,
       }),
       agentClients: options.agentClients ?? new DefaultAgentClientCatalog(),

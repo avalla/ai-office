@@ -32,10 +32,10 @@ AI Office keeps different kinds of documentation separate so current product tru
   `AI-OFFICE.md` and Codex/Claude project skills.
 - [Portable agent skills](../skills/README.md): vendor-neutral `SKILL.md` packages with one canonical source under `skills/`, the deterministic installer for executor copies, and the `task-delivery` workflow skill; independent of the Runtime-managed `ai-office` skill.
 - [Development roadmap](development/roadmap.md): authoritative milestone scope and implementation status.
-- [M16 Generic Core & Domain Packs plan](development/generic-core-domain-packs.md): reviewed GP-01 source audit, compatibility risks, extraction map, fixtures, and GP delivery sequence; no pack runtime is implemented yet.
+- [M16 Generic Core & Domain Packs plan](development/generic-core-domain-packs.md): reviewed GP-01 source audit, compatibility risks, extraction map, fixtures, and GP delivery sequence; pack workflow selection by `pipeline:start` is implemented for projects with a selected pack, and the rest of Runtime activation is not.
 - [Domain Pack authoring and operations](development/domain-pack-authoring.md): current schema-1 manifest validation, trusted local test catalogs, exact project selection, customization, upgrades, and four reference examples.
 - [M17 execution observability and heterogeneous actors](development/m17-execution-observability.md): planned executor sessions, verified hook telemetry, operational projections, React dashboard coverage and future actor extension seams; not current APIs.
-- [Core/pack boundary](adr/ADR-0026-core-domain-pack-boundary.md): accepted GP-02 architectural contract aligned with ADR-0027; no pack Runtime is implemented.
+- [Core/pack boundary](adr/ADR-0026-core-domain-pack-boundary.md): accepted GP-02 architectural contract aligned with ADR-0027; Runtime activation is partly implemented (run pin and pack workflow selection).
 - [Cross-domain project authority and evidence](adr/ADR-0027-cross-domain-authority-and-evidence.md): accepted M15-4 architectural boundary for portable project identity, knowledge scope, mandatory evidence/constraints and trusted professional decisions; implementation is deferred.
 - [Actor/execution observation proposal](adr/ADR-0028-actor-execution-and-observation.md): proposed M17 decision gate for actor, role, assignment, execution, presence, evidence and provider hook authority; not accepted current architecture.
 - [M18 strong executor filesystem confinement](development/m18-strong-executor-filesystem-confinement.md): planned executor-neutral OS/container confinement, confinement levels, fail-closed admission, per-run filesystem root and adversarial verification; not implemented.
@@ -49,6 +49,16 @@ AI Office keeps different kinds of documentation separate so current product tru
 - [Adaptive Agent Learning & Experience Governance](adr/ADR-0034-adaptive-agent-learning-experience-governance.md):
   proposed decision gate separating advisory knowledge, authoritative Runtime
   state and trained model weights; not accepted current architecture.
+- [M23 Coordination Bridge plan](development/coordination-bridge.md): planned
+  coordination protocol, minimized planning snapshots, a remote read-only MCP
+  server over Streamable HTTP behind a Cloudflare Tunnel or Nginx exposure layer with mandatory capability isolation, an optional GitHub
+  Issues transport, a proposal inbox and governed priority and dependency
+  changes with digest-bound local approval; GitHub and MCP are never an
+  authority; nothing implemented.
+- [Coordination Bridge boundary, protocol and trust model](adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md),
+  [architecture](architecture/coordination-bridge.md) and
+  [protocol v1](development/coordination-protocol.md): accepted M23 design
+  baseline; not implemented, and not current architecture until delivered.
 - [Professional-work verticals](development/professional-work-verticals.md):
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and

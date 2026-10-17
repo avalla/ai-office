@@ -66,7 +66,7 @@ describe("durable queue-driven pipeline orchestration", () => {
                 artifacts: [],
               };
             },
-            accept: async () => undefined,
+            accept: async () => false,
           };
         },
         async execute() {

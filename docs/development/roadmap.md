@@ -980,7 +980,9 @@ Focus: user-facing product surfaces, packaging, and operability.
 
 - web UI beyond the local read-only operations console shipped in M7.8;
 - plugin SDK;
-- MCP server;
+- MCP server (the first server, remote and read-only, is proposed by
+  [M23](coordination-bridge.md) CB-11A–CB-11F; the M9 MCP task extends it and
+  does not create a second one);
 - packaged binaries;
 - remote snapshot transport with a deterministic filesystem adapter;
 - optimistic-concurrency push/pull and explicit divergence diagnostics;
@@ -1180,7 +1182,10 @@ aggregate, review commands, policy evaluator, or new Task status values.
 
 ### Phase B — Core Runtime
 
-Status: future.
+Status: future. Since the owner decision of 2026-10-15 it also owns Domain Pack
+evidence and validator enforcement (GP-14B, requirement GP-14B-M116, Runtime
+task `d991b5be`), which needs the persisted artifact, evidence and review
+contract below. It is not an M16.5 item.
 
 - persist artifacts and immutable versions, fingerprints, producer provenance and
   external-resource references;
@@ -1393,6 +1398,12 @@ integration.
   handling consistent with the M6 connector boundary;
 - correlation between external GitHub identities/events and internal pipeline,
   stage, artifact, action, and audit identities;
+- software-delivery provenance correlating internal Tasks and AgentRuns with
+  repository commits, Pull Requests, exact PR versions/head SHAs, and merge
+  evidence through generic Artifact/Evidence contracts. GitHub-specific identity
+  stays in the software/GitHub adapter boundary; each relationship preserves
+  how it was established, and external delivery state never becomes Task
+  lifecycle authority;
 - GitHub Actions evaluated as an optional execution backend, check producer, or
   integration point, never as AI Office's primary orchestrator.
 
@@ -1403,9 +1414,12 @@ does not decide who develops, who reviews, when QA or security is required, or
 whether merge policy is satisfied.
 
 The implementation assessment must decide the exact boundary between local Git
-worktree/commit operations, remote Git transport, and GitHub API operations.
-That split must preserve the current rule that agents do not receive direct
-repository, shell, credential, or connector authority.
+worktree/commit production and capture, remote Git transport, and GitHub API
+operations, including Pull Request correlation. That split must preserve the
+current rule that agents do not receive direct repository, shell, credential,
+or connector authority. The provenance contract may be designed before M11.6
+Artifact Runtime exists, but production persistence must reuse that generic
+foundation rather than create a parallel software-only authority.
 
 Depends on: M6 connector and controlled-action foundations and M11 pipeline
 orchestration. M12 workers may consume the connector through those boundaries;
@@ -1470,7 +1484,10 @@ A software-delivery pipeline may coordinate assessment, plan approval,
 branch/worktree preparation, implementation, test, push, pull request, structured
 review, bounded fix loops, QA, conditional security review, human approval, and
 merge. The engine owns this lifecycle; GitHub only reflects and performs the
-external repository operations it is authorized to expose.
+external repository operations it is authorized to expose. The pipeline consumes
+M13 delivery provenance from Task and AgentRun through commits and exact Pull
+Request versions to merge and review evidence; it does not reconstruct
+authoritative relationships from branch names or commit messages.
 
 Agent reviews should be able to return machine-interpretable artifacts in
 addition to human-readable text. A provisional shape may contain `decision` and
@@ -1499,6 +1516,9 @@ Exit direction:
   text as authorization;
 - separation-of-duties violations fail closed;
 - merge is impossible until all effective policy gates are satisfied;
+- every software delivery is traceable from Task and AgentRun through the exact
+  commits and Pull Request version reviewed and merged, without treating GitHub
+  state as Task lifecycle authority;
 - changing the selected worker runtime does not change workflow semantics.
 
 ## M15 — Domain-neutral professional work and vertical profiles
@@ -1825,8 +1845,8 @@ artifact contracts, M14's software workflows as extraction input, M15's
 cross-domain architecture decision, and the existing AgentKnowledgeStore and
 ProjectStorage authority boundaries. M9's broad plugin SDK and a package
 marketplace are not prerequisites. Since the 2026-10-06 re-scope of the exit,
-no M16 task depends on M11.6 Phase B; that dependency belongs to GP-14B in
-M16.5.
+no M16 task depends on M11.6 Phase B; that dependency belongs to GP-14B,
+which moved from M16.5 to M11.6 on 2026-10-15.
 
 The core keeps project authority, tasks, AgentRuns, pipeline execution,
 governance, approval enforcement, controlled actions, audit, storage and
@@ -1871,7 +1891,9 @@ knowledge guidance contract GP-15, and their dependency graph, acceptance criter
 and non-goals are in the
 [Generic Core & Domain Packs plan](generic-core-domain-packs.md). The
 [accepted core/pack boundary ADR](../adr/ADR-0026-core-domain-pack-boundary.md)
-is the GP-02 architectural decision, not an implemented Runtime contract. The
+is the GP-02 architectural target, delivered incrementally; PR #168 implements
+its run-pinning clause. Activation, removal guarding and adoption remain M16.5
+work; evidence and validator enforcement belongs to M11.6. The
 [M15-4 decision](../adr/ADR-0027-cross-domain-authority-and-evidence.md)
 supplies its four authority/evidence prerequisites; GP-02 reviewed the
 contract against them after M15-4 integration. The AI
@@ -1881,14 +1903,13 @@ dependency edges; GP-02's cross-milestone M15-4 prerequisite is also stored as
 a typed task dependency edge in the project Runtime. GP-10A, GP-10B-1,
 GP-10B-2 and GP-10C-1 remain separately tracked extraction slices. Runtime
 records carry the split. GP-14 was narrowed to its delivered definition half
-(GP-14A, PRs #128 and #129) and verified; GP-14B is a separate M16.5
-requirement. GP-16 was rejected as a scope split, not for a defect: GP-16A
+(GP-14A, PRs #128 and #129) and verified; GP-14B is a separate requirement, GP-14B-M116, owned by M11.6 since 2026-10-15. GP-16 was rejected as a scope split, not for a defect: GP-16A
 (the delivered capability contracts, PR #116) is verified in M16, and GP-16-RG
 (the run gate) is an M16.5 requirement. GP-10C was likewise split into GP-10C-1
 (M16, verified) and GP-10C-2 (M16.5), and GP-24 moved to M16.5 as GP-24-M165.
 The two GP-12 follow-up tasks (`57a1833f`, `e003843f`) are owned by M16.5.
-GP-14B, GP-10C-2, GP-24, the GP-16 run gate, Runtime activation and
-the execution parity task are planned for M16.5 and are not M16 delivery
+GP-10C-2, GP-24, the GP-16 run gate, Runtime activation and
+the execution parity task are planned for M16.5 (GP-14B is owned by M11.6) and are not M16 delivery
 tasks; the plan's
 [M16 exit re-scope](generic-core-domain-packs.md#m16-exit-re-scope-owner-decision-2026-10-06)
 records the decision.
@@ -1935,8 +1956,8 @@ and disable of a pack workflow, a derived workflow view, and upgrade rules
 that reuse GP-08, GP-11 and GP-12. It adds forward SQLite and PostgreSQL
 migrations that admit workflow overrides and portable archive format 9. It
 does not touch the pipeline engine, pipeline runs, pins, approvals or guards;
-runs do not pin pack configuration yet, and blocking a change on in-flight
-pinned runs is deferred to GP-24. GP-09 adds a versioned, read-only legacy
+PR #168 subsequently added pack-configuration pins. Blocking a change on
+in-flight pinned runs remains deferred to GP-24's scope. GP-09 adds a versioned, read-only legacy
 development profile and `project:configuration:legacy`: a deterministic,
 digest-pinned description of the office, roles, agents, task-kind routing and
 pipelines the Runtime reads from a legacy project today. It proves
@@ -2057,9 +2078,10 @@ Tests resolve these through a test-supplied catalog; no production catalog
 registers the pack, no project adopts it and the Runtime does not consume it.
 Aliases remain planned work of M16; automatic selection,
 remote marketplace/downloads and executable validators remain deferred.
-Runtime enforcement from pack policies (`a45ddb12`), adoption (GP-10C-2) and
-Runtime execution from packs are planned for M16.5. M16 remains incomplete
-until its re-scoped exit criteria are met.
+Runtime enforcement from pack policies and execution from packs belong to
+M16.5 activation (`aa10a111`); `a45ddb12` proves execution parity, and
+GP-10C-2 owns production adoption. These do not reopen M16's completed,
+re-scoped definition-layer exit.
 
 ### Post-GP-06 hardening follow-ups
 
@@ -2138,7 +2160,7 @@ A binding grants nothing. Grants, constraints, approval and controlled
 execution are unchanged and still separately authorize every use; a request
 for a bound operation without a grant is denied as before. There is no
 scheduler or run gate: rejecting a run for a missing provider belongs to the
-execution parity task `a45ddb12-3159-4b60-9b8b-c26516720834` and GP-24.
+M16.5 run-gate task `f8d75709` (owner decision 2026-10-15), after Runtime activation and GP-24.
 Provider binding is host-local availability and is not part of
 `configurationDigest`, which narrows ADR-0026 on purpose. GP-25 stage
 operations are opaque names and do not reference these declarations. No migration and no portable archive
@@ -2172,9 +2194,11 @@ core. Domain-specific adapters remain behind public ports and controlled
 actions.
 
 After M16, Domain Packs are a definition, customization and upgrade layer
-with reference fixtures. The Runtime does not yet execute from a pack: no run
-is created from a resolved configuration or pins one, no pack is registered
-in the production catalog, and no project adopts the development pack. An
+with reference fixtures. M16 itself did not execute from packs or pin their
+configuration. PR #168 subsequently added configuration pins for nonempty
+selections; M16.5 activation now also selects resolved workflows for projects
+with selected packs. Production pack registration and adoption remain
+GP-10C-2 work. An
 accepted ADR alone does not satisfy the exit. Runtime execution that consumes
 the resolved configuration leaves the M16 exit and is expected to become the
 exit of M16.5.
@@ -2186,39 +2210,54 @@ governance, ProjectStorage, AgentKnowledgeStore, model routing, or worker queue.
 
 ## M16.5 — Domain Pack Runtime Activation
 
-Status: planned. No scope proposal, acceptance criteria or ADR change is
-approved, and nothing here is implemented. The milestone was created by the
-owner's 2026-10-06 re-scope of the M16 exit; its name and number are
-provisional.
+Status: active scope, owner decisions of 2026-10-15 recorded; the run pin
+(PR #168, migration 0051) and pack workflow selection for projects with a
+selected pack (2026-10-15) are implemented and the rest is not. The
+milestone was created by the owner's 2026-10-06 re-scope of the M16 exit; its
+name and number are provisional.
+
+Owner decisions, 2026-10-15: (1) GP-14B moves to M11.6, which owns the Phase B
+artifact contract it needs, and leaves M16.5; (2) the GP-16 run gate is its own
+task `f8d75709`, after Runtime activation and GP-24; (3) activation selects pipeline,
+stages and roles from the resolved configuration only for projects that
+adopted a pack through GP-10C-2, and legacy projects are unchanged; (4)
+ADR-0026 settles the target architecture and is the target to implement as accepted (its clauses are delivered task by task; run pinning shipped in PR #168, while the remaining clauses are still pending), and a
+conflict stops work for an owner decision rather than being resolved locally;
+(5) the order is Runtime activation, execution parity, GP-10C-2, GP-24, the
+GP-16 run gate, then the two GP-12 follow-ups.
 
 Goal: make the Runtime execute from the resolved project configuration that
-M16 defines, and deliver the pack work that needs that execution or the
-M11.6 Phase B artifact contract. It is expected to depend on the M16
-definition contracts and, for evidence and validator enforcement, on M11.6
-Phase B.
+M16 defines, and deliver the pack work that needs that execution. It is expected to depend on the M16
+definition contracts only; it has no M11.6 Phase B dependency, because the
+work that needed it left the milestone.
 
-Planned contents, each needing an owner-approved scope before work. The
-order and dependencies among them are provisional and are set by each scope
-proposal:
+Planned contents, in the order the owner set on 2026-10-15; each task is
+still scoped by its own record before work:
 
-- Runtime activation: Runtime execution consumes the generic resolved
+- Runtime activation, Runtime task `aa10a111-9658-4f11-b99f-7074fe522588`
+  (requirement M165-ACT): Runtime execution consumes the generic resolved
   configuration, and a new run persists its configuration digest and exact
-  source pack tuples with its existing pins. No task owns this yet.
-- GP-24: block a pack removal while an active run pins that pack. Whether
-  it also blocks a workflow change on such a run is set by its scope
-  proposal. It needs the persisted pins, which activation is expected to
-  deliver.
+  source pack tuples with its existing pins. The pin and, for a project with a
+  selected pack, selection of the run's pipeline from a resolved pack workflow
+  are delivered (the latter on 2026-10-15); no role or agent is
+  materialized.
 - Execution parity, Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834`:
   compare execution from a resolved configuration with legacy execution.
-- GP-14B: stale evidence and invalid validator output fail closed, with
-  version-bound review. Depends on M11.6 Phase B.
 - GP-10C-2: previewed explicit adoption of the development pack and its
   registration, preserving old bindings.
+- GP-24: block a pack removal while an active run pins that pack. Whether
+  it also blocks a workflow change on such a run is set by its scope
+  proposal. It uses the pins that activation already persists.
 - The GP-16 run gate (requirement GP-16-RG, the split-off half of GP-16; the
   delivered half is GP-16A in M16): bind registered providers at bootstrap and reject a
-  missing required provider before runs. The delivered GP-16 section names
-  `a45ddb12` and GP-24 as its owners; this item's scope proposal decides the
-  split and is not a second owner.
+  missing required provider before runs. It is Runtime task `f8d75709`, after
+  Runtime activation and GP-24; neither `a45ddb12` nor GP-24 owns it.
+- The two GP-12 follow-up tasks `57a1833f` and `e003843f` (requirement
+  M165-GP12-FU).
+
+GP-14B, which left M16.5 for M11.6 on 2026-10-15 (requirement GP-14B-M116,
+task `d991b5be`), depends on M11.6's Phase B contract and is not an M16.5
+item.
 
 Exit: to be defined with the scope proposal. It is expected to carry the
 clauses that left the M16 exit: Runtime execution consumes the generic
@@ -2228,13 +2267,14 @@ empty/custom fixtures run the same core lifecycles.
 Non-goals: expected to be those of M16; set with the scope proposal.
 
 A [scope-proposal draft](m16-5-domain-pack-runtime-activation-scope.md) lays
-out the planned-contents table above alongside the open owner decisions it
-depends on (the GP-16 run-gate split, GP-14B's M11.6 Phase B dependency, and which ADR-0026 clauses to target
-first). It is a proposal, with one delivered exception: the pin-only first
-slice, in which a pipeline run records the resolved pack-configuration
-identity it started under (migration 0051, no change to pipeline, stage or
-role selection), was explicitly requested and is implemented. The rest of the
-proposal is not approved. Opening the closed `officeTaskKinds` list, once listed
+out the planned-contents table above alongside the owner decisions it
+depends on (the GP-16 run-gate split, GP-14B's M11.6 Phase B dependency, the
+ADR-0026 status and the extent of activation), all since ruled on. It records
+no acceptance criteria; two slices are delivered: the configuration pin
+(migration 0051), and pack workflow selection by `pipeline:start` for a project
+with a selected pack, which materializes no role or agent. The remaining
+items follow the recorded rulings and require their own task scope and
+acceptance criteria. Opening the closed `officeTaskKinds` list, once listed
 there as an open decision, was resolved separately as a standalone change that
 does not deliver or approve M16.5.
 
@@ -2389,8 +2429,8 @@ autonomous repository-write Developer roles (M14)
 ```
 
 M16.5, Domain Pack Runtime Activation, is planned beside this chain: it is
-expected to depend on M16 and on M11.6 Phase B, and M17 is not expected to
-depend on it.
+expected to depend on M16 only, and M17 is not expected to depend on it. The
+M11.6 Phase B dependency left with GP-14B on 2026-10-15.
 
 These milestones intentionally defer:
 
@@ -2487,3 +2527,49 @@ Continuity & Handoff (`active`). The roadmap has no dedicated M19 section
 yet; that gap is recorded here rather than silently documenting another
 milestone. No new code, model training or provider commitment is authorized
 by this entry.
+
+## M23 — AI Office Coordination Bridge
+
+Status: planned 2026-10-15; the milestone, requirements CB-R01–CB-R14 and the
+tasks CB-01–CB-12 (CB-11 split into CB-11A–CB-11F) are registered in the
+Runtime. CB-01 delivered the architecture, protocol and trust model as
+[ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md)
+(accepted 2026-10-15). CB-02 delivers the planning read model: a
+deterministic, minimized (classes P and T only), paginated projection of
+milestones, tasks, requirements and dependencies, with derived runnable,
+active, blocker, open-decision and inconsistency collections kept apart, a
+`snapshot:sha256:` identity over the complete scoped projection that does not
+change with the page window, a per-page digest, and the read-only
+`planning:snapshot` CLI command. The coordination listener, exposure registry
+and MCP server are not implemented yet. Numbered M23 because M21 and M22 (whose roadmap sections are not yet on main) were
+already registered.
+
+Goal: let users and external AI assistants (ChatGPT first) inspect the planning
+state, propose structured changes, request owner decisions and receive
+verifiable receipts, through a versioned, provider-neutral protocol. The Runtime
+stays the only authority; GitHub and MCP are untrusted channels, never a second
+task tracker. Every bridge component is optional, separately supervised and can
+be disabled without affecting the Runtime or the dashboard.
+
+First verifiable outcome (Remote Read Gate, CB-11F): an authenticated remote
+client calls `ai_office_get_milestones` over HTTPS and receives authoritative
+Runtime data, through a separate read-only MCP server (Streamable HTTP) behind
+a Cloudflare Tunnel or Nginx exposure layer, an external OAuth 2.1 authorization server
+and a read-only Runtime listener; no approve or apply tool exists. Then an
+asynchronous GitHub Issues bridge to a dedicated private repository, and the
+governed priority and dependency changes (digest-bound local approval, apply enabled only once the transaction refactor and writer exclusion are both delivered, receipts, reconciliation). The first mutable operations reuse
+`UpdateTask` and `ManageTaskDependencies`.
+
+The [M23 plan](coordination-bridge.md), the
+[architecture](../architecture/coordination-bridge.md) and the
+[protocol](coordination-protocol.md) record the gap analysis, trust model,
+data-exposure policy, dependency graph, delivery order and owner decisions
+D1–D11. M23 takes no dependency on M13 or M11.6; the CB-11 series is the single
+MCP server of the project and the M9 MCP task depends on CB-11B. Approval is
+trusted-local like existing approvals; stronger operator presence stays with
+M10. At most two initiatives run at once.
+
+Non-goals: GitHub-owned state or a task-tracker mirror, webhooks, the general
+GitHub connector (M13), remote approval, apply or any mutating MCP tool, a
+proxy embedded in the Runtime, an identity provider, scope or milestone
+mutation in V2, PostgreSQL parity claims.

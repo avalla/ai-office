@@ -60,7 +60,9 @@ Commands:
   office:pipeline --project <id> --task-kind <kind>
     kind must match a task kind the project's own office manifest declares a
     default pipeline for; shipped defaults are feature|bugfix|maintenance|research|release
-  pipeline:start --project <id> --task <id> --pipeline <id> [--actor-label <label>]
+  pipeline:start --project <id> --task <id> --pipeline <id> [--source <manifest|pack>] [--actor-label <label>]
+    a project with a selected pack may start a pack workflow by its local ID; --source is
+    required only when the ID is both a manifest pipeline and a pack workflow
   pipeline:status --project <id> [--run <id>]
   pipeline:assign --project <id> --run <id> --agent <id> [--actor-label <label>]
   pipeline:transition --project <id> [--run <id>] --event <complete|approve|reject|cancel> [--agent-run <id>] [--actor-label <label>] [--rationale <text>]
@@ -100,6 +102,7 @@ Commands:
   task:link-requirement --project <id> --task <id> --requirement <id>
   task:unlink-requirement --project <id> --task <id> --requirement <id>
   task:reconcile --project <id> [--json]  # read-only; flags started dependents whose prerequisite left review; add --fix --approve <planHash> to apply the approved block/cancel repairs
+  planning:snapshot --project <id> [--milestone <id>] [--collection <milestones|tasks|requirements|dependencies|runnable|active|blockers|decisions|inconsistencies>] [--offset <n>] [--limit <1-200>] [--classes <P|P,T>]  # read-only JSON page of the minimized planning read model; snapshotId is stable across pages
   agent:sync --project <id> [--directory <path>]
   agent:list --project <id>
   agent:models --project <id> [--json]  # read-only; policy, profile and model each agent would be scheduled with

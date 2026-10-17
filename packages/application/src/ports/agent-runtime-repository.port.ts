@@ -61,6 +61,13 @@ export interface AgentRuntimeRepository {
   saveAgent(agent: Agent): Promise<void>;
   listAgents(projectId: string): Promise<Agent[]>;
   findAgent(agentId: string): Promise<Agent | null>;
+  /**
+   * Inserts the run, or applies one status transition to the stored row.
+   * Updating requires the run's persistence token to match the stored row and
+   * throws AgentRunPersistenceConflictError otherwise; on success the token is
+   * refreshed. Inside a caller-owned transaction the refreshed token is only
+   * valid once that transaction commits.
+   */
   saveRun(run: AgentRun): Promise<void>;
   /** Atomically validates worker authority and publishes the result as reviewing. */
   acceptWorkerResult(input: {

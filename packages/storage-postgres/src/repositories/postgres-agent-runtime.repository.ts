@@ -220,6 +220,10 @@ function restoreRun(row: RunRow): AgentRun {
       ? {}
       : { completedAt: toDate(row.completed_at) }),
     updatedAt: toDate(row.updated_at),
+    persistenceToken: {
+      status: row.status,
+      updatedAt: toDate(row.updated_at),
+    },
   });
 }
 
@@ -461,6 +465,9 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
         toDate(current.created_at).getTime() !== run.createdAt.getTime()
       )
         throw new AgentRunPersistenceConflictError(run.id);
+      // An identical replay is idempotent and does not consult the token:
+      // saveRun does not decide who owns an execution (admitQueuedRun and the
+      // task lock do), it only refuses to move or rewrite a diverged row.
       if (current.status === run.status) {
         const sameMutableState =
           current.worktree_path === (run.worktreePath ?? null) &&
@@ -482,7 +489,11 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
         if (sameMutableState) return;
         throw new AgentRunPersistenceConflictError(run.id);
       }
+      const token = run.persistenceToken;
       if (
+        token === undefined ||
+        token.status !== current.status ||
+        token.updatedAt.getTime() !== toDate(current.updated_at).getTime() ||
         !canPersistAgentRunTransition(current.status, run.status) ||
         toDate(current.updated_at).getTime() > run.updatedAt.getTime()
       )
@@ -512,6 +523,7 @@ export class PostgresAgentRuntimeRepository implements AgentRuntimeRepository {
         throw new AgentRunPersistenceConflictError(run.id);
       await this.appendRunEvent(run, current.status);
     });
+    value.markPersisted();
   }
 
   async findRun(runId: string): Promise<AgentRun | null> {

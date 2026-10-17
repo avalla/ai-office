@@ -2,7 +2,7 @@
 
 AI Office is a local-first, auditable multi-agent office for software delivery. It keeps project and governance state under an authoritative Runtime, coordinates agents and pipelines, meters model usage and cost, and routes protected side effects through explicit capability and approval boundaries.
 
-> **Current scope:** AI Office is software-development-first today. M16 has public pack contracts, a host-local catalog and explicit project pack selection. Selected packs do not yet produce an effective Runtime configuration or change execution.
+> **Current scope:** AI Office is software-development-first today. M16 has public pack contracts, a host-local catalog and explicit project pack selection. A project that selected a pack can start a pipeline run from one of that pack's enforced workflows (`pipeline:start`, with `--source` when an ID is ambiguous), and the run pins the resolved pack configuration; projects without a selected pack keep manifest pipelines unchanged. Adopting the development pack, removal blocking and the provider run gate are not delivered yet.
 
 Licensed under the [MIT License](LICENSE). Copyright (c) 2026 Andrea Valla.
 
@@ -236,7 +236,7 @@ The repository uses Bun, strict TypeScript, ESLint, Prettier, Vitest, SQLite int
 
 ## Project direction
 
-The current Runtime remains software-development-oriented. M15 defined cross-domain professional-work boundaries, and M16 is progressively extracting a generic core plus versioned Domain Packs. GP-05 records exact project pack selection. GP-07 records project-owned definitions and exact, validated pack-source overrides. GP-09 adds `project:configuration:legacy`, a read-only, versioned description of the office, roles, agents and pipelines an existing project runs on today; it is a legacy-state profile, not an executable configuration. GP-10A commits the development pack as a reference artifact that tests compare with the legacy defaults, and GP-10B-1 adds the four development workflows to it; the Runtime does not read it. Development, legal, manufacturing, and other packs do not yet supply Runtime roles or workflows.
+The current Runtime remains software-development-oriented. M15 defined cross-domain professional-work boundaries, and M16 is progressively extracting a generic core plus versioned Domain Packs. GP-05 records exact project pack selection. GP-07 records project-owned definitions and exact, validated pack-source overrides. GP-09 adds `project:configuration:legacy`, a read-only, versioned description of the office, roles, agents and pipelines an existing project runs on today; it is a legacy-state profile, not an executable configuration. GP-10A commits the development pack as a reference artifact that tests compare with the legacy defaults, and GP-10B-1 adds the four development workflows to it; the Runtime does not read it. A project that selected a pack can start a pipeline run from that pack's enforced workflow, which needs the stage roles to already exist in the Runtime; no pack creates Runtime roles or agents, and the development pack is not adopted by any project yet.
 
 See:
 

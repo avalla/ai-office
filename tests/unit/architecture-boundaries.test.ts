@@ -93,41 +93,55 @@ test("GP-06 configuration remains derived and outside scheduling and portable au
     );
 });
 
-test("M16.5 first slice: pipeline-run creation reads the resolved configuration only for its pin, never for selection", () => {
-  const manager = readFileSync(
-    join(
-      repositoryRoot,
-      "packages/application/src/pipeline/manage-pipeline-runs.ts",
-    ),
-    "utf8",
+test("M16.5 activation: pipeline-run creation reads the resolved configuration for its pin and for pack workflow selection only", () => {
+  const read = (path: string): string =>
+    readFileSync(join(repositoryRoot, path), "utf8");
+  const manager = read(
+    "packages/application/src/pipeline/manage-pipeline-runs.ts",
   );
-  // This is the one deliberate, owner-approved exception to the rule above:
-  // `ManagePipelineRuns` (packages/application/src/pipeline/, not
-  // src/runtime/) may read `ReadProjectConfiguration`, but only to pin a
-  // run's pack-configuration identity. If this starts failing because the
-  // reference was removed, the M16.5 first-slice pin wiring regressed.
+  const mapper = read(
+    "packages/application/src/pipeline/pack-pipeline-definition.ts",
+  );
+  // The deliberate, owner-approved exception to the rule above (pin slice
+  // 2026-10-11, workflow selection 2026-10-15): `ManagePipelineRuns`
+  // (packages/application/src/pipeline/, not src/runtime/) may read
+  // `ReadProjectConfiguration`. Selection is limited to workflows and their
+  // policies, read in one pure mapper; the manager itself reads only the
+  // selection and the pin.
   expect(manager).toContain("ReadProjectConfiguration");
-  // It must never read a derived, selection-bearing view off the resolved
-  // configuration result (the local binding is named `configuration`):
-  // doing so would let pack content influence which pipeline, stage, role
-  // or policy runs, which is still manifest-driven and out of scope for
-  // this slice.
-  for (const forbidden of [
-    "configuration.workflows",
+  expect(manager).toContain("configuration.selectedPacks");
+  expect(manager).toContain("configuration?.pin");
+  const otherViews = [
     "configuration.roles",
     "configuration.agents",
-    "configuration.policies",
     "configuration.knowledge",
     "configuration.capabilities",
     "configuration.artifactTypes",
     "configuration.evidenceTypes",
     "configuration.validators",
     "configuration.effectiveDefinitions",
+  ];
+  // No other derived view may influence which pipeline, stage, role or
+  // policy runs: activation materializes no role, agent or definition.
+  // Any access form counts: `.`, `?.`, `!.`, a quoted bracket key, or
+  // destructuring the views. Aliasing the whole configuration is not detected.
+  const viewAccess = (view: string): RegExp =>
+    new RegExp(
+      `configuration[!?]?\\.${view}\\b|configuration[!?]?\\.?\\[\\s*["'\`]${view}["'\`]\\s*\\]|\\{[^}]*\\b${view}\\b[^}]*\\}\\s*=\\s*(input\\.)?configuration`,
+      "u",
+    );
+  for (const view of [
+    "workflows",
+    "policies",
+    ...otherViews.map((name) => name.replace("configuration.", "")),
   ])
-    expect(manager).not.toContain(forbidden);
-  // The only fields this slice may read off a resolved configuration.
-  expect(manager).toContain("configuration.selectedPacks");
-  expect(manager).toContain("configuration.pin");
+    expect(manager).not.toMatch(viewAccess(view));
+  for (const view of otherViews.map((name) =>
+    name.replace("configuration.", ""),
+  ))
+    expect(mapper).not.toMatch(viewAccess(view));
+  expect(mapper).toContain("configuration.workflows");
+  expect(mapper).toContain("configuration.policies");
 });
 
 test("GP-09 legacy profile stays a derived read model outside scheduling, storage and portable state", () => {

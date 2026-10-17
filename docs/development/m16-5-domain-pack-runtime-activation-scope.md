@@ -1,9 +1,11 @@
 # M16.5 — Domain Pack Runtime Activation: scope proposal
 
-Status: **proposal, not approved**. This document changes no code and commits
-to no acceptance criteria. It exists so the project owner can rule on the open
-decisions below before any M16.5 task is opened, per this project's
-"Architecture changes: approval-required" policy. See the
+Status: **owner decisions recorded 2026-10-15; no acceptance criteria are
+committed here**. All five decisions below are resolved, and each M16.5 task
+is still scoped by its own task record. The document was written so the
+project owner could rule on the open decisions before any M16.5 task was
+opened, per this project's "Architecture changes: approval-required" policy.
+See the
 [roadmap](roadmap.md#m165--domain-pack-runtime-activation) stub this document
 expands on, and the
 [M16 exit re-scope](generic-core-domain-packs.md#m16-exit-re-scope-owner-decision-2026-10-06)
@@ -14,27 +16,31 @@ that created M16.5.
 The user asked for ai-office to eventually have a working legal pack
 (civil/criminal/labor). `packages/domain-pack-legal/manifest.json` now
 declares that content at the definition layer (practice-area-depth addition,
-2026-10-09), but nothing in the Runtime executes from a pack yet: pipeline
-runs are still created from the legacy `OfficeManifest`, no run pins a pack
-configuration, and no project has adopted any pack in production. Closing
-that gap is M16.5. It has no owner-approved scope today — this document is the
-first step toward one, not the scope itself.
+2026-10-09). The first activation slice delivered in PR #168 pins the resolved
+configuration for nonempty pack selections. The subsequent 2026-10-15 slice
+selects resolved workflows for projects with selected packs while preserving
+manifest selection for projects without packs. Production pack adoption
+remains GP-10C-2 work. The historical pin-only proposal below records its
+original boundary; each later task retains its own acceptance criteria.
 
 ## What M16.5 is already expected to contain
 
-Carried over verbatim from the M16 exit re-scope decision
-(`generic-core-domain-packs.md:5677-5684`); the "depends on" column is
-provisional and set by each item's own future scope proposal, not by this
-document:
+Carried over from the M16 exit re-scope and updated to the owner's
+2026-10-15 order. The table records the accepted ordering prerequisites;
+each item's task record defines its remaining scope and acceptance criteria:
 
-| Item | Depends on (provisional) | Scope |
-| --- | --- | --- |
-| Runtime activation (no task yet) | GP-10B-2, GP-25 | Runtime execution consumes the resolved configuration; a new run persists its `configurationDigest` and exact source pack tuples with its existing pins (ADR-0026). |
-| GP-24 — block pack removal on active pack-pinned runs | Runtime activation | Block a pack removal while an active run pins that pack. |
-| Runtime task `a45ddb12-3159-4b60-9b8b-c26516720834` | GP-10B-1, GP-10B-2, GP-25, activation | Execution parity: compare execution from a resolved configuration with legacy execution. |
-| GP-14B — evidence and validator enforcement | GP-14A, M11.6 Phase B | Stale evidence and invalid validator output fail closed, with version-bound review. |
-| GP-10C-2 — development pack adoption | GP-10C-1, activation | Previewed explicit adoption of the development pack and its catalog registration, preserving old bindings. |
-| GP-16 run gate | GP-16, activation | Bind registered providers at bootstrap; reject a missing required provider before runs. |
+| Item                                                       | Depends on                              | Scope                                                                                                                                                                                           |
+| ---------------------------------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runtime activation (task `aa10a111`, requirement M165-ACT) | GP-10B-2, GP-25                         | Consume the resolved configuration. PR #168 delivered configuration pins; the 2026-10-15 slice delivered selected-pack workflow, stage and role selection. It creates no Runtime role or agent. |
+| Execution parity (task `a45ddb12`)                         | GP-10B-1, GP-10B-2, GP-25, activation   | Compare execution from a resolved configuration with legacy execution.                                                                                                                          |
+| GP-10C-2 — development pack adoption                       | GP-10C-1, activation; after parity      | Preview explicit adoption and catalog registration, preserving old bindings.                                                                                                                    |
+| GP-24 — block pack removal on active pack-pinned runs      | Runtime activation; after GP-10C-2      | Use activation's persisted pins to block removal. Its own scope determines whether workflow changes are also blocked.                                                                           |
+| GP-16 run gate (task `f8d75709`)                           | GP-16, activation, GP-24                | Bind registered providers at bootstrap and reject a missing required provider before runs. Neither parity nor GP-24 owns this gate.                                                             |
+| GP-12 follow-ups (`57a1833f`, `e003843f`; M165-GP12-FU)    | After the run gate in the owner's order | Each follow-up retains its own task scope.                                                                                                                                                      |
+
+GP-14B moved to M11.6 on 2026-10-15 (requirement GP-14B-M116, task
+`d991b5be`). It depends on GP-14A and M11.6 Phase B's artifact, evidence and
+review contract; it is outside this M16.5 sequence.
 
 ADR-0026 (`docs/adr/ADR-0026-core-domain-pack-boundary.md`) already describes
 the target for most of this: Runtime consumption of generic effective
@@ -44,28 +50,31 @@ authoritative transaction; removal previewed and blocked while active pinned
 runs or project-owned references need the pack; a previewed, explicit
 migration to a development-pack binding; fail-closed resolution and policy
 composition; and cross-domain fixtures (development, legal, manufacturing,
-empty/custom) exercising the same Runtime contracts. The M16 doc itself
-records these parts as accepted-but-unmet and reserved for M16.5
-(`generic-core-domain-packs.md:5693-5697`).
+empty/custom) exercising the same Runtime contracts. The
+[M16 exit record](generic-core-domain-packs.md#m16-exit-re-scope-owner-decision-2026-10-06)
+reserved these clauses for M16.5 rather than claiming them at the M16 exit.
+PR #168 subsequently delivered run pinning, and the 2026-10-15 activation
+slice delivered selected-pack workflow selection. Execution parity, removal
+guarding and production adoption remain task-owned work.
 
-A task ID for exactly this item is already reserved, outside this document,
-by the in-progress Agent Workflow Studio program plan:
-`docs/development/agent-workflow-studio.md:225` tracks "M16.5 — Runtime
-activation (execution from the resolved configuration)" as Runtime task
-`aa10a111-9658-4f11-b99f-7074fe522588`, a hard prerequisite of AWS-04-T4 and
-AWS-09-T3. Any approved scope for this item should use that task ID rather
-than minting a new one.
+The [roadmap's M16.5 record](roadmap.md#m165--domain-pack-runtime-activation)
+assigns Runtime activation to task `aa10a111-9658-4f11-b99f-7074fe522588`
+(requirement M165-ACT). Activation slices retain that task identity.
 
 ## Proposed first slice: Runtime activation (pin only, no pipeline-selection change)
 
 At the user's request, this narrows "Runtime activation" to the smallest
 piece that is both coherent and independently approvable: satisfy only
 ADR-0026's run-pinning clause. It deliberately leaves pipeline/stage/role
-*selection* on its current legacy path, and leaves `officeTaskKinds`, the
-GP-16 run gate, GP-24 and GP-14B for later slices (open decisions 1-3 below
-still apply to those, not to this one).
+_selection_ on its current legacy path, and leaves `officeTaskKinds`, the
+GP-16 run gate and GP-24 for later slices (GP-14B left M16.5 for M11.6; the
+decisions below are now resolved).
 
-**As-is, grounded in code (file:line):**
+**Historical baseline before PR #168, grounded in code at proposal time:**
+
+The following baseline and proposed shape explain the delivered pin-only
+slice; the implementation status below supersedes their pre-implementation
+statements.
 
 - The only `PipelineRun.create` call site in the codebase is
   `ManagePipelineRuns.start` (`packages/application/src/pipeline/manage-pipeline-runs.ts:52-122`).
@@ -89,8 +98,8 @@ still apply to those, not to this one).
 - `ReadProjectConfiguration.read(projectId)` (`packages/application/src/domain-pack/read-project-configuration.ts:28-59`)
   already computes, fresh on every call inside one short transaction, exactly
   the shape ADR-0026 wants pinned: `pin: {configurationDigest,
-  coreContractVersion, bindingRevision, definitionRevision, selectedPacks,
-  resolvedPacks}` (`resolve-project-configuration.ts:328-335`), where each of
+coreContractVersion, bindingRevision, definitionRevision, selectedPacks,
+resolvedPacks}` (`resolve-project-configuration.ts:328-335`), where each of
   `selectedPacks`/`resolvedPacks` is a `{id, version, manifestDigest}` tuple.
   Today its only caller is the inspection-only `project:configuration:show`
   CLI (`packages/runtime-host/src/commands/project-configuration.ts:27-44`);
@@ -102,7 +111,7 @@ still apply to those, not to this one).
 manifestDigest)` tuples **alongside its existing immutable manifest/definition
 pins** in one authoritative transaction. This is a forward-only extension...
 None of these cases changes the task, run, approval or action state
-machines." The ADR does not say *how* to thread the resolved pin into run
+machines." The ADR does not say _how_ to thread the resolved pin into run
 creation — that mechanism is this proposal's job, not something already
 decided.
 
@@ -150,7 +159,7 @@ construction out of `commands/pipeline.ts` entirely, into the one place
 `definitions`/`packBindings` directly, and `tests/unit/architecture-boundaries.test.ts`
 gained an explicit test asserting this pin-only boundary.
 
-**What this slice does *not* do, stated plainly:** it does not make a legal,
+**What this slice does _not_ do, stated plainly:** it does not make a legal,
 civil, criminal or labor matter runnable — this slice leaves task-kind handling
 unchanged (the list was closed when it shipped; it was opened afterwards by a
 separate standalone change, see decision 1) and pipeline/stage/role selection
@@ -162,14 +171,30 @@ pattern already used in `tests/integration/legal-reference-pack.test.ts` and
 `tests/integration/four-domain-definition-gate.test.ts`). The execution-parity
 task (`a45ddb12-3159-4b60-9b8b-c26516720834`) stays out of scope: comparing
 pack-resolved execution against legacy execution is meaningless until pipeline
-*selection* also comes from a pack, which this slice does not change.
+_selection_ also comes from a pack, which this slice does not change.
 
-## Open owner decisions
+## Owner rulings, 2026-10-15
 
-Decision 1 is resolved (above); the others have no owner ruling yet. They block the *full* M16.5 scope;
-the first slice above needs none of them, since it only pins identity and
-leaves pipeline selection, task-kind routing and policy enforcement
-untouched.
+- Decision 2 (run gate): its own task `f8d75709`, after Runtime activation and
+  GP-24. The execution-parity task and GP-24 do not own it.
+- Decision 3 (GP-14B): deferred to M11.6, whose Phase B it depends on. It is
+  requirement GP-14B-M116 and leaves M16.5.
+- Decision 4 (ADR-0026): sufficient as the target; implement it as accepted, task by task. A
+  conflict found during implementation stops work for an owner decision.
+- Decision 5 and the extent of activation: selection of pipeline, stages and
+  roles comes from the resolved configuration only for projects that adopted
+  a pack (GP-10C-2); projects without an adopted pack keep legacy selection.
+  Execution parity proves the two paths equivalent for the development pack.
+- Order: activation, then parity, GP-10C-2, GP-24, the run gate, and the two
+  GP-12 follow-ups.
+
+## Owner decisions (all resolved)
+
+All five decisions are resolved: decision 1 on 2026-10-11 and decisions 2-5 on
+2026-10-15, as summarized in the rulings above. The entries below keep the
+original question for each, each marked with its resolution. The first slice
+above needed none of them, since it only pins identity and leaves pipeline
+selection, task-kind routing and policy enforcement untouched.
 
 1. **Opening the closed `officeTaskKinds` list. — Resolved 2026-10-11 as a
    standalone change.** `packages/domain/src/office/office-manifest.ts` used to
@@ -180,31 +205,29 @@ untouched.
    This resolves only that question. It is not part of M16.5 delivery and does
    not approve the rest of this proposal; whether the M16 "no privileged core
    import or branch" rule covers the list is not decided here.
-2. **Splitting the GP-16 run gate.** The merged GP-16 delivered only
+2. **Splitting the GP-16 run gate. — Resolved 2026-10-15: its own task
+   `f8d75709`, after Runtime activation and GP-24.** The merged GP-16 delivered only
    capability declarations and fail-closed provider availability at
    resolution/binding preflight; "bind registered providers at bootstrap" and
-   "reject a missing required provider before runs" are M16.5. The roadmap
-   itself flags the split between the execution-parity task (`a45ddb12`) and
-   GP-24 as undecided. **Needed decision:** which task owns the run gate, and
-   in what order relative to Runtime activation.
-3. **GP-14B's dependency on M11.6 Phase B.** Evidence/validator *enforcement*
+   "reject a missing required provider before runs" belong to `f8d75709`.
+   Neither execution parity (`a45ddb12`) nor GP-24 owns this gate.
+3. **GP-14B's dependency on M11.6 Phase B. — Resolved 2026-10-15: GP-14B
+   moves to M11.6 and leaves M16.5.** Evidence/validator _enforcement_
    (as opposed to the GP-14A declaration layer, already delivered) needs the
    M11.6 Phase B persisted artifact/evidence/review contract, which does not
-   exist in code. **Needed decision:** whether M16.5 waits for M11.6 Phase B
-   before scoping GP-14B, or ships Runtime activation first without
-   enforcement and defers GP-14B again.
-4. **ADR-0026 status.** Several of its clauses are accepted-but-unmet. **Needed
-   decision:** whether M16.5 treats ADR-0026 as already settling the target
-   architecture (just needing implementation), or whether activation design
-   work surfaces changes that need an ADR amendment/addendum before
-   implementation starts.
+   exist in code. M16.5 proceeds without GP-14B; M11.6 owns its prerequisite
+   contract and enforcement delivery.
+4. **ADR-0026 status. — Resolved 2026-10-15: ADR-0026 is sufficient and is
+   the target to implement as accepted.** Several clauses remain
+   accepted-but-unmet. Implement them task by task; any architectural conflict
+   discovered during implementation stops work for an owner decision.
 5. **Which fixtures Runtime activation targets first.** Resolved for the
    pin-only first slice above: it is generic to any nonempty pack selection
    and is proven through the existing development/legal/manufacturing test
-   fixtures without choosing one. Still open for later slices that select
-   pipeline/stage/role content from a pack: whether civil/criminal/labor
-   content, the original minimal `matter-workflow`, or the development pack
-   (via GP-10C-2) is exercised first.
+   fixtures without choosing one. Resolved 2026-10-15 for later slices:
+   selection from a pack applies only to projects that adopted a pack, and
+   execution parity proves the pack and legacy paths equivalent for the
+   development pack (via GP-10C-2).
 
 ## Non-goals (carried from M16.5's roadmap stub)
 
@@ -217,8 +240,7 @@ worker queue.
 
 ## What happens after this document
 
-This document does not authorize work. The next step is the project owner
-ruling on the five open decisions above (or explicitly deferring some of
-them), after which a conventional per-task scope proposal (mirroring the
-GP-xx pattern already used throughout `generic-core-domain-packs.md`) can be
-written for whichever M16.5 item is approved to start first.
+This document does not authorize work by itself. With the five decisions
+resolved, each M16.5 item proceeds under its own task record and scope
+(mirroring the GP-xx pattern used throughout `generic-core-domain-packs.md`),
+in the order set by the rulings above.
