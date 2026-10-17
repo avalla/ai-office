@@ -294,11 +294,16 @@ PostgreSQL project authority (M22) is unaffected by either.
   generation has been accepted, an absent, unreadable or rolled-back registry (a
   missing directory or pointer or manifest, an unreadable one, or one that fails
   the rollback check) refuses every subject with `registry_unreadable`,
+  as does a state file that is itself unreadable, corrupt or fails verification,
+  and an absent state file while a registry directory holds any manifest or
+  pointer (the rollback check cannot run, so it never passes by default),
   source-shipped baselines included, because revocations cannot be ruled out;
   only an explicit operator reset of the state clears this. A reset needs plan
   and approval like a registration, is audited, and re-enables every
   source-shipped record that a registry revocation had refused, so the operator
-  reviews the revocations first.
+  reviews the revocations first. Deleting the state file together with the
+  registry by a same-user process is the coordinated rewrite that decision 7 and
+  the "Rollback and tampering" limit leave to M10.
 - **Revocation** is a new record in a new generation. Removing trust is always
   allowed to the operator; adding trust always needs a decision.
 - **Source-shipped records.** The `baseline_import` and `legacy_policy` records
@@ -407,7 +412,11 @@ Steps, in this order, each deterministic:
    decision with an unobservable dependency is refused. Whether a dependency is
    observable for Codex is a finding of WC-03: the metadata is fetched by the
    client with the login at session start, so observing it may need a client
-   process run, not a pre-dispatch read.
+   process run, not a pre-dispatch read. The `legacy_policy` record is exempt
+   from this step: it asserts no guarantee above `unverified`, declares no
+   metadata dependency and has no audited projection to compare, and today's
+   Claude admission performs no metadata comparison, so skipping it keeps that
+   admission unchanged. The result discloses the basis `legacy_policy` instead.
 7. Each required guarantee must be satisfied by the asserted state
    (`guarantee_unverified`, `guarantee_unsupported`).
 
@@ -676,7 +685,7 @@ current manifest's active set and not revoked (an invalid, superseded
 predecessor that only a retained older manifest lists must not block its valid
 successor), and where the pure function, the registry port and the
 snapshot live (types in `packages/domain`, port and admission in
-`packages/application`, the file registry in an infrastructure package, with the
+`packages/application`, the registry adapter in an infrastructure package, with the
 dependency direction unchanged).
 
 ## Owner decisions of 2026-10-16
