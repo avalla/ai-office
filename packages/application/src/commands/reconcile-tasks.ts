@@ -5,12 +5,15 @@
  * persisted pipelines, agent runs, and linked requirements and reports where
  * they contradict each other. Detection never writes.
  *
- * Repair is deliberately narrow. Exactly one finding has an outcome the
- * codebase already defines — a terminal pipeline whose task never followed it,
- * which `ManagePipelineRuns.syncTaskTerminal` would have produced had its
- * transaction not been interrupted. Everything else is reported and refused,
- * because guessing a task's history from circumstantial evidence fabricates
- * project history, and a wrong `completed` is unrecoverable.
+ * Repair is deliberately narrow. Two findings have an outcome the codebase
+ * already defines: a terminal pipeline whose task never followed it, which
+ * `ManagePipelineRuns.syncTaskTerminal` would have produced had its
+ * transaction not been interrupted, and a started dependent whose
+ * prerequisite left review for `blocked`, `failed`, or `cancelled` — the
+ * lifecycle transition (`block` or `cancel`) an operator would run by hand,
+ * still only against an approved plan hash. Everything else is reported and
+ * refused, because guessing a task's history from circumstantial evidence
+ * fabricates project history, and a wrong `completed` is unrecoverable.
  */
 
 import { createHash } from "node:crypto";
@@ -61,6 +64,15 @@ export type TaskReconciliationFinding =
   | "completed_milestone_active_task"
   | "verified_requirement_competing_tasks"
   | "verified_requirement_duplicate_tasks"
+  /**
+   * A prerequisite is neither completed nor in review.
+   *
+   * For a dependent that already started under the review-ready admission
+   * rule, a prerequisite now at `blocked`, `failed`, or `cancelled` must have
+   * left `waiting_review` after admission; the issue then carries
+   * `reviewExits` and, unless the dependent has live execution, an
+   * approval-gated `block`/`cancel` repair.
+   */
   | "blocking_prerequisite_incomplete"
   | "invalid_task_dependency";
 
@@ -96,6 +108,22 @@ export interface TaskReconciliationIssue {
   repairable: boolean;
   /** Why a repair is refused. Null when `repairable` is true. */
   refusalReason: string | null;
+  /**
+   * Prerequisites of a started dependent that left `waiting_review` for
+   * `blocked`, `failed`, or `cancelled`, in dependency order.
+   *
+   * Present only on `blocking_prerequisite_incomplete` for a started
+   * dependent. `from` is an invariant-derived fact, not an observed
+   * transition: start admission accepts only `completed` or `waiting_review`
+   * prerequisites, and `completed` is terminal, so review is the only state
+   * such a prerequisite can have left. (A dependency predating that rule
+   * could falsify it; the invariant is documented, not enforced.)
+   */
+  reviewExits?: readonly {
+    taskId: string;
+    from: "waiting_review";
+    to: TaskStatus;
+  }[];
 }
 
 export interface TaskReconciliationReport {
@@ -128,6 +156,19 @@ export class TaskReconciliationApprovalError extends Error {
       "Reconciliation plan approval does not match the current plan; re-run task:reconcile and approve the new plan hash",
     );
     this.name = "TaskReconciliationApprovalError";
+  }
+}
+
+/**
+ * The plan matched at derivation, but a fact it was derived from changed
+ * before the mutation landed. Same recovery as a mismatched approval:
+ * re-inspect and approve the plan that describes the current state.
+ */
+export class TaskReconciliationStalePlanError extends TaskReconciliationApprovalError {
+  constructor(detail: string) {
+    super();
+    this.name = "TaskReconciliationStalePlanError";
+    this.message = `Reconciliation plan went stale: ${detail}; re-run task:reconcile and approve the new plan`;
   }
 }
 
@@ -241,20 +282,97 @@ export class ReconcileTasks {
             const unmet = blockedBy
               .map((item) => `${item.taskId} (${item.status})`)
               .join(", ");
-            issues.push({
-              ...base,
-              finding: "blocking_prerequisite_incomplete",
-              severity: "warning",
-              summary: started
-                ? `started with prerequisites neither completed nor in review: ${unmet}; completing it requires every prerequisite completed`
-                : `cannot start until prerequisites are completed or in review: ${unmet}`,
-              suggestedCommand: null,
-              repairOperation: null,
-              repairable: false,
-              refusalReason: started
-                ? "prerequisites must be completed before this task can complete; resolve them through their own lifecycle"
-                : "prerequisites must reach review or completion through their own lifecycle",
-            });
+            // A started dependent was admitted with every prerequisite
+            // completed or in review; `completed` is terminal, so any
+            // prerequisite now blocked, failed, or cancelled must have left
+            // `waiting_review` after admission — a review exit.
+            const exits = blockedBy.filter(
+              (item) =>
+                item.status === "blocked" ||
+                item.status === "failed" ||
+                item.status === "cancelled",
+            );
+            if (started && exits.length > 0) {
+              // A terminal exit dominates a recoverable one: with any
+              // prerequisite failed or cancelled the dependent can never
+              // complete, so the repair is cancel; blocked alone stalls the
+              // work reversibly, so the repair is block.
+              const terminal = exits.some((item) =>
+                isTerminalTaskStatus(item.status),
+              );
+              const operation: TaskLifecycleOperation = terminal
+                ? "cancel"
+                : "block";
+              const live = blockedBy.filter(
+                (item) =>
+                  item.status !== "blocked" &&
+                  item.status !== "failed" &&
+                  item.status !== "cancelled",
+              );
+              const clauses = exits.map((item) =>
+                isTerminalTaskStatus(item.status)
+                  ? `prerequisite ${item.taskId} exited waiting_review -> ${item.status} and can never complete this task`
+                  : `prerequisite ${item.taskId} exited waiting_review -> ${item.status}; work is stalled until the prerequisite recovers`,
+              );
+              if (live.length > 0)
+                clauses.push(
+                  `still unmet: ${live
+                    .map((item) => `${item.taskId} (${item.status})`)
+                    .join(", ")}`,
+                );
+              const reviewExits = exits.map((item) => ({
+                taskId: item.taskId,
+                from: "waiting_review" as const,
+                to: item.status,
+              }));
+              const repairReason = reviewExitRepairReason(reviewExits);
+              // `task:block` is refused without its mandatory --reason, so
+              // the suggestion carries it — the report's contract is that a
+              // suggestion is executable from the status shown beside it.
+              const suggestion =
+                operation === "block"
+                  ? `${taskLifecycleOperations.block.command} --reason ${JSON.stringify(repairReason)}`
+                  : taskLifecycleOperations[operation].command;
+              // Batch repair goes through `applyWithinCurrentTransaction`,
+              // which deliberately skips agent-run cancellation. With a
+              // pipeline or agent run in flight the finding is therefore
+              // reported with the direct command instead of a repair.
+              const executing =
+                activeRunTasks.has(task.id) ||
+                (pipelinesByTask.get(task.id) ?? []).some(
+                  (pipeline) => pipeline.status === "active",
+                );
+              issues.push({
+                ...base,
+                finding: "blocking_prerequisite_incomplete",
+                // The board claims in-flight work that can never conclude;
+                // a recoverable stall is a warning.
+                severity: terminal ? "inconsistent" : "warning",
+                summary: `started under review-ready admission; ${clauses.join("; ")}`,
+                suggestedCommand: suggestion,
+                repairOperation: executing ? null : operation,
+                repairable: !executing,
+                refusalReason: executing
+                  ? "an active pipeline or agent run is executing this task; the batch repair does not stop live execution, so apply the suggested command directly once that work is accounted for"
+                  : null,
+                reviewExits,
+              });
+            } else {
+              issues.push({
+                ...base,
+                finding: "blocking_prerequisite_incomplete",
+                severity: "warning",
+                summary: started
+                  ? `started with prerequisites neither completed nor in review: ${unmet}; completing it requires every prerequisite completed`
+                  : `cannot start until prerequisites are completed or in review: ${unmet}`,
+                suggestedCommand: null,
+                repairOperation: null,
+                repairable: false,
+                refusalReason: started
+                  ? "prerequisites must be completed before this task can complete; resolve them through their own lifecycle"
+                  : "prerequisites must reach review or completion through their own lifecycle",
+              });
+            }
           }
         } catch {
           issues.push({
@@ -376,7 +494,20 @@ export class ReconcileTasks {
             statusByTask,
             "completion",
           ).length > 0;
-        const repairable = !ambiguous && reachable && !prerequisitesOpen;
+        // One task takes at most one repair per plan: a repair earlier in the
+        // plan (a review-exit cancel or block) changes this task's status, so
+        // a second transition derived from the same inspection would target a
+        // state the first one already left — the approved plan could never be
+        // applied. Dependency findings are pushed before pipeline findings
+        // for the same task, so the covering repair is already listed here.
+        const covering = issues.find(
+          (issue) => issue.taskId === task.id && issue.repairable,
+        );
+        const repairable =
+          !ambiguous &&
+          reachable &&
+          !prerequisitesOpen &&
+          covering === undefined;
         issues.push({
           ...base,
           finding: "terminal_pipeline_open_task",
@@ -394,11 +525,13 @@ export class ReconcileTasks {
           repairable,
           refusalReason: ambiguous
             ? "pipelines for this task disagree or one is still active"
-            : reachable
-              ? prerequisitesOpen
-                ? "completion requires every prerequisite to be completed"
-                : null
-              : `task cannot move from ${task.status} to ${target}`,
+            : covering !== undefined
+              ? `already covered by the ${covering.finding} repair in this plan; one task takes at most one repair per approved plan`
+              : reachable
+                ? prerequisitesOpen
+                  ? "completion requires every prerequisite to be completed"
+                  : null
+                : `task cannot move from ${task.status} to ${target}`,
         });
       }
 
@@ -503,6 +636,45 @@ export class ReconcileTasks {
       }
     }
 
+    // A review-exit repair is valid only while every prerequisite of the
+    // dependent keeps the state the plan was derived from, and another
+    // repair in the same plan can move exactly those prerequisites: a
+    // blocked prerequisite with a stale terminal pipeline carries its own
+    // cancel, which applied first would move it off the recorded exit
+    // before the dependent's repair re-reads it, and applied second would
+    // strand the dependent blocked behind a terminal prerequisite. A
+    // prerequisite still in review is no different: cancelling it turns the
+    // dependent's recoverable block into the terminal-exit cancel, so the
+    // check covers every prerequisite edge, not only the recorded exits.
+    // Dependency findings are derived before the pipeline findings that can
+    // conflict with them and tasks are visited in storage order, so the
+    // conflict is resolved here, once every finding is known: the
+    // dependent's repair is refused and named after the prerequisite repair
+    // to apply first. Re-inspection after that repair derives the
+    // dependent's fresh finding.
+    const repairedTasks = new Set(
+      issues.filter((issue) => issue.repairable).map((issue) => issue.taskId),
+    );
+    const prerequisitesByTask = new Map<string, string[]>();
+    for (const edge of dependencies ?? []) {
+      const values = prerequisitesByTask.get(edge.taskId) ?? [];
+      values.push(edge.dependsOnTaskId);
+      prerequisitesByTask.set(edge.taskId, values);
+    }
+    for (const issue of issues) {
+      if (!issue.repairable || issue.reviewExits === undefined) continue;
+      const conflict = (prerequisitesByTask.get(issue.taskId) ?? []).find(
+        (prerequisiteId) => repairedTasks.has(prerequisiteId),
+      );
+      if (conflict === undefined) continue;
+      issue.repairable = false;
+      issue.repairOperation = null;
+      // The direct command would apply the stale-exit outcome by hand, which
+      // is exactly what the deferral exists to prevent.
+      issue.suggestedCommand = null;
+      issue.refusalReason = `prerequisite ${conflict} has its own repair in this plan; apply it first, then re-inspect`;
+    }
+
     const repairs = issues.filter((issue) => issue.repairable);
     return {
       projectId,
@@ -525,7 +697,12 @@ export class ReconcileTasks {
    *
    * The plan is re-derived *inside* that transaction and the approval is
    * checked against it, because the hash must describe the state actually being
-   * mutated rather than a reading taken before the transaction opened.
+   * mutated rather than a reading taken before the transaction opened. A
+   * review-exit repair is additionally revalidated at apply time: the reads
+   * the plan was derived from take no locks, so the complete exit set of the
+   * dependent's prerequisites is recomputed, and a prerequisite that
+   * recovered, moved, or newly left review between derivation and this write
+   * refuses the whole batch instead of being overwritten from stale evidence.
    *
    * Every mutation still goes through the lifecycle service, so the domain
    * guard and the audit event are the same ones a manual command would use;
@@ -561,15 +738,74 @@ export class ReconcileTasks {
         to: TaskStatus;
         operation: TaskLifecycleOperation;
       }[] = [];
+      // Apply-time revalidation needs every prerequisite edge of the
+      // repaired dependents, not only the recorded exits: a prerequisite
+      // still in review at derivation may exit before the write below.
+      const dependencyEdges =
+        repairs.some(({ issue }) => issue.reviewExits !== undefined) &&
+        this.dependencies !== undefined
+          ? await this.dependencies.listByProject(input.projectId)
+          : [];
       for (const { issue, operation } of repairs) {
+        if (issue.reviewExits !== undefined) {
+          // A review-exit repair is valid only while the complete exit set
+          // it was derived from still holds. READ COMMITTED does not lock
+          // the reads the plan was derived from, so these re-reads are fresh
+          // statements seeing the latest committed state: a recovered or
+          // moved exit, and a prerequisite that newly left review, each
+          // refuse the whole batch — the operator re-inspects — rather than
+          // mutating from stale evidence.
+          const prerequisiteIds = dependencyEdges
+            .filter((edge) => edge.taskId === issue.taskId)
+            .map((edge) => edge.dependsOnTaskId);
+          const currentExits = new Map<string, TaskStatus>();
+          for (const prerequisiteId of prerequisiteIds) {
+            const status = (
+              await this.tasks.findById(prerequisiteId)
+            )?.snapshot().status;
+            if (
+              status === "blocked" ||
+              status === "failed" ||
+              status === "cancelled"
+            )
+              currentExits.set(prerequisiteId, status);
+          }
+          const recorded = new Map(
+            issue.reviewExits.map((exit) => [exit.taskId, exit.to]),
+          );
+          // Set comparison, so a legitimately unchanged plan never refuses
+          // on ordering; iteration follows the deterministic edge order, so
+          // the named prerequisite is stable as well.
+          const moved = issue.reviewExits.find(
+            (exit) => currentExits.get(exit.taskId) !== exit.to,
+          );
+          if (moved !== undefined)
+            throw new TaskReconciliationStalePlanError(
+              `prerequisite ${moved.taskId} no longer holds the recorded review exit`,
+            );
+          const appeared = [...currentExits].find(
+            ([taskId]) => !recorded.has(taskId),
+          );
+          if (appeared !== undefined)
+            throw new TaskReconciliationStalePlanError(
+              `prerequisite ${appeared[0]} exited review to ${appeared[1]} after the plan was approved`,
+            );
+        }
+        // `block` mandates a reason and `cancel` accepts one; a review-exit
+        // repair names the exits it answers, a pipeline repair names its
+        // evidence.
+        const reason =
+          issue.reviewExits !== undefined
+            ? reviewExitRepairReason(issue.reviewExits)
+            : operation === "cancel"
+              ? "reconciled with terminal pipeline"
+              : undefined;
         const to = await this.lifecycle.applyWithinCurrentTransaction({
           projectId: input.projectId,
           taskId: issue.taskId,
           actorId: input.actorId,
           operation,
-          ...(operation === "cancel"
-            ? { reason: "reconciled with terminal pipeline" }
-            : {}),
+          ...(reason === undefined ? {} : { reason }),
         });
         applied.push({
           taskId: issue.taskId,
@@ -610,6 +846,26 @@ function correctionCommandFor(from: TaskStatus, to: TaskStatus): string | null {
     : null;
 }
 
+/**
+ * The audit rationale of a review-exit repair: which prerequisites left
+ * review, and where to. Deterministic from the finding, so the plan the
+ * operator approved and the record the repair writes cannot drift apart.
+ *
+ * The clause list is capped: the reason is validated against
+ * `maximumTaskReasonLength` inside the lifecycle, so an unbounded join would
+ * make a plan with many exits unappliable. The full exit list stays on the
+ * finding and in the plan hash; only the human-readable reason is elided.
+ */
+function reviewExitRepairReason(
+  exits: NonNullable<TaskReconciliationIssue["reviewExits"]>,
+): string {
+  const named = exits.slice(0, 3);
+  const rest = exits.length - named.length;
+  return `reconciled: ${named
+    .map((exit) => `prerequisite ${exit.taskId} exited review to ${exit.to}`)
+    .join(", ")}${rest === 0 ? "" : `, and ${rest} more`}`;
+}
+
 function similarTaskTitles(left: string, right: string): boolean {
   const normalize = (value: string): string =>
     value
@@ -639,8 +895,13 @@ function planHash(
           finding: issue.finding,
           from: issue.status,
           // The operation, not the human-facing suggestion: the hash must
-          // cover what would be executed.
+          // cover what would be executed. The review exits are included for
+          // the same reason: the repair's audit reason is derived from them,
+          // so an exit the operator never saw must not enter an approved plan.
           operation: issue.repairOperation,
+          ...(issue.reviewExits === undefined
+            ? {}
+            : { reviewExits: issue.reviewExits }),
         })),
       }),
       "utf8",

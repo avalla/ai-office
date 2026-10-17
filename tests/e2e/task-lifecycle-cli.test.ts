@@ -721,6 +721,127 @@ describe("task reconciliation CLI", () => {
     expect(report.issues).toEqual([]);
     expect(report.planHash).toBeNull();
   });
+
+  test("reports and repairs a started dependent whose prerequisite left review", async () => {
+    const { root, projectId } = await board();
+    const prerequisite = await newTask(root, projectId, "Foundation");
+    const dependent = await newTask(root, projectId, "Dependent");
+    expect(
+      (
+        await cli(root, [
+          "task:dependency:add",
+          "--project",
+          projectId,
+          "--task",
+          dependent,
+          "--depends-on",
+          prerequisite,
+        ])
+      ).code,
+    ).toBe(0);
+    const act = async (command: string, taskId: string, extra: string[] = []) =>
+      cli(root, [command, "--project", projectId, "--task", taskId, ...extra]);
+    expect((await act("task:start", prerequisite)).code).toBe(0);
+    expect((await act("task:submit-review", prerequisite)).code).toBe(0);
+    // Admitted under the review-ready rule.
+    expect((await act("task:start", dependent)).code).toBe(0);
+    expect(
+      (await act("task:fail", prerequisite, ["--reason", "Review rejected"]))
+        .code,
+    ).toBe(0);
+
+    const inspected = await cli(root, [
+      "task:reconcile",
+      "--project",
+      projectId,
+      "--json",
+    ]);
+    expect(inspected.code).toBe(0);
+    const report = JSON.parse(inspected.stdout[0]!) as {
+      planHash: string | null;
+      issues: {
+        taskId: string;
+        finding: string;
+        severity: string;
+        repairable: boolean;
+        repairOperation: string | null;
+        suggestedCommand: string | null;
+        reviewExits?: { taskId: string; from: string; to: string }[];
+      }[];
+    };
+    const issue = report.issues.find(
+      (value) =>
+        value.finding === "blocking_prerequisite_incomplete" &&
+        value.taskId === dependent,
+    );
+    expect(issue).toMatchObject({
+      severity: "inconsistent",
+      repairable: true,
+      repairOperation: "cancel",
+      suggestedCommand: "task:cancel",
+      reviewExits: [
+        { taskId: prerequisite, from: "waiting_review", to: "failed" },
+      ],
+    });
+    expect(report.planHash).toMatch(/^[0-9a-f]{64}$/u);
+
+    // Repair never runs off a fresh inspection alone.
+    const unapproved = await cli(root, [
+      "task:reconcile",
+      "--project",
+      projectId,
+      "--fix",
+    ]);
+    expect(unapproved.code).toBe(1);
+    expect(unapproved.stderr.join("\n")).toContain("requires --approve");
+
+    const applied = await cli(root, [
+      "task:reconcile",
+      "--project",
+      projectId,
+      "--fix",
+      "--approve",
+      report.planHash!,
+      "--json",
+    ]);
+    expect(applied.code).toBe(0);
+    expect(
+      (JSON.parse(applied.stdout[0]!) as { applied: unknown[] }).applied,
+    ).toEqual([
+      {
+        taskId: dependent,
+        from: "running",
+        to: "cancelled",
+        operation: "cancel",
+      },
+    ]);
+
+    // The audit trail says the reconciliation repair did it, and why.
+    expect(auditTrail(root)).toContainEqual({
+      event_type: "task.status_changed",
+      payload_json: JSON.stringify({
+        operation: "cancel",
+        from: "running",
+        to: "cancelled",
+        reason: `reconciled: prerequisite ${prerequisite} exited review to failed`,
+      }),
+    });
+
+    // The repair consumed the finding.
+    const after = await cli(root, [
+      "task:reconcile",
+      "--project",
+      projectId,
+      "--json",
+    ]);
+    expect(after.code).toBe(0);
+    const reparsed = JSON.parse(after.stdout[0]!) as {
+      issues: unknown[];
+      planHash: string | null;
+    };
+    expect(reparsed.issues).toEqual([]);
+    expect(reparsed.planHash).toBeNull();
+  });
 });
 
 /**

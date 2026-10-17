@@ -292,7 +292,7 @@ ai-office task:reconcile --project <project-id> [--json]
 ```
 
 **The default operation is read-only.** It compares each task against its
-pipelines, agent runs, and linked requirements and reports:
+pipelines, agent runs, prerequisites, and linked requirements and reports:
 
 | Finding | Severity | Meaning |
 | --- | --- | --- |
@@ -301,6 +301,17 @@ pipelines, agent runs, and linked requirements and reports:
 | `stale_pending_task` | warning | nothing started, yet every linked requirement is terminal |
 | `completed_task_open_requirements` | warning | work is done while acceptance is still open |
 | `in_flight_task_without_execution` | warning | the board says in flight; no pipeline or agent run is active |
+| `blocking_prerequisite_incomplete` | warning; inconsistent once a started dependent's prerequisite left review for a terminal state | a prerequisite is neither completed nor in review |
+| `invalid_task_dependency` | inconsistent | a prerequisite reference is missing, or the dependency graph contains a cycle |
+| `completed_milestone_active_task` | inconsistent | a completed or archived milestone still has an in-flight task |
+| `verified_requirement_competing_tasks` | warning | a verified requirement has a completed task and a similar task still in flight |
+| `verified_requirement_duplicate_tasks` | warning | a verified requirement links two similar terminal tasks |
+
+A dependent may start while every prerequisite is `completed` or
+`waiting_review`. When such a prerequisite later leaves review for `blocked`,
+`failed`, or `cancelled`, the `blocking_prerequisite_incomplete` finding for
+the started dependent carries a `reviewExits` payload naming each prerequisite
+and its `waiting_review -> <status>` transition.
 
 `in_flight_task_without_execution` is suppressed when
 `terminal_pipeline_open_task` already fired for the same task: it is the same
@@ -318,8 +329,10 @@ ai-office task:reconcile --project <id> --fix --approve <planHash>
 ```
 
 `--fix` never runs without `--approve`, following the same convention as
-`client:apply` and `runtime:purge`. The hash covers the exact repairs listed, so
-a plan that has gone stale is refused rather than reapplied to different state.
+`client:apply` and `runtime:purge`. The hash covers the exact repairs listed —
+for a review-exit repair including the exits themselves, since the repair's
+audit reason is derived from them — so a plan that has gone stale is refused
+rather than reapplied to different state.
 Every repair goes through the lifecycle service, so the domain guard and the
 audit event are the ones a manual command would produce.
 
@@ -330,12 +343,61 @@ approved repairs commit or none do: committing a prefix would leave the project
 in a state nobody approved, while the plan hash the operator holds went on
 claiming otherwise.
 
-**Only one finding is repairable**: `terminal_pipeline_open_task`, whose correct
-outcome existing code already defines — it is what `syncTaskTerminal` would have
-written had its transaction not been interrupted. Even that is refused when the
-evidence is ambiguous: pipelines that ended differently, an active pipeline
-alongside a terminal one, or a task whose current status cannot reach the target
-in one transition.
+**Two findings are repairable.** The first is `terminal_pipeline_open_task`,
+whose correct outcome existing code already defines — it is what
+`syncTaskTerminal` would have written had its transaction not been
+interrupted. Even that is refused when the evidence is ambiguous: pipelines
+that ended differently, an active pipeline alongside a terminal one, or a task
+whose current status cannot reach the target in one transition.
+
+The second is `blocking_prerequisite_incomplete` for a dependent that already
+started under the review-ready admission rule. A prerequisite that left review
+for `failed` or `cancelled` is terminal, so the dependent can never complete:
+the repair is `task:cancel`. A prerequisite that left review for `blocked`
+stalls the dependent reversibly: the repair is `task:block`, undone by
+`task:unblock` once the prerequisite recovers. Both carry the review exit as
+their audit reason (`reconciled: prerequisite <id> exited review to
+<status>`). The batch repair is **refused while the dependent has an active
+pipeline or agent run**, because it deliberately does not stop live execution;
+the finding then suggests the direct command instead — `task:cancel`, or
+`task:block --reason <text>` carrying the exit as its mandatory reason.
+
+**One task takes at most one repair per approved plan.** A repair changes the
+task's status, so a second transition derived from the same inspection would
+target a state the first one already left and the plan could never be
+applied. When a terminal pipeline and a review exit both point at the same
+task, the plan carries the dependency repair and the pipeline finding is
+reported as covered by it.
+
+**A plan never repairs a dependent and its prerequisite together.** A
+review-exit repair is valid only while every prerequisite of the dependent
+keeps the state the plan was derived from, and another repair in the same
+plan can move exactly those prerequisites — a prerequisite with a stale
+terminal pipeline carries its own `task:cancel`, whether it is a recorded
+blocked exit or still in review. When any prerequisite edge of the dependent
+points at a task with its own repair in the plan, the dependent's review-exit
+finding is reported with its repair refused, named after the prerequisite
+repair to apply first; otherwise applying the prerequisite's cancel first
+would make the dependent's apply-time revalidation fail and roll back the
+whole batch, while applying it second would strand the dependent blocked
+behind a terminal prerequisite. Re-inspection after the prerequisite's repair
+derives the dependent's fresh finding — a cancelled prerequisite turns the
+blocked-exit `block` into the terminal-exit `cancel` the state calls for.
+
+**Review-exit repairs are revalidated at apply time.** Immediately before each
+review-exit `block`/`cancel`, the complete exit set of the dependent's
+prerequisites is recomputed inside the plan's transaction — the same
+derivation inspection performs, over fresh reads. If it differs from the
+recorded `reviewExits` — a named exit recovered or moved on, or a
+prerequisite newly left review — the whole batch is refused with
+`TaskReconciliationStalePlanError` and rolls back, and the operator
+re-inspects and approves the new plan. Under PostgreSQL READ COMMITTED these
+re-reads see the latest committed state, shrinking the stale-repair race to
+the window between that final read and the status write itself; the task port
+takes no row locks, so a recovery committing inside that last window is still
+overwritten by the repair. The pre-existing terminal-pipeline repair has the
+same characteristic. Today's production topology — the single-writer SQLite
+runtime host — serializes all writers, so the race cannot occur there at all.
 
 Everything else is reported and refused:
 
