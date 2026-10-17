@@ -404,7 +404,7 @@ export class PersistentRuntimeHost {
       const timer = setTimeout(() => settle("other"), 500);
       connection.once("connect", () => settle("other"));
       connection.once("error", (error: NodeJS.ErrnoException) =>
-        settle(error.code === "ECONNREFUSED" ? "refused" : "other"),
+        settle(isStaleSocketError(socketPath, error) ? "refused" : "other"),
       );
     });
     if (outcome !== "refused")
@@ -448,6 +448,25 @@ export {
   RuntimeHostAlreadyRunningError as DaemonAlreadyRunningError,
 };
 export type OfficeDaemonOptions = PersistentRuntimeHostOptions;
+
+/**
+ * A refused connection proves nothing listens at the socket. Bun before 1.4
+ * reports ENOENT instead for a stale socket file, so ENOENT counts only while
+ * the path is still a socket; a path that vanished or became another file
+ * proves nothing and stays closed.
+ */
+function isStaleSocketError(
+  socketPath: string,
+  error: NodeJS.ErrnoException,
+): boolean {
+  if (error.code === "ECONNREFUSED") return true;
+  if (error.code !== "ENOENT") return false;
+  try {
+    return lstatSync(socketPath).isSocket();
+  } catch {
+    return false;
+  }
+}
 
 class DaemonCommandTimeoutError extends Error {
   constructor() {

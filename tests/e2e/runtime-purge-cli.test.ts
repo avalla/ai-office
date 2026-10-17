@@ -13,6 +13,10 @@ import { join } from "node:path";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { runRuntimePurgeCli } from "../../apps/cli/src/runtime-purge-cli.ts";
+import {
+  resolveTestSocketBase,
+  startSocketHolder,
+} from "../helpers/unix-socket.ts";
 import { daemonProtocolVersion } from "@ai-office/application/protocol/daemon-protocol.ts";
 import { ManageRuntimePurge } from "@ai-office/application/runtime/manage-runtime-purge.ts";
 import {
@@ -22,8 +26,8 @@ import {
 
 const roots: string[] = [];
 
-function temporaryRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
+function temporaryRoot(prefix: string, base: string = tmpdir()): string {
+  const root = mkdtempSync(join(base, prefix));
   roots.push(root);
   return root;
 }
@@ -110,22 +114,16 @@ describe("offline runtime purge CLI", () => {
   });
 
   test("removes a stale coordination socket and keeps the owner's listener configuration", async () => {
-    const root = temporaryRoot("ai-office-purge-coord-");
+    // The socket path must fit sun_path (104 bytes on macOS), so the root
+    // lives under the short socket base rather than the ambient $TMPDIR.
+    const root = temporaryRoot("ao-pc-", resolveTestSocketBase());
     const state = join(root, ".ai-office");
     mkdirSync(state, { recursive: true });
     writeFileSync(join(state, "coordination-listener.json"), "{}\n");
     // A crashed listener leaves its socket file behind; a clean stop would
     // unlink it, so the holder is killed.
     const socket = join(state, "coordination.sock");
-    const holder = Bun.spawn(
-      [
-        process.execPath,
-        "-e",
-        `Bun.serve({ unix: ${JSON.stringify(socket)}, fetch: () => new Response("") }); console.log("ready"); setInterval(() => {}, 1000);`,
-      ],
-      { stdout: "pipe" },
-    );
-    await holder.stdout.getReader().read();
+    const holder = await startSocketHolder(socket);
     holder.kill("SIGKILL");
     await holder.exited;
     expect(existsSync(socket)).toBe(true);
@@ -157,21 +155,13 @@ describe("offline runtime purge CLI", () => {
   });
 
   test("refuses to purge while a coordination listener still answers without the main socket", async () => {
-    const root = temporaryRoot("ai-office-purge-live-");
+    const root = temporaryRoot("ao-pl-", resolveTestSocketBase());
     const state = join(root, ".ai-office");
     mkdirSync(state, { recursive: true });
     writeFileSync(join(state, "project.sqlite"), "authoritative state");
     const socket = join(state, "coordination.sock");
-    const holder = Bun.spawn(
-      [
-        process.execPath,
-        "-e",
-        `Bun.serve({ unix: ${JSON.stringify(socket)}, fetch: () => new Response("") }); console.log("ready"); setInterval(() => {}, 1000);`,
-      ],
-      { stdout: "pipe" },
-    );
+    const holder = await startSocketHolder(socket);
     try {
-      await holder.stdout.getReader().read();
       const output = captureIo();
       expect(
         await runDaemonCli(["runtime:purge"], {

@@ -29,7 +29,10 @@ import {
   CoordinationReadService,
   coordinationReadOperations,
 } from "@ai-office/application/coordination/coordination-read-service.ts";
-import { createTestUnixSocket } from "../helpers/unix-socket.ts";
+import {
+  createTestUnixSocket,
+  startSocketHolder,
+} from "../helpers/unix-socket.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -567,16 +570,11 @@ describe("coordination listener", () => {
 
     // A live server in another process that answers 404 to the coordination
     // health route is not stale: its socket is left alone and keeps answering.
-    const foreign = Bun.spawn(
-      [
-        process.execPath,
-        "-e",
-        `Bun.serve({ unix: ${JSON.stringify(where.coordinationSocket)}, fetch: () => Response.json({ foreign: true }, { status: 404 }) }); console.log("ready"); setInterval(() => {}, 1000);`,
-      ],
-      { stdout: "pipe" },
+    const foreign = await startSocketHolder(
+      where.coordinationSocket,
+      "foreign",
     );
     try {
-      await foreign.stdout.getReader().read();
       // The socket file's identity, not a fetch: a pooled connection could
       // still reach the old listener after the file was replaced.
       const before = statSync(where.coordinationSocket).ino;
@@ -593,21 +591,13 @@ describe("coordination listener", () => {
 
     // A live server that accepts connections but never answers (another
     // protocol, or just slow) is inconclusive, not stale: left alone too.
-    const silent = Bun.spawn(
-      [
-        process.execPath,
-        "-e",
-        `require("node:net").createServer(() => {}).listen(${JSON.stringify(where.coordinationSocket)}, () => console.log("ready")); setInterval(() => {}, 1000);`,
-      ],
-      { stdout: "pipe" },
-    );
+    const silent = await startSocketHolder(where.coordinationSocket, "silent");
     // An inode number can be reused by a replacement file, so the evidence is
     // the host's explicit refusal to start the listener.
     const silentErrors = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
     try {
-      await silent.stdout.getReader().read();
       await withRuntime(where, async ({ run }) => {
         await run(["task:list", "--project", projectId]);
       });
@@ -641,16 +631,7 @@ describe("coordination listener", () => {
 
     // A socket left by a crashed host is stale and replaced. A clean stop
     // would unlink it, so the holder is killed instead.
-    const holder = Bun.spawn(
-      [
-        process.execPath,
-        "-e",
-        `Bun.serve({ unix: ${JSON.stringify(where.coordinationSocket)}, fetch: () => new Response("") }); console.log("ready"); setInterval(() => {}, 1000);`,
-      ],
-      { stdout: "pipe" },
-    );
-    const reader = holder.stdout.getReader();
-    await reader.read();
+    const holder = await startSocketHolder(where.coordinationSocket);
     holder.kill("SIGKILL");
     await holder.exited;
     expect(statSync(where.coordinationSocket).isSocket()).toBe(true);
