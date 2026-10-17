@@ -48,11 +48,20 @@ export function resolveTestSocketBase(
 function accepts(socketPath: string): Promise<boolean> {
   return new Promise((resolve) => {
     const connection = createConnection(socketPath);
+    // A connect that never settles must not stall the readiness loop.
+    const timer = setTimeout(() => {
+      connection.destroy();
+      resolve(false);
+    }, 500);
     connection.once("connect", () => {
+      clearTimeout(timer);
       connection.destroy();
       resolve(true);
     });
-    connection.once("error", () => resolve(false));
+    connection.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
   });
 }
 
