@@ -56,9 +56,17 @@ export function assessStageResultDelivery(
   delivered: unknown,
   context: StageResultDeliveryContext,
 ): StageResultDeliveryAssessment {
-  // The context is read once so a getter-backed context cannot change the
-  // decision between checks.
-  const { deliveredBy, currentAgentRunId, recorded: recordedInput } = context;
+  // The context, including the deliverer's fields, is read once so a
+  // getter-backed context cannot change the decision between checks.
+  const {
+    deliveredBy: deliveredByInput,
+    currentAgentRunId,
+    recorded: recordedInput,
+  } = context;
+  const deliveredBy: StageResultProducer =
+    deliveredByInput.kind === "agent_run"
+      ? { kind: "agent_run", agentRunId: deliveredByInput.agentRunId }
+      : { kind: "operator", actorLabel: deliveredByInput.actorLabel };
   const envelope = parseStageResultEnvelope(delivered);
   if (!sameStageResultProducer(envelope.producer, deliveredBy))
     return { decision: "producer_mismatch", envelope, preemptsBoundRun: false };

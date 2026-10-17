@@ -865,6 +865,37 @@ describe("stage result hardening, third pass", () => {
     expect(reads).toBe(1);
   });
 
+  test("reads each field of the deliverer once", () => {
+    const reads = { kind: 0, agentRunId: 0 };
+    const deliveredBy = {
+      get kind() {
+        reads.kind += 1;
+        return "agent_run" as const;
+      },
+      get agentRunId() {
+        reads.agentRunId += 1;
+        return reads.agentRunId === 1 ? "run-1" : "run-other";
+      },
+    };
+    const result = assessStageResultDelivery(valid, {
+      deliveredBy,
+      currentAgentRunId: "run-1",
+    });
+    expect(reads).toEqual({ kind: 1, agentRunId: 1 });
+    expect(result.decision).toBe("accepted");
+  });
+
+  test("refuses an object wider than the remaining node budget", () => {
+    // 300 nodes already spent by siblings leave room for fewer than 300 keys.
+    const sibling = Array.from({ length: 300 }, (_, index) => index);
+    const wide = Object.fromEntries(
+      Array.from({ length: 300 }, (_, index) => [`k${index}`, 0]),
+    );
+    expect(rejection({ ...valid, data: { sibling, wide } })).toContain(
+      "too many nodes",
+    );
+  });
+
   test("an operator delivery with no bound run does not pre-empt anything", () => {
     expect(
       assessStageResultDelivery(operatorResult, { deliveredBy: operator })
