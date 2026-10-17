@@ -2556,7 +2556,7 @@ procedure cover new Codex CLI and Claude Code versions without enabling them.
 The [M24 delivery plan](worker-compatibility-admission.md) records the gap
 analysis, requirement and task tables, rollout without regression, the
 recertification procedure and the owner decisions D1–D7 with the open points
-O1–O5. [ADR-0037](../adr/ADR-0037-worker-compatibility-and-capability-admission.md)
+O1–O6. [ADR-0037](../adr/ADR-0037-worker-compatibility-and-capability-admission.md)
 is the decision gate, not current architecture. M24 consumes M12's worker port
 (extended additively), M18's confinement levels as an `enforced` input and M21's
 governed child execution; it delivers none of them and does not change M10

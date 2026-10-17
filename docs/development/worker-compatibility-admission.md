@@ -247,6 +247,7 @@ recommendations in the ADR):
 | O3  | Approve the evidence sufficiency table by risk tier.                                                                                                                   |
 | O4  | Accept `local_operator` approvals until M10 provides signed approvals, recorded as such.                                                                               |
 | O5  | Initial guarantee catalogue, frozen in WC-02.                                                                                                                          |
+| O6  | Registry persistence: content-addressed files or a dedicated host-level SQLite store, given AGENTS.md; to be settled before acceptance.                                |
 
 ## Exit
 

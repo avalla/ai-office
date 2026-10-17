@@ -189,7 +189,9 @@ kind and harness revision are fields its writer sets, so the Runtime cannot
 verify them until a Runtime command runs the suite itself and records its own
 observation (WC-03 designs that path; hardening against a forged bundle is M10).
 A record that fails a deterministic check is ignored with a diagnostic and never
-admits.
+admits (for a decision in the active set, ignoring is subject to the blocking
+rule of decision 4, Loading). These checks govern registered `certified`
+decisions; source-shipped records follow decisions 9 and 10 instead.
 
 The authentication class of an approval is what the Runtime can establish. Until
 the cryptographic approval of ADR-0003 (M10) exists, approval is a
@@ -202,12 +204,24 @@ require a stronger class once one exists. This ADR does not claim more.
 ### 4. The registry
 
 A host-local registry, because the facts describe the clients installed on one
-host. The Runtime home does hold a host-level database, `global.sqlite`, but it
-is the store of reusable memory with its own schema, lifecycle and migrations;
-putting admission facts there would couple a safety-critical, tamper-evident,
-rollback-checked record to a memory store and make a memory migration or reset
-able to change what is admitted. The registry therefore stays separate content
-addressed files, and PostgreSQL authority is unaffected.
+host. The Runtime home already holds a host-level SQLite database,
+`global.sqlite` (`docs/architecture/storage.md`). Its ownership contract is
+durable reusable roles, patterns and lessons at user scope; it has no audit or
+write-authorization policy yet, and its schema and migrations belong to that
+memory. Putting admission facts in it would couple a safety-critical,
+rollback-checked record to a memory store and let a memory migration change what
+is admitted, so this ADR does not reuse it. That does not by itself settle file
+objects versus a new dedicated host-level SQLite store: AGENTS.md keeps
+authoritative state in SQLite behind the Runtime, and a dedicated store would
+supply transactions, constraints (one active decision per subject) and the
+existing versioned migration runner in place of the pointer, publication
+exclusion and separate state file specified below. The content-addressed file
+layout is the proposed design because it keeps digest-named immutable objects, a
+retained manifest chain and a recorded generation that can be inspected and
+verified without opening the Runtime database; whether that justifies a second
+persistence mechanism is open decision O6 and must be settled before this ADR is
+accepted. Neither option makes the Runtime a same-user boundary (decision 7), and
+PostgreSQL project authority (M22) is unaffected by either.
 
 - **Layout.** Objects (evidence bundles, decisions, revocations and manifests)
   are files named by digest under an owner-only directory in the Runtime home,
@@ -411,7 +425,7 @@ Reasons are a closed set: `registry_unreadable`, `platform_unsupported`,
 `guarantee_unverified` and `guarantee_unsupported`. A refusal carries its
 reasons, the nearest record and bounded, secret-free detail.
 
-Public codes are unchanged and the reason is added diagnostics. The mapping is
+Public codes are unchanged and the reason is added as diagnostics. The mapping is
 exact: `model_mismatch` maps to `WORKER_MODEL_UNSUPPORTED`; every other reason
 maps to `WORKER_UNAVAILABLE`. The run-level model-selection outcomes
 `WORKER_MODEL_CONFLICT` and `WORKER_MODEL_REQUIRED` (routing and
@@ -516,6 +530,8 @@ A `baseline_import` record is exempt from the sufficiency table by rule: it is
 valid only from source, is reviewed as code, carries the basis in every
 diagnostic and provenance record, can never be cited by a registered decision,
 and satisfies a required guarantee only if the record lists that guarantee. It
+declares the metadata dependencies of the guarantees it lists, as `unobservable`
+until WC-03 shows otherwise, so step 6 and open decision O1 apply to it. It
 reproduces today's behavior; it is not presented as a fresh certification, and
 recertifying the combination replaces it with a `certified` decision.
 
@@ -593,11 +609,18 @@ Provenance never contains registry paths, credentials or raw probe output.
 - **Extend the allowlists.** Smallest diff; keeps evidence in comments and
   registration a release, keeps version and model unbound, and cannot express
   per-guarantee state or drift.
-- **A database-backed registry.** Gives an audit trail and project-level
-  authority but describes host facts with project storage, would need a
-  host-level store of its own, and pulls in the PostgreSQL authority work (M22).
-  The existing `global.sqlite` is reusable-memory storage and is not reused, for
-  the reason given in decision 4. Revisit only if audits must be shared between hosts.
+- **A project-database registry.** Describes host facts with project storage
+  and pulls in the PostgreSQL authority work (M22). Rejected.
+- **The existing `global.sqlite`.** Not reused, for the reason given in decision
+  4 (memory ownership contract and migrations).
+- **A dedicated host-level SQLite store** (a new database or a separate
+  migration domain in the Runtime home). Aligned with AGENTS.md (authoritative
+  state in SQLite, versioned migrations, transactions in place of the pointer
+  and publication exclusion) but it must still carry digest-addressed immutable
+  records, the manifest chain and a rollback anchor that survives its own
+  restore, and it adds a persistence surface. Not rejected: open decision O6
+  compares it with the file registry. Sharing audits between hosts would
+  strengthen it.
 - **Trust the client's own capability listing.** Rejected by ADR-0017 for Claude
   and insufficient for Codex: tools derive from provider metadata the listing
   does not show.
@@ -640,10 +663,12 @@ Provenance never contains registry paths, credentials or raw probe output.
 | O3  | Approve the evidence sufficiency table (T1 needs scripted adversarial evidence plus drift observation or live confirmation of metadata)                                                           | Approve as the baseline of WC-02                                                                                                                                                        |
 | O4  | Accept `local_operator` approvals until M10, recorded as such, knowing that a same-account process (including an external coding agent) is not distinguished from the operator                    | Accept, with the class visible everywhere, the separation of agents from the approval surface stated as an operational rule, and a policy hook to require a stronger class later        |
 | O5  | Initial guarantee catalogue contents                                                                                                                                                              | Freeze in WC-02 from the documented guarantees, reviewed by the owner                                                                                                                   |
+| O6  | Registry persistence: content-addressed files (decision 4) or a dedicated host-level SQLite store, given AGENTS.md (authoritative state in SQLite, Runtime-centralised)                           | Owner decides before acceptance; the ADR does not choose. If files are kept, record why a second persistence mechanism is justified; WC-02 does not start before this is settled        |
 
 ## Decision gates for WC-02 onward
 
-WC-02 may start only after this ADR is accepted. It must confirm the catalogue,
+WC-02 may start only after this ADR is accepted, which requires open decision O6
+(registry persistence) to be settled. It must confirm the catalogue,
 record schemas and canonical digest, the manifest and generation protocol, the
 operator command shapes (register, revoke, reload, verify and state reset), that
 the blocked-subject rule of decision 4 applies to decisions that are in the
