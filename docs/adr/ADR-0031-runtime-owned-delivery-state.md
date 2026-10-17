@@ -217,7 +217,12 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      delivery is outside this ADR. Once the run exists the task stays on the
      Runtime path: an outage leaves entries pending and never switches the task
      to offline rules. Before sending a creation request the skill makes a
-     creation-pending marker durable in the file store.
+     creation-pending marker durable in the file store. The marker holds the
+     canonical complete creation payload of invariant 5 (project, task, the
+     resolved configuration and its snapshot hash, and the pipeline run
+     reference or its absence), not only a flag, so that the request can be
+     replayed exactly after a restart whatever the configuration or the
+     pipeline link has become since.
      - If the Runtime is confirmed unreachable and no request was sent, the
        marker is cleared, the task proceeds on the offline path for its whole
        life, and the skill reports it.
@@ -227,8 +232,11 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      - If the outcome is uncertain (the request may have committed, the reply
        was lost, or the skill exited), the marker stays. The skill publishes no
        checkpoint and passes no gate, offline or otherwise, until an
-       idempotent retry (invariant 5) shows whether a run exists; only that
-       answer clears the marker.
+       idempotent retry (invariant 5) shows whether a run exists. The retry
+       replays exactly the payload stored in the marker and never one
+       recomputed from the current configuration or pipeline link; only its
+       answer clears the marker. If the Runtime is still unreachable, the
+       marker stays and the task neither proceeds offline nor creates a run.
 
      A task without a delivery run keeps the existing offline rules unchanged.
      This ADR does not migrate a task already under way offline onto a
