@@ -861,6 +861,149 @@ describe("review-exit repairs", () => {
     ).toEqual([]);
   });
 
+  test("defers the repair when a still-in-review prerequisite has its own repair in the plan", async () => {
+    const context = await fixture(
+      [
+        task("upstream-open", "waiting_review"),
+        task("upstream-dead", "blocked"),
+        task("dependent", "running"),
+      ],
+      [
+        { taskId: "dependent", dependsOnTaskId: "upstream-dead" },
+        { taskId: "dependent", dependsOnTaskId: "upstream-open" },
+      ],
+    );
+    // A stale terminal pipeline for the prerequisite still in review: not an
+    // exit, so it is absent from reviewExits — but its planned cancel would
+    // turn the dependent's recoverable block into the terminal-exit cancel.
+    const pipeline = PipelineRun.create({
+      id: "pipeline-1",
+      projectId: "project-1",
+      taskId: "upstream-open",
+      manifestRevisionId: "manifest-1",
+      manifestRevision: 1,
+      definition,
+      startedBy: "operator",
+      stageRunIds: ["pipeline-1-stage"],
+      now,
+    });
+    pipeline.cancel("operator", now);
+    context.pipelines.values.push(pipeline);
+
+    const report = await context.reconcile.inspect("project-1");
+    const repairable = report.issues.filter((issue) => issue.repairable);
+    expect(repairable.map((issue) => [issue.taskId, issue.finding])).toEqual([
+      ["upstream-open", "terminal_pipeline_open_task"],
+    ]);
+    const deferred = report.issues.find(
+      (issue) => issue.finding === "blocking_prerequisite_incomplete",
+    );
+    expect(deferred).toMatchObject({
+      taskId: "dependent",
+      repairable: false,
+      repairOperation: null,
+      suggestedCommand: null,
+      reviewExits: [
+        { taskId: "upstream-dead", from: "waiting_review", to: "blocked" },
+      ],
+    });
+    expect(deferred?.refusalReason).toBe(
+      "prerequisite upstream-open has its own repair in this plan; apply it first, then re-inspect",
+    );
+
+    // The approved plan applies only the prerequisite's repair.
+    const result = await context.reconcile.repair({
+      projectId: "project-1",
+      approvedPlanHash: report.planHash!,
+      actorId: "operator",
+    });
+    expect(result.applied).toEqual([
+      {
+        taskId: "upstream-open",
+        from: "waiting_review",
+        to: "cancelled",
+        operation: "cancel",
+      },
+    ]);
+    expect(context.taskStore.values.get("dependent")?.snapshot().status).toBe(
+      "running",
+    );
+
+    // Re-inspection derives the fresh finding with both exits — the terminal
+    // one dominates, so the follow-up plan cancels the dependent.
+    const after = await context.reconcile.inspect("project-1");
+    const fresh = after.issues.find(
+      (issue) => issue.finding === "blocking_prerequisite_incomplete",
+    );
+    expect(fresh).toMatchObject({
+      taskId: "dependent",
+      severity: "inconsistent",
+      repairable: true,
+      repairOperation: "cancel",
+      reviewExits: [
+        { taskId: "upstream-dead", from: "waiting_review", to: "blocked" },
+        { taskId: "upstream-open", from: "waiting_review", to: "cancelled" },
+      ],
+    });
+    const followup = await context.reconcile.repair({
+      projectId: "project-1",
+      approvedPlanHash: after.planHash!,
+      actorId: "operator",
+    });
+    expect(followup.applied).toEqual([
+      {
+        taskId: "dependent",
+        from: "running",
+        to: "cancelled",
+        operation: "cancel",
+      },
+    ]);
+  });
+
+  test("refuses the batch when a prerequisite newly leaves review between derivation and apply", async () => {
+    const context = await fixture(
+      [
+        task("upstream-open", "waiting_review"),
+        task("upstream-dead", "blocked"),
+        task("dependent", "running"),
+      ],
+      [
+        { taskId: "dependent", dependsOnTaskId: "upstream-dead" },
+        { taskId: "dependent", dependsOnTaskId: "upstream-open" },
+      ],
+    );
+
+    const report = await context.reconcile.inspect("project-1");
+    const issue = report.issues.find(
+      (value) => value.finding === "blocking_prerequisite_incomplete",
+    );
+    // At derivation only upstream-dead has exited; the repair is a block.
+    expect(issue).toMatchObject({
+      repairable: true,
+      repairOperation: "block",
+      reviewExits: [
+        { taskId: "upstream-dead", from: "waiting_review", to: "blocked" },
+      ],
+    });
+
+    // The other prerequisite exits review between derivation and apply. A
+    // fresh plan would cancel; the recorded plan must refuse instead.
+    context.taskStore.findByIdOverrides.set("upstream-open", "failed");
+    const rejection = context.reconcile.repair({
+      projectId: "project-1",
+      approvedPlanHash: report.planHash!,
+      actorId: "operator",
+    });
+    await expect(rejection).rejects.toBeInstanceOf(
+      TaskReconciliationStalePlanError,
+    );
+    await expect(rejection).rejects.toThrow(/upstream-open/u);
+    expect(context.taskStore.values.get("dependent")?.snapshot().status).toBe(
+      "running",
+    );
+    expect(context.events.events).toEqual([]);
+  });
+
   test("caps the repair reason so a plan with many exits stays appliable", async () => {
     const exits = Array.from(
       { length: 25 },

@@ -165,10 +165,10 @@ export class TaskReconciliationApprovalError extends Error {
  * re-inspect and approve the plan that describes the current state.
  */
 export class TaskReconciliationStalePlanError extends TaskReconciliationApprovalError {
-  constructor(taskId: string) {
+  constructor(detail: string) {
     super();
     this.name = "TaskReconciliationStalePlanError";
-    this.message = `Reconciliation plan went stale: prerequisite ${taskId} no longer holds the recorded review exit; re-run task:reconcile and approve the new plan`;
+    this.message = `Reconciliation plan went stale: ${detail}; re-run task:reconcile and approve the new plan`;
   }
 }
 
@@ -636,26 +636,35 @@ export class ReconcileTasks {
       }
     }
 
-    // A review-exit repair is valid only while the exits it answers still
-    // hold, and another repair in the same plan can move exactly those
-    // prerequisites: a blocked prerequisite with a stale terminal pipeline
-    // carries its own cancel, which applied first would move it off the
-    // recorded exit before the dependent's repair re-reads it, and applied
-    // second would strand the dependent blocked behind a terminal
-    // prerequisite. Dependency findings are derived before the pipeline
-    // findings that can conflict with them and tasks are visited in storage
-    // order, so the conflict is resolved here, once every finding is known:
-    // the dependent's repair is refused and named after the prerequisite
-    // repair to apply first. Re-inspection after that repair derives the
-    // dependent's fresh finding — a cancelled prerequisite turns the
-    // blocked-exit block into the terminal-exit cancel the state calls for.
+    // A review-exit repair is valid only while every prerequisite of the
+    // dependent keeps the state the plan was derived from, and another
+    // repair in the same plan can move exactly those prerequisites: a
+    // blocked prerequisite with a stale terminal pipeline carries its own
+    // cancel, which applied first would move it off the recorded exit
+    // before the dependent's repair re-reads it, and applied second would
+    // strand the dependent blocked behind a terminal prerequisite. A
+    // prerequisite still in review is no different: cancelling it turns the
+    // dependent's recoverable block into the terminal-exit cancel, so the
+    // check covers every prerequisite edge, not only the recorded exits.
+    // Dependency findings are derived before the pipeline findings that can
+    // conflict with them and tasks are visited in storage order, so the
+    // conflict is resolved here, once every finding is known: the
+    // dependent's repair is refused and named after the prerequisite repair
+    // to apply first. Re-inspection after that repair derives the
+    // dependent's fresh finding.
     const repairedTasks = new Set(
       issues.filter((issue) => issue.repairable).map((issue) => issue.taskId),
     );
+    const prerequisitesByTask = new Map<string, string[]>();
+    for (const edge of dependencies ?? []) {
+      const values = prerequisitesByTask.get(edge.taskId) ?? [];
+      values.push(edge.dependsOnTaskId);
+      prerequisitesByTask.set(edge.taskId, values);
+    }
     for (const issue of issues) {
       if (!issue.repairable || issue.reviewExits === undefined) continue;
-      const conflict = issue.reviewExits.find((exit) =>
-        repairedTasks.has(exit.taskId),
+      const conflict = (prerequisitesByTask.get(issue.taskId) ?? []).find(
+        (prerequisiteId) => repairedTasks.has(prerequisiteId),
       );
       if (conflict === undefined) continue;
       issue.repairable = false;
@@ -663,7 +672,7 @@ export class ReconcileTasks {
       // The direct command would apply the stale-exit outcome by hand, which
       // is exactly what the deferral exists to prevent.
       issue.suggestedCommand = null;
-      issue.refusalReason = `prerequisite ${conflict.taskId} has its own repair in this plan; apply it first, then re-inspect`;
+      issue.refusalReason = `prerequisite ${conflict} has its own repair in this plan; apply it first, then re-inspect`;
     }
 
     const repairs = issues.filter((issue) => issue.repairable);
@@ -690,9 +699,10 @@ export class ReconcileTasks {
    * checked against it, because the hash must describe the state actually being
    * mutated rather than a reading taken before the transaction opened. A
    * review-exit repair is additionally revalidated at apply time: the reads
-   * the plan was derived from take no locks, so a prerequisite that recovered
-   * between derivation and this write refuses the whole batch instead of
-   * being overwritten from stale evidence.
+   * the plan was derived from take no locks, so the complete exit set of the
+   * dependent's prerequisites is recomputed, and a prerequisite that
+   * recovered, moved, or newly left review between derivation and this write
+   * refuses the whole batch instead of being overwritten from stale evidence.
    *
    * Every mutation still goes through the lifecycle service, so the domain
    * guard and the audit event are the same ones a manual command would use;
@@ -728,22 +738,59 @@ export class ReconcileTasks {
         to: TaskStatus;
         operation: TaskLifecycleOperation;
       }[] = [];
+      // Apply-time revalidation needs every prerequisite edge of the
+      // repaired dependents, not only the recorded exits: a prerequisite
+      // still in review at derivation may exit before the write below.
+      const dependencyEdges =
+        repairs.some(({ issue }) => issue.reviewExits !== undefined) &&
+        this.dependencies !== undefined
+          ? await this.dependencies.listByProject(input.projectId)
+          : [];
       for (const { issue, operation } of repairs) {
-        // A review-exit repair is valid only while the exits it answers
-        // still hold. READ COMMITTED does not lock the reads the plan was
-        // derived from, so a prerequisite may recover between derivation and
-        // this write; this re-read is a fresh statement and sees the latest
-        // committed state. A recovered exit refuses the whole batch — the
-        // operator re-inspects — rather than mutating from stale evidence.
-        if (issue.reviewExits !== undefined)
-          for (const exit of issue.reviewExits) {
-            const prerequisite = await this.tasks.findById(exit.taskId);
+        if (issue.reviewExits !== undefined) {
+          // A review-exit repair is valid only while the complete exit set
+          // it was derived from still holds. READ COMMITTED does not lock
+          // the reads the plan was derived from, so these re-reads are fresh
+          // statements seeing the latest committed state: a recovered or
+          // moved exit, and a prerequisite that newly left review, each
+          // refuse the whole batch — the operator re-inspects — rather than
+          // mutating from stale evidence.
+          const prerequisiteIds = dependencyEdges
+            .filter((edge) => edge.taskId === issue.taskId)
+            .map((edge) => edge.dependsOnTaskId);
+          const currentExits = new Map<string, TaskStatus>();
+          for (const prerequisiteId of prerequisiteIds) {
+            const status = (
+              await this.tasks.findById(prerequisiteId)
+            )?.snapshot().status;
             if (
-              prerequisite === null ||
-              prerequisite.snapshot().status !== exit.to
+              status === "blocked" ||
+              status === "failed" ||
+              status === "cancelled"
             )
-              throw new TaskReconciliationStalePlanError(exit.taskId);
+              currentExits.set(prerequisiteId, status);
           }
+          const recorded = new Map(
+            issue.reviewExits.map((exit) => [exit.taskId, exit.to]),
+          );
+          // Set comparison, so a legitimately unchanged plan never refuses
+          // on ordering; iteration follows the deterministic edge order, so
+          // the named prerequisite is stable as well.
+          const moved = issue.reviewExits.find(
+            (exit) => currentExits.get(exit.taskId) !== exit.to,
+          );
+          if (moved !== undefined)
+            throw new TaskReconciliationStalePlanError(
+              `prerequisite ${moved.taskId} no longer holds the recorded review exit`,
+            );
+          const appeared = [...currentExits].find(
+            ([taskId]) => !recorded.has(taskId),
+          );
+          if (appeared !== undefined)
+            throw new TaskReconciliationStalePlanError(
+              `prerequisite ${appeared[0]} exited review to ${appeared[1]} after the plan was approved`,
+            );
+        }
         // `block` mandates a reason and `cancel` accepts one; a review-exit
         // repair names the exits it answers, a pipeline repair names its
         // evidence.

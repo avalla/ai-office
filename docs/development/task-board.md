@@ -370,27 +370,31 @@ task, the plan carries the dependency repair and the pipeline finding is
 reported as covered by it.
 
 **A plan never repairs a dependent and its prerequisite together.** A
-review-exit repair is valid only while the exits it answers still hold, and
-another repair in the same plan can move exactly those prerequisites — a
-blocked prerequisite with a stale terminal pipeline carries its own
-`task:cancel`. When that happens the dependent's review-exit finding is
-reported with its repair refused, named after the prerequisite repair to
-apply first; otherwise applying the prerequisite's cancel first would make
-the dependent's apply-time revalidation fail and roll back the whole batch,
-while applying it second would strand the dependent blocked behind a terminal
-prerequisite. Re-inspection after the prerequisite's repair derives the
-dependent's fresh finding — a cancelled prerequisite turns the blocked-exit
-`block` into the terminal-exit `cancel` the state calls for.
+review-exit repair is valid only while every prerequisite of the dependent
+keeps the state the plan was derived from, and another repair in the same
+plan can move exactly those prerequisites — a prerequisite with a stale
+terminal pipeline carries its own `task:cancel`, whether it is a recorded
+blocked exit or still in review. When any prerequisite edge of the dependent
+points at a task with its own repair in the plan, the dependent's review-exit
+finding is reported with its repair refused, named after the prerequisite
+repair to apply first; otherwise applying the prerequisite's cancel first
+would make the dependent's apply-time revalidation fail and roll back the
+whole batch, while applying it second would strand the dependent blocked
+behind a terminal prerequisite. Re-inspection after the prerequisite's repair
+derives the dependent's fresh finding — a cancelled prerequisite turns the
+blocked-exit `block` into the terminal-exit `cancel` the state calls for.
 
 **Review-exit repairs are revalidated at apply time.** Immediately before each
-review-exit `block`/`cancel`, the prerequisites named in `reviewExits` are
-re-read inside the plan's transaction; if any named exit no longer holds — the
-prerequisite recovered or moved on — the whole batch is refused with
-`TaskReconciliationStalePlanError` and rolls back, and the operator re-inspects
-and approves the new plan. Under PostgreSQL READ COMMITTED this re-read sees
-the latest committed state, shrinking the stale-repair race to the window
-between that final read and the status write itself; the task port takes no
-row locks, so a recovery committing inside that last window is still
+review-exit `block`/`cancel`, the complete exit set of the dependent's
+prerequisites is recomputed inside the plan's transaction — the same
+derivation inspection performs, over fresh reads. If it differs from the
+recorded `reviewExits` — a named exit recovered or moved on, or a
+prerequisite newly left review — the whole batch is refused with
+`TaskReconciliationStalePlanError` and rolls back, and the operator
+re-inspects and approves the new plan. Under PostgreSQL READ COMMITTED these
+re-reads see the latest committed state, shrinking the stale-repair race to
+the window between that final read and the status write itself; the task port
+takes no row locks, so a recovery committing inside that last window is still
 overwritten by the repair. The pre-existing terminal-pipeline repair has the
 same characteristic. Today's production topology — the single-writer SQLite
 runtime host — serializes all writers, so the race cannot occur there at all.
