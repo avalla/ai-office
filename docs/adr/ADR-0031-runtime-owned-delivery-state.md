@@ -197,7 +197,8 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      a later context can still read every addition while the Runtime is
      unreachable. An entry not yet marked registered is pending.
    - A reset or handoff carries the floor additions: the handoff packet lists
-     each pending entry by its identity in a fixed, validated field, encoded so
+     each pending entry, and any creation-pending marker, by its identity in a
+     fixed, validated field, encoded so
      that listing floor entries never pins or unpins a checkpoint under the
      retention rule that matches checkpoint identifiers in the packet, and the
      next context reads the entries from the file store. A failed
@@ -226,9 +227,14 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      - If the Runtime is confirmed unreachable and no request was sent, the
        marker is cleared, the task proceeds on the offline path for its whole
        life, and the skill reports it.
-     - A typed rejection of the request (validation, not found, ownership or
-       conflict) is a stop condition: the answer clears the marker, the input
-       or state is corrected, and the task does not proceed offline.
+     - A typed rejection of the request (validation, not found, which
+       includes ownership failures per invariant 1, or conflict) is a stop
+       condition: the answer clears the marker and the task does not proceed
+       offline. For validation and not found, the input is corrected and
+       creation is retried. A conflict at creation or at the retry is a dead
+       end in this proposal: a task has one run, a corrected payload conflicts
+       again, and restarting delivery is outside this ADR. The task stops
+       there (see Known limitations and Open questions).
      - If the outcome is uncertain (the request may have committed, the reply
        was lost, or the skill exited), the marker stays. The skill publishes no
        checkpoint and passes no gate, offline or otherwise, until an
@@ -236,7 +242,9 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
        replays exactly the payload stored in the marker and never one
        recomputed from the current configuration or pipeline link; only its
        answer clears the marker. If the Runtime is still unreachable, the
-       marker stays and the task neither proceeds offline nor creates a run.
+       marker stays and the task neither proceeds offline nor creates a run;
+       no command abandons a marker in this proposal (see Known limitations
+       and Open questions).
 
      A task without a delivery run keeps the existing offline rules unchanged.
      This ADR does not migrate a task already under way offline onto a
@@ -299,7 +307,9 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      implementation plan; this contract is what binds.
    - The skill creates a run only at preflight. It does not create one for a
      task that already has checkpoints, floor determinations or a handoff
-     packet, and reports why. The Runtime cannot read that local state, so it
+     packet, and reports why. Replaying an existing creation-pending marker
+     (invariant 3) is not a creation for this rule, even though the handoff
+     packet lists that marker. The Runtime cannot read that local state, so it
      cannot enforce this; like the snapshot, it is a client obligation.
    - The Runtime re-validates the data against the schema and the cross-key
      rules (for example, the accepted stage keys, and that `review` and `qa`
@@ -334,7 +344,20 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
   changed configuration is not adopted mid-task, and restarting a task's
   delivery is not covered; each needs a separate decision, because the offline
   handoff packet records no floor determinations to inherit.
+- A creation-pending marker stays until an idempotent retry is answered. If the
+  Runtime never becomes reachable again, the skill cannot prove that no request
+  was sent, so the task stays blocked: it neither proceeds offline nor creates
+  a run. No abandon step exists in this proposal.
+- A creation conflict (the task already has a run and the payload differs) is
+  a dead end for the skill: it cannot adopt the existing run, correct the
+  payload, or restart delivery. The task stops.
 
 ## Open questions
 
-None remain in this proposal. The ADR stays Proposed until explicitly accepted.
+The ADR stays Proposed until explicitly accepted. Two questions are open for
+the owner; neither is decided here.
+
+1. Should an owner-approved, audited abandon step exist for a creation-pending
+   marker whose Runtime outcome can never be learned (see Known limitations)?
+2. Should a creation conflict reply identify the existing run so that the skill
+   can adopt it, or is the dead end accepted?
