@@ -223,14 +223,23 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      resolved configuration and its snapshot hash, and the pipeline run
      reference or its absence), not only a flag, so that the request can be
      replayed exactly after a restart whatever the configuration or the
-     pipeline link has become since.
+     pipeline link has become since. It also records the identity of the
+     Runtime the request was addressed to (a stable identity, defined in the
+     implementation plan), which is not part of the idempotency key. A retry
+     is sent only to a Runtime with that identity, and an answer from any
+     other Runtime is refused and keeps the marker: a replacement Runtime that
+     lacks the original creation must not resolve the old authority's marker
+     (a change of Runtime is a separate rebind decision, see Question A).
      - If the Runtime is confirmed unreachable and no request was sent, the
        marker is cleared, the task proceeds on the offline path for its whole
        life, and the skill reports it.
      - A typed rejection of the request (validation, not found, which
        includes ownership failures per invariant 1, or conflict) is a stop
-       condition: the answer clears the marker and the task does not proceed
-       offline. For validation and not found, the input is corrected and
+       condition: the skill first writes a durable creation-stop record (marker
+       identity, payload hash and rejection type) and only then clears the
+       marker, so a restart or a handoff still finds the stop and the task does
+       not proceed offline. The stop record is listed in the handoff packet like
+       the marker. For validation and not found, the input is corrected and
        creation is retried. A conflict at creation or at the retry is a dead
        end in this proposal: a task has one run, a corrected payload conflicts
        again, and restarting delivery is outside this ADR. The task stops
