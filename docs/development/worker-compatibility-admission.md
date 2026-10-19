@@ -176,15 +176,16 @@ Recorded in the Runtime as WC-01 … WC-08.
 | WC-08 | Operator documentation, rollout gates and milestone exit                                                                                                                                                      | R01 … R14                       | WC-05, WC-06, WC-07                 |
 
 ```text
-WC-01 ──► WC-02 ──┬──► WC-04 ──┐
-   │              │            ├──► WC-07 ──┐
-   └────► WC-03 ──┼────────────┘            │
-                  ├──► WC-05 ───────────────┼──► WC-08
-                  └──► WC-06 ───────────────┘
+WC-01 ──► WC-02, WC-03
+WC-02 ──► WC-04, WC-05
+WC-03 ──► WC-04, WC-05, WC-06, WC-07
+WC-04 ──► WC-07
+WC-05, WC-06, WC-07 ──► WC-08
 ```
 
 WC-02 and WC-03 both feed WC-04 and WC-05; WC-03 alone feeds WC-06 and, with
-WC-04, WC-07; WC-05, WC-06 and WC-07 feed WC-08.
+WC-04, WC-07; WC-05, WC-06 and WC-07 feed WC-08. The list above and the
+"Depends on" column of the table are the same graph.
 
 WC-02 onward start only after ADR-0037 is accepted by the owner. WC-04 also needs
 a separate authorization that names worker, version, provider, model, credential
