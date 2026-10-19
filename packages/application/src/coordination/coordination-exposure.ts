@@ -82,6 +82,9 @@ export const truncatedFieldsKey = "truncatedFields";
 
 export const redactionMarker = "[redacted]";
 
+/** The `: value` half of an assignment pattern: a quoted or a bare value. */
+const assignedValue = String.raw`["']?\s*[:=]\s*(?:"(?:[^"\\]|\\[\s\S]){6,}"|'(?:[^'\\]|\\[\s\S]){6,}'|"(?:[^"\\\r\n]|\\.)*\\?(?=[\r\n]|$)|'(?:[^'\\\r\n]|\\.)*\\?(?=[\r\n]|$)|[^\s"']{8,})`;
+
 /**
  * Best-effort only: it catches common credential shapes so an accidental
  * paste in a title does not leave the machine. It is not a guarantee, and
@@ -112,7 +115,19 @@ const credentialPatterns: readonly RegExp[] = [
   // closed quote. A JSON-style quoted key matches too, and so does a
   // prefixed name such as DB_PASSWORD or GITHUB_TOKEN, or a common compound
   // name such as SECRET_KEY or accessToken.
-  /(?<![A-Za-z0-9])(?:password|passwd|pwd|(?:secret|private)[_-]?key|secret|(?:access|refresh|auth|id|session)[_-]?token|token|api[_-]?key|access[_-]?key|aws_secret_access_key|client[_-]?secret)["']?\s*[:=]\s*(?:"(?:[^"\\]|\\[\s\S]){6,}"|'(?:[^'\\]|\\[\s\S]){6,}'|"(?:[^"\\\r\n]|\\.)*\\?(?=[\r\n]|$)|'(?:[^'\\\r\n]|\\.)*\\?(?=[\r\n]|$)|[^\s"']{8,})/gi,
+  new RegExp(
+    String.raw`(?<![A-Za-z0-9])(?:password|passwd|pwd|(?:secret|private)[_-]?key|secret|(?:access|refresh|auth|id|session)[_-]?token|token|api[_-]?key|access[_-]?key|aws_secret_access_key|client[_-]?secret)` +
+      assignedValue,
+    "gi",
+  ),
+  // A camelCase name with a prefix, such as dbPassword or githubToken: the
+  // keyword starts a word after a lower-case letter or digit. Case-sensitive,
+  // so `mytoken=` (one lower-case word) stays untouched.
+  new RegExp(
+    String.raw`(?<=[a-z0-9])(?:Password|Passwd|Pwd|SecretAccessKey|SecretKey|PrivateKey|Secret|AccessToken|RefreshToken|AuthToken|IdToken|SessionToken|Token|ApiKey|AccessKey|ClientSecret)` +
+      assignedValue,
+    "g",
+  ),
 ];
 
 /** Zero-width and format characters that could split a token past a pattern. */

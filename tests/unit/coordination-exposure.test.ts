@@ -330,6 +330,35 @@ describe("credential scrubber", () => {
     expect(scrubCredentials('pwd="short" plan')).toBe('pwd="short" plan');
   });
 
+  test("redacts camelCase names carrying a prefix", () => {
+    const marker = redactionMarker;
+    const cases: [string, string][] = [
+      [["db", "Password=hunter2hunter2"].join(""), `db${marker}`],
+      [["db2", "Password: abcdefghij"].join(""), `db2${marker}`],
+      [['{"github', 'Token":"abcdefghijk"}'].join(""), `{"github${marker}}`],
+      [["my", "ApiKey: abcdefghijk"].join(""), `my${marker}`],
+      [["rsa", "PrivateKey=abcdefghijk"].join(""), `rsa${marker}`],
+      [["aws", "SecretAccessKey=abcdefghijk"].join(""), `aws${marker}`],
+      [["stripe", "ClientSecret: abcdefghijk"].join(""), `stripe${marker}`],
+      [["bearer", "Token = 'abcdefghij'"].join(""), `bearer${marker}`],
+      [["github", "AccessToken=abcdefghijk"].join(""), `github${marker}`],
+      [["user", 'Passwd: "correct horse battery" done'].join(""), `user${marker} done`],
+    ];
+    for (const [input, expected] of cases)
+      expect(scrubCredentials(`see ${input}`)).toBe(`see ${expected}`);
+  });
+
+  test("keeps camelCase words that are not credential assignments", () => {
+    for (const text of [
+      "dbPassword reset flow",
+      "call setPassword(abcdefghijkl) here",
+      "userPassword: short",
+      "mytoken=abcdefghijk",
+      "Rotate Token: weekly",
+    ])
+      expect(scrubCredentials(text)).toBe(text);
+  });
+
   test("bounds the code-point conversion of huge text", () => {
     const item = exposeItem(
       "milestones",

@@ -21,6 +21,50 @@ const read = (target: CoordinationQueryApi) =>
   );
 
 describe("coordination query API transport", () => {
+  test("serves every read under the owner's per-project exposure policy", async () => {
+    const execute = vi.fn(async () => ({}) as never);
+    const projects = new Map([["p", ["P", "T"] as const]]);
+    const target = new CoordinationQueryApi({
+      reads: { execute } as unknown as CoordinationReadService,
+      projects,
+      startedAt: () => new Date("2026-10-16T08:00:00.000Z"),
+    });
+    // The client may only narrow the classes it asks for; the policy that
+    // bounds the answer is the listener's own enabled set.
+    const response = await target.handle(
+      new Request(
+        "http://localhost/api/coordination/v1/projects/p/tasks?classes=P",
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(execute).toHaveBeenCalledTimes(1);
+    const [request, policy] = execute.mock.calls[0] as unknown as [
+      { projectId: string; operation: string; classes?: string[] },
+      { kind: string; projects: unknown },
+    ];
+    expect(request).toMatchObject({
+      projectId: "p",
+      operation: "tasks",
+      classes: ["P"],
+    });
+    expect(policy.kind).toBe("exposure");
+    expect(policy.projects).toBe(projects);
+  });
+
+  test("a client cannot select the owner policy or widen the enabled set", async () => {
+    const execute = vi.fn(async () => ({}) as never);
+    const target = api(execute);
+    for (const query of ["policy=owner", "kind=owner", "projects=q"]) {
+      const response = await target.handle(
+        new Request(
+          `http://localhost/api/coordination/v1/projects/p/tasks?${query}`,
+        ),
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   test("a busy read answers RUNTIME_BUSY with retry-after", async () => {
     const response = await read(
       api(async () => {
