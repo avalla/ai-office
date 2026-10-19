@@ -132,6 +132,104 @@ describe("stage result envelope", () => {
     ).toContain("error.message exceeds");
   });
 
+  describe("limits hold exactly at the boundary", () => {
+    const nested = (levels: number): Record<string, unknown> => {
+      let value: Record<string, unknown> = { leaf: 1 };
+      for (let i = 1; i < levels; i += 1) value = { n: value };
+      return value;
+    };
+
+    test("accepts a value exactly at each limit", () => {
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          summary: "x".repeat(stageResultLimits.summaryBytes),
+        }),
+      ).not.toThrow();
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          outcome: "failed",
+          data: undefined,
+          error: {
+            code: "too_long",
+            message: "x".repeat(stageResultLimits.errorMessageBytes),
+          },
+        }),
+      ).not.toThrow();
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          producer: {
+            kind: "agent_run",
+            agentRunId: "r".repeat(stageResultLimits.identifierBytes),
+          },
+        }),
+      ).not.toThrow();
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          data: { ["k".repeat(stageResultLimits.dataKeyBytes)]: 1 },
+        }),
+      ).not.toThrow();
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          data: nested(stageResultLimits.dataDepth),
+        }),
+      ).not.toThrow();
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          data: Object.fromEntries(
+            Array.from({ length: stageResultLimits.dataNodes - 1 }, (_, i) => [
+              `k${i}`,
+              1,
+            ]),
+          ),
+        }),
+      ).not.toThrow();
+    });
+
+    test("rejects a value one past each limit", () => {
+      expect(
+        rejection({
+          ...valid,
+          producer: {
+            kind: "agent_run",
+            agentRunId: "r".repeat(stageResultLimits.identifierBytes + 1),
+          },
+        }),
+      ).toContain("exceeds");
+      expect(
+        rejection({
+          ...valid,
+          producer: {
+            kind: "operator",
+            actorLabel: "a".repeat(stageResultLimits.identifierBytes + 1),
+          },
+        }),
+      ).toContain("exceeds");
+      expect(
+        rejection({
+          ...valid,
+          data: nested(stageResultLimits.dataDepth + 1),
+        }),
+      ).toBeTruthy();
+      expect(
+        rejection({
+          ...valid,
+          data: Object.fromEntries(
+            Array.from({ length: stageResultLimits.dataNodes }, (_, i) => [
+              `k${i}`,
+              1,
+            ]),
+          ),
+        }),
+      ).toBeTruthy();
+    });
+  });
+
   test("measures the limit in bytes, not characters", () => {
     expect(
       rejection({
