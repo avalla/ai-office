@@ -355,9 +355,109 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
 ## Open questions
 
 The ADR stays Proposed until explicitly accepted. Two questions are open for
-the owner; neither is decided here.
+the owner; neither is decided here. Each is presented with the constraints any
+answer must meet and a recommendation, so the owner can decide without further
+design work. Neither blocks the rest of the ADR, and neither adds a command in
+this ADR.
 
-1. Should an owner-approved, audited abandon step exist for a creation-pending
-   marker whose Runtime outcome can never be learned (see Known limitations)?
-2. Should a creation conflict reply identify the existing run so that the skill
-   can adopt it, or is the dead end accepted?
+### Question A: abandoning a creation-pending marker
+
+What the proposal documents today: an uncertain creation outcome keeps the
+marker; the skill passes no gate, offline or otherwise, until an idempotent
+retry of the stored canonical payload is answered by the Runtime; no command
+abandons a marker.
+
+Constraint. A human approval does not prove that no delivery run exists: the
+request may have committed and the reply been lost. An abandon that clears the
+marker on approval alone would turn an uncertain outcome into an offline path
+for a task that may already have a Runtime run, and the two records would then
+diverge. So an abandon must never be a local approval that clears the marker and
+releases the offline rules.
+
+Recommended answer: no abandon command. The marker is resolved only by a
+Runtime answer, and a Runtime that is permanently lost is an authority change,
+decided separately.
+
+- **Reachable Runtime.** The idempotent retry already resolves the marker, with
+  no new command. Its answer is one of: a run exists for the task with the same
+  payload (the marker is cleared and the run is used); a run exists with a
+  different payload (typed conflict, Question B); or no run exists (the stored
+  payload creates it). The retry replays the stored payload exactly, so it is
+  idempotent and safe to repeat after any timeout, lost reply or restart.
+- **Runtime unreachable for a long time.** The task stays blocked. This is the
+  cost of not guessing, and the skill reports it with the marker identity.
+- **Runtime replaced or lost for good.** This is a change of the authority the
+  task is bound to, not a marker operation. A new Runtime cannot know whether
+  the old one held a run, so it cannot answer for it. It needs its own decision
+  (a rebind of the task to a Runtime, recorded and approved) and is not part of
+  this ADR. Until then the marker stays.
+
+If the owner nevertheless wants an abandon step, it must satisfy all of these,
+and anything less is refused:
+
+1. It is a Runtime operation, not a file-store edit. The Runtime must be
+   reachable and must answer that no delivery run exists for (project, task);
+   that answer, bound to the marker's payload hash, is the only thing that
+   permits clearing. An approval is required in addition, never instead.
+2. It is idempotent: the same abandon, identified by the marker identity and
+   payload hash, returns the same result however often it is sent, and abandoning
+   an already-resolved marker is a typed no-op that reveals no other state.
+3. It is audited: the audit record carries the marker identity, payload hash,
+   the Runtime answer, the approver and the time, and is written in the same
+   transaction as any Runtime state change it causes.
+4. It is authority-checked: the caller must hold the delivery capability for
+   that project; a run, task or marker of another project answers like a missing
+   one.
+5. It never opens the offline path. After an abandon the task either creates its
+   run through the Runtime or stays blocked; it does not proceed on offline
+   rules.
+6. It cannot race a late creation: the Runtime refuses a later creation request
+   carrying an abandoned marker's payload hash unless the skill issues a fresh
+   marker, so a delayed or duplicated original request cannot create a run after
+   the abandon.
+
+With a reachable Runtime these conditions reduce to the idempotent retry, which
+is why no separate command is recommended.
+
+### Question B: a creation conflict that names the existing run
+
+What the proposal documents today: a different payload for a task that already
+has a run is a typed conflict and a dead end; the skill cannot adopt the run.
+
+Constraint. The Runtime looks the run up by (project, task), so a run it finds
+always belongs to the same project and task as the request; it never names or
+hints at a run of another project, and a task outside the project still answers
+as not found (invariant 1). Adoption is a different matter from disclosure: a
+run created under another configuration may hold a lower gate floor, a
+different snapshot or a terminal state, and the skill must not silently adopt
+it.
+
+Recommended answer: the conflict reply identifies the existing run, read-only;
+adoption is a separate explicit step, never automatic.
+
+- The typed conflict carries the existing run's identifier, its state, its
+  recorded snapshot schema version and hash, its recorded gate set and its
+  pipeline run reference or absence, and nothing about any other run or
+  project. It is returned only after the Runtime has verified that the run
+  belongs to the requested project and task.
+- The skill treats the reply as information, not as authority. It does not
+  clear the marker, does not retry with the existing run's values on its own and
+  does not continue the task.
+- Adoption, if the owner wants it, is a second explicit operation that the
+  operator approves for that run and marker. The Runtime accepts it only when
+  the run is not terminal, its recorded gate set is at least the gate set
+  required by the current configuration (an adoption never lowers the gate
+  floor or the recorded floor additions), its pipeline run reference is
+  compatible with the stored payload, and the stored snapshot differs only in
+  fields the contract allows to differ. It is idempotent on the run and marker
+  identity, audited like Question A, and refused with a typed conflict
+  otherwise. The existing run is never edited to match the payload.
+- A terminal run, or an incompatible one, stays a dead end for that task, as
+  today; restarting delivery remains outside this ADR.
+
+### Consequences of the recommended answers
+
+No new abandon command and one richer typed reply. The marker rules and the
+idempotent retry stay as specified. A permanently lost Runtime and adoption
+remain separate decisions, so accepting this ADR does not commit the project to
+either.
