@@ -316,8 +316,11 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      implementation plan; this contract is what binds.
    - The skill creates a run only at preflight. It does not create one for a
      task that already has checkpoints, floor determinations or a handoff
-     packet, and reports why. Replaying an existing creation-pending marker
-     (invariant 3) is not a creation for this rule, even though the handoff
+     packet, and reports why. Replaying an existing creation-pending marker and
+     retrying creation after a recoverable creation stop (validation or not
+     found, once the input is corrected) are not creations for this rule, even
+     though the handoff packet lists that marker or stop record. A conflict
+     stop is not recoverable by retry (Question B).
      packet lists that marker. The Runtime cannot read that local state, so it
      cannot enforce this; like the snapshot, it is a client obligation.
    - The Runtime re-validates the data against the schema and the cross-key
