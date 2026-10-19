@@ -282,14 +282,14 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      it already keeps. Without that ordering a crash between publication and
      marking would leave an unregistered checkpoint prunable. The marker is
      cleared only after a successful registration, including an idempotent
-     re-registration during reconciliation, and never otherwise.
-      A marker whose checkpoint was never published (a crash after the marker
-      and before publication) is an unpublished intent, not a pending
-      checkpoint: reconciliation finds no file for it and registers nothing. The
-      skill republishes the same identity when it still holds the content, and
-      otherwise records the intent as cancelled, reports it, and then clears the
-      marker. A cancelled intent was never visible to pruning or to a handoff,
-      so no pinning guarantee is lost.
+     re-registration during reconciliation, and never otherwise except for an unpublished intent (below).
+     A marker whose checkpoint was never published (a crash after the marker
+     and before publication) is an unpublished intent, not a pending
+     checkpoint: reconciliation finds no file for it and registers nothing. The
+     skill republishes the same identity when it still holds the content, and
+     otherwise records the intent as cancelled, reports it, and then clears the
+     marker. A cancelled intent was never visible to pruning or to a handoff,
+     so no pinning guarantee is lost.
    - Reconciliation registers pending checkpoints in publication order. A
      conflict stops reconciliation at that checkpoint, keeps it and the later
      ones pending, and is reported.
