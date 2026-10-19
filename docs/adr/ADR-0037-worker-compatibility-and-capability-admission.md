@@ -279,15 +279,30 @@ PostgreSQL project authority (M22) is unaffected by either.
   whether or not a manifest still lists it as active. A committed
   manifest or revocation that is missing, unreadable or invalid, at start or on
   reload, cannot be skipped, because skipping it could readmit a revoked
-  subject: the snapshot is refused with `registry_unreadable`. A reload that
-  finds such a committed object, or cannot verify the scope of the revocations
-  it must apply, fails closed: the refusal takes precedence and the previously
-  loaded snapshot is not kept in force. A previously loaded valid snapshot
-  stays in force only when the reload failed before reading any newer committed
-  manifest or revocation (for example the pointer could not be read at all and
-  the state file records no newer generation), because then no revocation can
-  have been bypassed; it is replaced as soon as a verified newer one is
-  available.
+  subject: the snapshot is refused with `registry_unreadable`.
+  A snapshot is built whole or not at all; a partial read never yields a
+  snapshot and never contributes revocations to one.
+  **A previously loaded snapshot is never kept in force across a failed
+  reload.** A snapshot is authoritative only while the Runtime can show that it
+  still is the current generation. Any reload that does not end in a fully
+  verified snapshot, whatever the cause (the pointer, a manifest, a revocation
+  or the state file cannot be read or verified, the scope of the revocations to
+  apply cannot be established, or the rollback check cannot run), replaces the
+  previous snapshot with the refusing one: every subject is refused with
+  `registry_unreadable` until a later reload verifies. The previous snapshot is
+  not retained as a fallback because the failed read does not prove that no
+  newer revocation exists. A state file that records no newer generation proves
+  nothing here, since a writer can publish the pointer and stop before the state
+  is updated. Admission uses a snapshot only when the Runtime has verified, at
+  its load, that its generation is the current one: the pointer names that
+  generation and manifest digest, or names a verified successor whose chain
+  contains it.
+  A crash between publishing the pointer and recording the state leaves the
+  pointer one or more generations ahead of the recorded state. That is accepted
+  only when the whole chain from the recorded manifest to the pointer verifies
+  and every revocation it adds is applied; the state is then advanced. A pointer
+  that names an older generation than the recorded state, or a chain that does
+  not contain the recorded manifest, is a rollback and is refused.
   The last accepted generation and manifest digest are kept in a state file in
   the Runtime home, outside the registry directory. An absent registry is an
   empty registry only while that state records no accepted generation. Once a
@@ -673,6 +688,11 @@ Provenance never contains registry paths, credentials or raw probe output.
 | O4  | Accept `local_operator` approvals until M10, recorded as such, knowing that a same-account process (including an external coding agent) is not distinguished from the operator                    | Accept, with the class visible everywhere, the separation of agents from the approval surface stated as an operational rule, and a policy hook to require a stronger class later        |
 | O5  | Initial guarantee catalogue contents                                                                                                                                                              | Freeze in WC-02 from the documented guarantees, reviewed by the owner                                                                                                                   |
 | O6  | Registry persistence: content-addressed files (decision 4) or a dedicated host-level SQLite store, given AGENTS.md (authoritative state in SQLite, Runtime-centralised)                           | Owner decides before acceptance; the ADR does not choose. If files are kept, record why a second persistence mechanism is justified; WC-02 does not start before this is settled        |
+
+The comparison of the two O6 options, with the owner's dedicated-SQLite
+preference tested against decision 4, is in
+[WC-01 O6 comparison](../development/wc-01-o6-registry-persistence-comparison.md).
+It is non-normative and does not settle O6.
 
 ## Decision gates for WC-02 onward
 

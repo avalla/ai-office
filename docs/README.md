@@ -68,6 +68,8 @@ AI Office keeps different kinds of documentation separate so current product tru
   typed diagnostics on missing, mismatched, revoked or drifted evidence, offline probes, authorized live certification and release
   monitoring that enables nothing; proposed decision gate, not accepted current
   architecture; nothing implemented.
+  Open decision O6 (registry persistence) has a non-normative
+  [comparison](development/wc-01-o6-registry-persistence-comparison.md).
 - [Professional-work verticals](development/professional-work-verticals.md):
   future domain-neutral product boundary, software-as-first-vertical strategy,
   and the legal reference vertical with provenance, human-approval, policy, and
