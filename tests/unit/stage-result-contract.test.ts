@@ -368,6 +368,29 @@ describe("stage result hardening", () => {
     );
   });
 
+  test("does not forward a retained rejection whose message was mutated", () => {
+    // An attacker-controlled trap that caught an earlier rejection rethrows it
+    // after replacing its message; the parser must report its own text.
+    let retained: unknown;
+    try {
+      parseStageResultEnvelope({ ...valid, summary: "" });
+    } catch (error) {
+      retained = error;
+    }
+    (retained as Error).message = "ghp_" + "A".repeat(36);
+    const hostile = new Proxy(
+      { ...valid.producer },
+      {
+        ownKeys() {
+          throw retained;
+        },
+      },
+    );
+    const text = rejection({ ...valid, producer: hostile });
+    expect(text).not.toContain("ghp_");
+    expect(text).toContain("Invalid stage result");
+  });
+
   test("reports a Proxy trap that throws as a typed validation error", () => {
     const hostile = new Proxy(
       { ...valid.producer },

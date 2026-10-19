@@ -152,14 +152,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * `getPrototypeOf` throws, a revoked Proxy) cannot be mistaken for one of
  * ours or make the classification itself throw.
  */
-const parserRejections = new WeakSet<object>();
+const parserRejections = new WeakMap<object, string>();
 
 function invalid(reason: string): never {
   // Messages name the failing field only; they never echo the rejected value.
   const rejection = new DomainValidationError(
     `Invalid stage result: ${reason}`,
   );
-  parserRejections.add(rejection);
+  parserRejections.set(rejection, reason);
   throw rejection;
 }
 
@@ -395,12 +395,13 @@ export function parseStageResultEnvelope(value: unknown): StageResultEnvelope {
   } catch (error) {
     // Only this parser's own rejections pass through; any other error, even a
     // DomainValidationError thrown by a hostile trap, is replaced.
-    if (
-      typeof error === "object" &&
-      error !== null &&
-      parserRejections.has(error)
-    )
-      throw error;
+    // Rebuilt from the privately retained reason, so a retained rejection
+    // whose message a hostile trap mutated is never forwarded.
+    const reason =
+      typeof error === "object" && error !== null
+        ? parserRejections.get(error)
+        : undefined;
+    if (reason !== undefined) return invalid(reason);
     // Exotic hostile input (for example a revoked Proxy) must still surface
     // as the typed, sanitized validation error, never as an arbitrary one.
     return invalid("envelope cannot be read");
