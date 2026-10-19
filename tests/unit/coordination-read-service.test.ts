@@ -427,11 +427,11 @@ describe("coordination read service", () => {
     await expect(
       // @ts-expect-error the policy is required by the contract
       service().execute({ projectId: "p", operation: "status" }),
-    ).rejects.toBeInstanceOf(Error);
+    ).rejects.toBeInstanceOf(ProjectNotFoundError);
     await expect(
       // @ts-expect-error the policy is required by the contract
       service().execute({ projectId: "p", operation: "tasks" }, undefined),
-    ).rejects.toBeInstanceOf(Error);
+    ).rejects.toBeInstanceOf(ProjectNotFoundError);
   });
 
   test("a response above 256 KiB is refused; a smaller window of the same operation is served", async () => {

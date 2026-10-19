@@ -258,6 +258,12 @@ export class CoordinationReadService {
       throw new CoordinationOperationError(
         `Coordination operation must be one of: ${coordinationReadOperations.join(", ")}`,
       );
+    // A caller that states no known authority gets no data, as a missing project.
+    if (
+      (policy as CoordinationReadPolicy | undefined)?.kind !== "owner" &&
+      (policy as CoordinationReadPolicy | undefined)?.kind !== "exposure"
+    )
+      throw new ProjectNotFoundError(query.projectId);
     const allowedClasses =
       policy.kind === "owner"
         ? ownerClasses
