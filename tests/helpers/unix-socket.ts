@@ -1,4 +1,5 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -42,6 +43,62 @@ export function resolveTestSocketBase(
   return SHORT_SOCKET_BASE.length < temporaryDirectory.length
     ? SHORT_SOCKET_BASE
     : temporaryDirectory;
+}
+
+function accepts(socketPath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const connection = createConnection(socketPath);
+    // A connect that never settles must not stall the readiness loop.
+    const timer = setTimeout(() => {
+      connection.destroy();
+      resolve(false);
+    }, 500);
+    connection.once("connect", () => {
+      clearTimeout(timer);
+      connection.destroy();
+      resolve(true);
+    });
+    connection.once("error", () => {
+      clearTimeout(timer);
+      resolve(false);
+    });
+  });
+}
+
+// The path travels in the environment, never inside the script text.
+const holderScripts = {
+  /** An HTTP server answering 200. */
+  answer:
+    'Bun.serve({ unix: process.env.HOLDER_SOCKET_PATH, fetch: () => new Response("") }); setInterval(() => {}, 1000);',
+  /** An HTTP server answering 404, as another service would. */
+  foreign:
+    'Bun.serve({ unix: process.env.HOLDER_SOCKET_PATH, fetch: () => Response.json({ foreign: true }, { status: 404 }) }); setInterval(() => {}, 1000);',
+  /** Accepts connections and never answers. */
+  silent:
+    'require("node:net").createServer(() => {}).listen(process.env.HOLDER_SOCKET_PATH); setInterval(() => {}, 1000);',
+} as const;
+
+/**
+ * Starts a process that listens on {@link socketPath} and resolves once it
+ * accepts connections. Bun reports readiness from the child before the bind
+ * is guaranteed, so the socket itself is probed. The caller kills the holder:
+ * a SIGKILL leaves a stale socket file behind, as a crashed host would.
+ */
+export async function startSocketHolder(
+  socketPath: string,
+  behavior: keyof typeof holderScripts = "answer",
+): Promise<ReturnType<typeof Bun.spawn>> {
+  const holder = Bun.spawn(
+    [process.execPath, "-e", holderScripts[behavior]],
+    { stdout: "ignore", env: { ...process.env, HOLDER_SOCKET_PATH: socketPath } },
+  );
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (await accepts(socketPath)) return holder;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  holder.kill("SIGKILL");
+  throw new Error(`Socket holder never listened on ${socketPath}`);
 }
 
 export interface TestUnixSocket {

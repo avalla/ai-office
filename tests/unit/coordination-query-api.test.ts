@@ -1,0 +1,169 @@
+import { describe, expect, test, vi } from "vitest";
+import { CoordinationQueryApi } from "../../apps/daemon/src/coordination-query-api.ts";
+import type { CoordinationReadService } from "@ai-office/application/coordination/coordination-read-service.ts";
+import { PlanningReadBusyError } from "@ai-office/application/ports/planning-read.port.ts";
+
+function api(
+  execute: CoordinationReadService["execute"],
+  maxInFlight?: number,
+): CoordinationQueryApi {
+  return new CoordinationQueryApi({
+    reads: { execute } as CoordinationReadService,
+    projects: new Map([["p", ["P", "T"]]]),
+    startedAt: () => new Date("2026-10-16T08:00:00.000Z"),
+    ...(maxInFlight === undefined ? {} : { maxInFlight }),
+  });
+}
+
+const read = (target: CoordinationQueryApi) =>
+  target.handle(
+    new Request("http://localhost/api/coordination/v1/projects/p/tasks"),
+  );
+
+describe("coordination query API transport", () => {
+  test("serves every read under the owner's per-project exposure policy", async () => {
+    const execute = vi.fn(async () => ({}) as never);
+    const projects = new Map([["p", ["P", "T"] as const]]);
+    const target = new CoordinationQueryApi({
+      reads: { execute } as unknown as CoordinationReadService,
+      projects,
+      startedAt: () => new Date("2026-10-16T08:00:00.000Z"),
+    });
+    // The client may only narrow the classes it asks for; the policy that
+    // bounds the answer is the listener's own enabled set.
+    const response = await target.handle(
+      new Request(
+        "http://localhost/api/coordination/v1/projects/p/tasks?classes=P",
+      ),
+    );
+    expect(response.status).toBe(200);
+    expect(execute).toHaveBeenCalledTimes(1);
+    const [request, policy] = execute.mock.calls[0] as unknown as [
+      { projectId: string; operation: string; classes?: string[] },
+      { kind: string; projects: unknown },
+    ];
+    expect(request).toMatchObject({
+      projectId: "p",
+      operation: "tasks",
+      classes: ["P"],
+    });
+    expect(policy.kind).toBe("exposure");
+    expect(policy.projects).toBe(projects);
+  });
+
+  test("a client cannot select the owner policy or widen the enabled set", async () => {
+    const execute = vi.fn(async () => ({}) as never);
+    const target = api(execute);
+    for (const query of ["policy=owner", "kind=owner", "projects=q"]) {
+      const response = await target.handle(
+        new Request(
+          `http://localhost/api/coordination/v1/projects/p/tasks?${query}`,
+        ),
+      );
+      expect(response.status).toBe(400);
+    }
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  test("a busy read answers RUNTIME_BUSY with retry-after", async () => {
+    const response = await read(
+      api(async () => {
+        throw new PlanningReadBusyError();
+      }),
+    );
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("1");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.json()).toEqual({
+      coordinationApiVersion: 1,
+      error: { code: "RUNTIME_BUSY", message: "A write is in progress; retry" },
+    });
+  });
+
+  test("an unexpected failure leaks no message, path or stack", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const failure = new TypeError("/home/user/.ai-office/project.sqlite SECRET");
+      const response = await read(
+        api(async () => {
+          throw failure;
+        }),
+      );
+      expect(response.status).toBe(500);
+      const text = await response.text();
+      expect(JSON.parse(text)).toEqual({
+        coordinationApiVersion: 1,
+        error: { code: "INTERNAL_ERROR", message: "Query execution failed" },
+      });
+      expect(text).not.toContain("SECRET");
+      expect(text).not.toContain(".ai-office");
+      // The operator log names the error type only.
+      expect(errors).toHaveBeenCalledWith(
+        "Coordination listener read failed: TypeError",
+      );
+      expect(JSON.stringify(errors.mock.calls)).not.toContain("SECRET");
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test("reads beyond the in-flight bound answer RUNTIME_BUSY and the bound recovers", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    const target = api(async () => {
+      await held;
+      return {} as Awaited<ReturnType<CoordinationReadService["execute"]>>;
+    }, 2);
+    const first = read(target);
+    const second = read(target);
+    const third = await read(target);
+    expect(third.status).toBe(503);
+    expect(await third.json()).toMatchObject({
+      error: { code: "RUNTIME_BUSY" },
+    });
+    // Health is not a read of planning state and is always answered.
+    const health = await target.handle(
+      new Request("http://localhost/api/coordination/v1/health"),
+    );
+    expect(health.status).toBe(200);
+    release();
+    expect((await first).status).toBe(200);
+    expect((await second).status).toBe(200);
+    expect((await read(target)).status).toBe(200);
+  });
+
+  test("after close, reads are refused and an interrupted read is not logged", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      let fail!: (error: Error) => void;
+      const pending = new Promise<never>((_, reject) => (fail = reject));
+      const target = api(() => pending);
+      const interrupted = read(target);
+      target.close();
+      const refused = await read(target);
+      expect(refused.status).toBe(503);
+      expect(await refused.json()).toMatchObject({
+        error: { code: "RUNTIME_BUSY", message: "The Runtime is stopping" },
+      });
+      // The storage closed under the read: a 500, but no operator fault log.
+      fail(new Error("database closed"));
+      expect((await interrupted).status).toBe(500);
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  test("a failed read releases its in-flight slot", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const target = api(async () => {
+        throw new Error("boom");
+      }, 1);
+      expect((await read(target)).status).toBe(500);
+      expect((await read(target)).status).toBe(500);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+});

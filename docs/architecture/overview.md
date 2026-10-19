@@ -569,6 +569,44 @@ authoritative. See
 [ADR-0034](../adr/ADR-0034-adaptive-agent-learning-experience-governance.md)
 and the [M20 plan](../development/adaptive-agent-learning.md).
 
+## Coordination read listener
+
+M23 CB-10 adds an optional second Unix socket for the coordination read API
+([ADR-0036](../adr/ADR-0036-coordination-bridge-boundary-protocol-trust.md)
+Decision 5). It is closed unless the owner enables it in
+`<runtime-home>/coordination-listener.json`, which lists the projects it may
+serve and, per project, the data classes (`P`, or `P` and `T`); the file is read
+once at start without following a symbolic link and must be a regular file
+owned by the Runtime user and writable by nobody else (mode 0600). An invalid
+file keeps the listener closed without affecting the Runtime. When enabled the
+host binds `<runtime-home>/coordination.sock` (created owner-only), never
+replaces the main socket or a socket something still answers on, and serves
+only `GET /api/coordination/v1/health` and
+`GET /api/coordination/v1/projects/<id>/<operation>` for the operations
+`status`, `milestones`, `tasks`, `requirements`, `dependencies`, `blockers` and
+`runnable`. It has no `/commands`, no dashboard route and no wildcard, appends
+no audit row on a read, and answers a project that is not enabled like a missing
+one. The CLI command `coordination:read` (main socket) and the listener call the
+same `CoordinationReadService` over the CB-02 planning read model, each passing
+its policy to it (the owner's for the CLI, the listener configuration for the
+socket), so the per-project and per-class decision has one implementation.
+Every response is built by the exposure registry's explicit mappers: classes P
+and T only, text scrubbed of common credential shapes and cut at 256 characters,
+relationship lists cut at 100 entries, each cut named in `truncatedFields`, and
+responses refused above 256 KiB. The coordination `snapshotId` is the digest of
+that complete exposed projection of the scope (not the CB-02 identity over
+stored values, which `planning:snapshot` keeps), so a scrubbed credential or the
+cut tail of a title cannot change an identity a caller sees; `pageDigest` covers
+each whole exposed response except itself. A planning read that meets an open writer
+transaction on the shared host connection retries briefly and then fails with
+the retryable `RUNTIME_BUSY` (503 on the listener) instead of observing
+uncommitted state; this also applies to `planning:snapshot`. The listener serves
+at most eight reads at once. `runtime:purge` refuses to run while
+`coordination.sock` still accepts connections, removes it when stale and keeps
+the configuration file. The listener runs as the
+Runtime user: the capability-isolated deployment required for public exposure
+is CB-11D.
+
 ## Operational read models
 
 Operational state is computed once, in the application layer, and published as

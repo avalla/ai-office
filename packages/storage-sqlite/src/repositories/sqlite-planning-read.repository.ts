@@ -4,9 +4,10 @@ import type {
   RequirementStatus,
 } from "@ai-office/domain/governance/governance.ts";
 import type { TaskStatus } from "@ai-office/domain/task/task.ts";
-import type {
-  PlanningReadRepository,
-  PlanningStateRecord,
+import {
+  PlanningReadBusyError,
+  type PlanningReadRepository,
+  type PlanningStateRecord,
 } from "@ai-office/application/ports/planning-read.port.ts";
 
 /**
@@ -21,6 +22,11 @@ export class SqlitePlanningReadRepository implements PlanningReadRepository {
   async readPlanningState(
     projectId: string,
   ): Promise<PlanningStateRecord | null> {
+    // The host shares this connection with writers whose transactions stay
+    // open across awaits (SqliteTransactionRunner). A read started inside one
+    // would join it as a savepoint and see uncommitted, possibly rolled-back
+    // state, so it is refused instead.
+    if (this.database.inTransaction) throw new PlanningReadBusyError();
     // One read transaction: every collection sees the same committed state.
     return this.database.transaction((): PlanningStateRecord | null => {
       const project = this.database

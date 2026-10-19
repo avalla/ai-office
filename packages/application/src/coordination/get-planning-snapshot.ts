@@ -1,14 +1,33 @@
 import { ProjectNotFoundError } from "../errors.ts";
-import type { PlanningReadRepository } from "../ports/planning-read.port.ts";
+import {
+  PlanningReadBusyError,
+  type PlanningReadRepository,
+} from "../ports/planning-read.port.ts";
 import {
   planningSnapshotCollections,
   planningSnapshotLimits,
   planningSnapshotPage,
   projectPlanningSnapshot,
   type PlanningDataClass,
+  type PlanningSnapshot,
   type PlanningSnapshotCollection,
   type PlanningSnapshotPage,
 } from "./planning-snapshot.ts";
+
+/** How a read that meets an open writer transaction is retried. */
+export interface PlanningReadBusyRetry {
+  /** Total attempts, the first included. */
+  attempts: number;
+  delayMs: number;
+  sleep: (milliseconds: number) => Promise<void>;
+}
+
+const defaultBusyRetry: PlanningReadBusyRetry = {
+  attempts: 5,
+  delayMs: 20,
+  sleep: (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
+};
 
 /** A planning query whose collection, window or class set is not accepted. */
 export class PlanningSnapshotQueryError extends Error {
@@ -40,7 +59,10 @@ function isCollection(value: string): value is PlanningSnapshotCollection {
   return (planningSnapshotCollections as readonly string[]).includes(value);
 }
 
-function classSet(values: readonly string[]): PlanningDataClass[] {
+/** Validates a requested class set: P, optionally with T. */
+export function planningClassSet(
+  values: readonly string[],
+): PlanningDataClass[] {
   const unique = [...new Set(values)];
   if (!unique.includes("P") || unique.some((v) => v !== "P" && v !== "T"))
     throw new PlanningSnapshotQueryError(
@@ -73,9 +95,22 @@ function windowValue(
  * planning state and appends no planning or domain audit.
  */
 export class GetPlanningSnapshot {
-  constructor(private readonly reads: PlanningReadRepository) {}
+  constructor(
+    private readonly reads: PlanningReadRepository,
+    private readonly busy: PlanningReadBusyRetry = defaultBusyRetry,
+  ) {}
 
   async execute(query: PlanningSnapshotQuery): Promise<PlanningSnapshotPage> {
+    return (await this.executeWithSnapshot(query)).page;
+  }
+
+  /**
+   * The page together with the complete snapshot it was cut from, from one
+   * read, for callers that also need the whole scope.
+   */
+  async executeWithSnapshot(
+    query: PlanningSnapshotQuery,
+  ): Promise<{ snapshot: PlanningSnapshot; page: PlanningSnapshotPage }> {
     const collection = query.collection ?? "tasks";
     if (!isCollection(collection))
       throw new PlanningSnapshotQueryError(
@@ -95,10 +130,21 @@ export class GetPlanningSnapshot {
       1,
       planningSnapshotLimits.maxLimit,
     );
-    const classes = classSet(query.classes ?? ["P", "T"]);
+    const snapshot = await this.readSnapshot(query);
+    return {
+      snapshot,
+      page: planningSnapshotPage(snapshot, collection, { offset, limit }),
+    };
+  }
+
+  /** The complete snapshot of one validated scope, before pagination. */
+  async readSnapshot(
+    query: Pick<PlanningSnapshotQuery, "projectId" | "milestoneId" | "classes">,
+  ): Promise<PlanningSnapshot> {
+    const classes = planningClassSet(query.classes ?? ["P", "T"]);
     const milestoneId = query.milestoneId ?? null;
 
-    const state = await this.reads.readPlanningState(query.projectId);
+    const state = await this.readState(query.projectId);
     if (state === null) throw new ProjectNotFoundError(query.projectId);
     if (
       milestoneId !== null &&
@@ -106,11 +152,30 @@ export class GetPlanningSnapshot {
     )
       throw new PlanningScopeNotFoundError(query.projectId, milestoneId);
 
-    const snapshot = projectPlanningSnapshot(
+    return projectPlanningSnapshot(
       state,
       { projectId: query.projectId, milestoneId },
       classes,
     );
-    return planningSnapshotPage(snapshot, collection, { offset, limit });
+  }
+
+  /**
+   * Writer transactions on the shared connection are short, so a read that
+   * meets one waits briefly and retries; only a write still open after the
+   * last attempt surfaces as {@link PlanningReadBusyError}.
+   */
+  private async readState(projectId: string) {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await this.reads.readPlanningState(projectId);
+      } catch (error) {
+        if (
+          !(error instanceof PlanningReadBusyError) ||
+          attempt >= this.busy.attempts
+        )
+          throw error;
+        await this.busy.sleep(this.busy.delayMs);
+      }
+    }
   }
 }

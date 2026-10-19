@@ -33,12 +33,14 @@ const runtimeArtifacts = new Map<string, RuntimePurgeArtifactKind>([
   ["index.sqlite-shm", "file"],
   ["index.sqlite-journal", "file"],
   ["daemon.sock", "socket"],
+  ["coordination.sock", "socket"],
   ["drafts", "directory"],
   ["generated", "directory"],
 ]);
 
 const removalOrder = [
   "daemon.sock",
+  "coordination.sock",
   "drafts",
   "generated",
   "index.sqlite-shm",

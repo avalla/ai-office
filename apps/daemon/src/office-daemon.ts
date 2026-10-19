@@ -1,5 +1,6 @@
-import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
+import { createConnection } from "node:net";
+import { dirname, resolve } from "node:path";
 import type { RecordAuditEvent } from "@ai-office/application/commands/record-audit-event.ts";
 import {
   daemonProtocolLimits,
@@ -12,6 +13,7 @@ import type { OperationalEventBus } from "@ai-office/application/events/operatio
 import { CommandQueue } from "./command-queue.ts";
 import type { DaemonCommandHandler } from "./local-command-handler.ts";
 import type { QueryApi } from "./query-api.ts";
+import { coordinationApiVersion } from "@ai-office/application/protocol/coordination-query-protocol.ts";
 
 export class RuntimeHostAlreadyRunningError extends Error {
   constructor(socketPath: string) {
@@ -38,6 +40,19 @@ export interface PersistentRuntimeHostOptions {
   queryEvents?: OperationalEventBus;
   queueStatus?: () => Promise<NonNullable<DaemonHealthResponse["queue"]>>;
   knowledgeStatus?: NonNullable<DaemonHealthResponse["knowledge"]>;
+  /**
+   * The read-only coordination listener (ADR-0036 Decision 5), present only
+   * when the owner enabled it. Its handler answers every request on its own
+   * socket; nothing on that socket reaches the query API or `/commands`.
+   */
+  coordinationListener?: CoordinationListener;
+}
+
+export interface CoordinationListener {
+  socketPath: string;
+  handle(request: Request): Promise<Response>;
+  /** Refuses further work; called before the listener stops. */
+  close(): void;
 }
 
 function json(value: unknown, status = 200): Response {
@@ -67,6 +82,7 @@ export class PersistentRuntimeHost {
       throw new Error("Office daemon instances can only be started once");
     this.started = true;
     let server: ReturnType<typeof Bun.serve> | undefined;
+    let coordinationServer: ReturnType<typeof Bun.serve> | undefined;
 
     try {
       await this.prepareSocket();
@@ -81,6 +97,7 @@ export class PersistentRuntimeHost {
           this.route(request, () => host.timeout(request, 0)),
       });
       chmodSync(this.options.socketPath, 0o600);
+      coordinationServer = await this.startCoordinationListener();
       await this.options.onStarting?.();
       await this.options.events.execute({
         eventType: "daemon.started",
@@ -102,6 +119,10 @@ export class PersistentRuntimeHost {
           // releases their listeners and heartbeat timers.
           this.options.queryApi?.closeStreams();
           await this.options.onStopping?.();
+          // Reads hold no stream or state, so in-flight ones are not awaited:
+          // a slow client cannot delay the Runtime stop.
+          this.options.coordinationListener?.close();
+          await coordinationServer?.stop(true);
           await server.stop(false);
           await this.options.events.execute({
             eventType: "daemon.stopped",
@@ -113,7 +134,9 @@ export class PersistentRuntimeHost {
         // Event subscribers hold a listener and a heartbeat timer; dropping
         // them here keeps a stopped daemon from retaining either.
         this.options.queryEvents?.clear();
-        if (server !== undefined) this.removeSocket();
+        if (coordinationServer !== undefined)
+          this.removeSocket(this.options.coordinationListener!.socketPath);
+        if (server !== undefined) this.removeSocket(this.options.socketPath);
         await this.options.onStopped?.();
       }
     }
@@ -299,6 +322,96 @@ export class PersistentRuntimeHost {
     );
   }
 
+  /**
+   * Starts the coordination listener when one is configured. The listener is
+   * optional: a failure to bind it is reported and leaves it closed, never
+   * the Runtime down, and never opens anything broader in its place.
+   */
+  private async startCoordinationListener(): Promise<
+    ReturnType<typeof Bun.serve> | undefined
+  > {
+    const listener = this.options.coordinationListener;
+    if (listener === undefined) return undefined;
+    try {
+      // The listener never shares the main socket, which is live by now.
+      if (resolve(listener.socketPath) === resolve(this.options.socketPath))
+        throw new Error("Coordination socket path is the main socket path");
+      // Only a stale socket is ever replaced; any other file at the path is
+      // left alone and keeps the listener closed.
+      if (
+        existsSync(listener.socketPath) &&
+        !lstatSync(listener.socketPath).isSocket()
+      )
+        throw new Error("Coordination socket path is not a socket");
+      await this.prepareCoordinationSocket(listener.socketPath);
+      // Created owner-only from the start, not only after the chmod below.
+      const previousUmask = process.umask(0o177);
+      let server: ReturnType<typeof Bun.serve>;
+      try {
+        server = Bun.serve({
+          unix: listener.socketPath,
+          fetch: async (request) => {
+            try {
+              return await listener.handle(request);
+            } catch {
+              return json(
+                {
+                  coordinationApiVersion,
+                  error: {
+                    code: "INTERNAL_ERROR",
+                    message: "Query execution failed",
+                  },
+                },
+                500,
+              );
+            }
+          },
+        });
+      } finally {
+        process.umask(previousUmask);
+      }
+      try {
+        chmodSync(listener.socketPath, 0o600);
+      } catch (error) {
+        await server.stop(true);
+        this.removeSocket(listener.socketPath);
+        throw error;
+      }
+      return server;
+    } catch {
+      // The socket path can be user-specific; the reason stays out of logs.
+      console.error(
+        "Coordination listener could not start; it stays disabled until the Runtime restarts.",
+      );
+      return undefined;
+    }
+  }
+
+  /**
+   * Removes a stale coordination socket. Only a refused connection proves
+   * nothing listens there; an accepted connection (whatever the protocol), a
+   * timeout or any other error leaves the file alone and the listener closed.
+   */
+  private async prepareCoordinationSocket(socketPath: string): Promise<void> {
+    if (!existsSync(socketPath)) return;
+    const outcome = await new Promise<"refused" | "other">((resolve) => {
+      const connection = createConnection(socketPath);
+      const settle = (value: "refused" | "other") => {
+        clearTimeout(timer);
+        connection.destroy();
+        resolve(value);
+      };
+      const timer = setTimeout(() => settle("other"), 500);
+      connection.once("connect", () => settle("other"));
+      connection.once("error", (error: NodeJS.ErrnoException) =>
+        settle(isStaleSocketError(socketPath, error) ? "refused" : "other"),
+      );
+    });
+    if (outcome !== "refused")
+      throw new RuntimeHostAlreadyRunningError(socketPath);
+    this.removeSocket(socketPath);
+  }
+
   private async prepareSocket(): Promise<void> {
     if (!existsSync(this.options.socketPath)) return;
 
@@ -313,12 +426,12 @@ export class PersistentRuntimeHost {
       if (error instanceof RuntimeHostAlreadyRunningError) throw error;
     }
 
-    this.removeSocket();
+    this.removeSocket(this.options.socketPath);
   }
 
-  private removeSocket(): void {
-    if (existsSync(this.options.socketPath)) {
-      rmSync(this.options.socketPath);
+  private removeSocket(socketPath: string): void {
+    if (existsSync(socketPath)) {
+      rmSync(socketPath);
     }
   }
 }
@@ -335,6 +448,25 @@ export {
   RuntimeHostAlreadyRunningError as DaemonAlreadyRunningError,
 };
 export type OfficeDaemonOptions = PersistentRuntimeHostOptions;
+
+/**
+ * A refused connection proves nothing listens at the socket. Bun before 1.4
+ * reports ENOENT instead for a stale socket file, so ENOENT counts only while
+ * the path is still a socket; a path that vanished or became another file
+ * proves nothing and stays closed.
+ */
+function isStaleSocketError(
+  socketPath: string,
+  error: NodeJS.ErrnoException,
+): boolean {
+  if (error.code === "ECONNREFUSED") return true;
+  if (error.code !== "ENOENT") return false;
+  try {
+    return lstatSync(socketPath).isSocket();
+  } catch {
+    return false;
+  }
+}
 
 class DaemonCommandTimeoutError extends Error {
   constructor() {

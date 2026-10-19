@@ -13,6 +13,10 @@ import { join } from "node:path";
 import { runDaemonCli } from "../../apps/cli/src/daemon-cli.ts";
 import type { CliIo } from "@ai-office/runtime-host/runtime-command.ts";
 import { runRuntimePurgeCli } from "../../apps/cli/src/runtime-purge-cli.ts";
+import {
+  resolveTestSocketBase,
+  startSocketHolder,
+} from "../helpers/unix-socket.ts";
 import { daemonProtocolVersion } from "@ai-office/application/protocol/daemon-protocol.ts";
 import { ManageRuntimePurge } from "@ai-office/application/runtime/manage-runtime-purge.ts";
 import {
@@ -22,8 +26,8 @@ import {
 
 const roots: string[] = [];
 
-function temporaryRoot(prefix: string): string {
-  const root = mkdtempSync(join(tmpdir(), prefix));
+function temporaryRoot(prefix: string, base: string = tmpdir()): string {
+  const root = mkdtempSync(join(base, prefix));
   roots.push(root);
   return root;
 }
@@ -107,6 +111,73 @@ describe("offline runtime purge CLI", () => {
     expect(readFileSync(join(state, "global.sqlite"), "utf8")).toBe(
       "global memory remains",
     );
+  });
+
+  test("removes a stale coordination socket and keeps the owner's listener configuration", async () => {
+    // The socket path must fit sun_path (104 bytes on macOS), so the root
+    // lives under the short socket base rather than the ambient $TMPDIR.
+    const root = temporaryRoot("ao-pc-", resolveTestSocketBase());
+    const state = join(root, ".ai-office");
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, "coordination-listener.json"), "{}\n");
+    // A crashed listener leaves its socket file behind; a clean stop would
+    // unlink it, so the holder is killed.
+    const socket = join(state, "coordination.sock");
+    const holder = await startSocketHolder(socket);
+    holder.kill("SIGKILL");
+    await holder.exited;
+    expect(existsSync(socket)).toBe(true);
+
+    const planned = captureIo();
+    expect(
+      await runDaemonCli(["runtime:purge"], { projectRoot: root, io: planned.io }),
+    ).toBe(0);
+    const plan = JSON.parse(planned.stdout[0]!) as {
+      planHash: string;
+      artifacts: Array<{ relativePath: string; kind: string }>;
+      preservedPaths: string[];
+    };
+    expect(plan.artifacts).toMatchObject([
+      { relativePath: "coordination.sock", kind: "socket" },
+    ]);
+    expect(plan.preservedPaths).toEqual(["coordination-listener.json"]);
+    const applied = captureIo();
+    expect(
+      await runDaemonCli(["runtime:purge", "--approve", plan.planHash], {
+        projectRoot: root,
+        io: applied.io,
+      }),
+    ).toBe(0);
+    expect(existsSync(socket)).toBe(false);
+    expect(readFileSync(join(state, "coordination-listener.json"), "utf8")).toBe(
+      "{}\n",
+    );
+  });
+
+  test("refuses to purge while a coordination listener still answers without the main socket", async () => {
+    const root = temporaryRoot("ao-pl-", resolveTestSocketBase());
+    const state = join(root, ".ai-office");
+    mkdirSync(state, { recursive: true });
+    writeFileSync(join(state, "project.sqlite"), "authoritative state");
+    const socket = join(state, "coordination.sock");
+    const holder = await startSocketHolder(socket);
+    try {
+      const output = captureIo();
+      expect(
+        await runDaemonCli(["runtime:purge"], {
+          projectRoot: root,
+          io: output.io,
+        }),
+      ).toBe(1);
+      expect(output.stderr.join("\n")).toContain(
+        "its coordination listener socket is still accepting connections",
+      );
+      expect(existsSync(join(state, "project.sqlite"))).toBe(true);
+      expect(existsSync(socket)).toBe(true);
+    } finally {
+      holder.kill("SIGKILL");
+      await holder.exited;
+    }
   });
 
   test("rejects stale approval when runtime state changes after planning", async () => {

@@ -1,3 +1,5 @@
+import { createConnection } from "node:net";
+import { join } from "node:path";
 import {
   ManageRuntimePurge,
   RuntimePurgeApprovalError,
@@ -22,6 +24,30 @@ export interface RuntimePurgeCliOptions {
   adapter?: RuntimePurgeAdapter;
 }
 
+/**
+ * `absent`: no socket file or nothing listening (refused). `present`: a
+ * connection was accepted, or the result was inconclusive.
+ */
+async function probeLocalSocket(path: string): Promise<"absent" | "present"> {
+  return new Promise((resolve) => {
+    const connection = createConnection(path);
+    const settle = (value: "absent" | "present") => {
+      clearTimeout(timer);
+      connection.destroy();
+      resolve(value);
+    };
+    const timer = setTimeout(() => settle("present"), 500);
+    connection.once("connect", () => settle("present"));
+    connection.once("error", (error: NodeJS.ErrnoException) =>
+      settle(
+        error.code === "ENOENT" || error.code === "ECONNREFUSED"
+          ? "absent"
+          : "present",
+      ),
+    );
+  });
+}
+
 export async function runRuntimePurgeCli(
   args: string[],
   options: RuntimePurgeCliOptions,
@@ -35,6 +61,18 @@ export async function runRuntimePurgeCli(
       return 1;
     } catch (error) {
       if (!(error instanceof RuntimeUnavailableError)) throw error;
+    }
+    // A host whose main socket is gone can still be running and serving the
+    // coordination listener; only an absent or refusing socket is safe.
+    if (
+      (await probeLocalSocket(
+        join(options.runtimeRoot, "coordination.sock"),
+      )) !== "absent"
+    ) {
+      options.io.stderr(
+        "Runtime purge requires the AI Office daemon to be stopped; its coordination listener socket is still accepting connections or could not be checked",
+      );
+      return 1;
     }
 
     const parsed = parseArguments(args, new Set(["approve"]));
