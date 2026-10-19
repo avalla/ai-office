@@ -65,19 +65,13 @@ export function assessStageResultDelivery(
     currentAgentRunId: currentAgentRunIdInput,
     recorded: recordedInput,
   } = context;
-  const { kind, agentRunId, actorLabel } = (deliveredByInput ?? {}) as Record<
-    string,
-    unknown
-  >;
-  // The context is validated like the payload, so a malformed deliverer or run
-  // id is a typed error instead of a silent mismatch (or a padded id that
-  // compares unequal to its trimmed spelling).
+  // The context is validated like the payload, with the parser's own rules
+  // (own data properties read once, accessors, extra fields and exotic
+  // prototypes refused), so a malformed deliverer or run id is a typed error
+  // instead of a silent mismatch (or a padded id that compares unequal to its
+  // trimmed spelling).
   const deliveredBy: StageResultProducer = parseStageResultProducer(
-    kind === "agent_run"
-      ? { kind, agentRunId }
-      : kind === "operator"
-        ? { kind, actorLabel }
-        : { kind },
+    deliveredByInput,
     "deliveredBy",
   );
   const currentAgentRunId =

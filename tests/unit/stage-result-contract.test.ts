@@ -986,24 +986,22 @@ describe("stage result hardening, third pass", () => {
     expect(reads).toBe(1);
   });
 
-  test("reads each field of the deliverer once", () => {
-    const reads = { kind: 0, agentRunId: 0 };
+  test("refuses an accessor-backed deliverer without invoking it", () => {
+    let reads = 0;
     const deliveredBy = {
       get kind() {
-        reads.kind += 1;
+        reads += 1;
         return "agent_run" as const;
       },
-      get agentRunId() {
-        reads.agentRunId += 1;
-        return reads.agentRunId === 1 ? "run-1" : "run-other";
-      },
+      agentRunId: "run-1",
     };
-    const result = assessStageResultDelivery(valid, {
-      deliveredBy,
-      currentAgentRunId: "run-1",
-    });
-    expect(reads).toEqual({ kind: 1, agentRunId: 1 });
-    expect(result.decision).toBe("accepted");
+    expect(() =>
+      assessStageResultDelivery(valid, {
+        deliveredBy,
+        currentAgentRunId: "run-1",
+      }),
+    ).toThrow(DomainValidationError);
+    expect(reads).toBe(0);
   });
 
   test("refuses an object wider than the remaining node budget", () => {
@@ -1146,5 +1144,58 @@ describe("stage result identity and context validation", () => {
       "a.a.a.a.a.a.a.a.a.a.a.a",
     ])
       expect(parseStageResultEnvelope(text(harmless)).summary).toBe(harmless);
+  });
+});
+
+describe("stage result delivery context boundary", () => {
+  const reject = (deliveredBy: unknown) => {
+    try {
+      assessStageResultDelivery(valid, {
+        deliveredBy: deliveredBy as never,
+        currentAgentRunId: "run-1",
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(DomainValidationError);
+      return (error as Error).message;
+    }
+    throw new Error("expected the deliverer to be rejected");
+  };
+
+  test("refuses extra fields and inherited properties on the deliverer", () => {
+    expect(
+      reject({ kind: "agent_run", agentRunId: "run-1", actorLabel: "x" }),
+    ).toContain("deliveredBy has unknown fields");
+    expect(
+      reject(Object.create({ kind: "agent_run", agentRunId: "run-1" })),
+    ).toContain("deliveredBy");
+  });
+
+  test("turns a throwing getter or a revoked proxy into the typed, sanitized error", () => {
+    const throwing = {
+      get kind(): string {
+        throw new Error("SECRET leak sk-abc");
+      },
+    };
+    expect(reject(throwing)).not.toContain("SECRET");
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    expect(reject(revoked.proxy)).toContain("deliveredBy");
+  });
+
+  test("the URL credential check stays linear on long scheme-looking runs", () => {
+    const parse = (length: number) => {
+      const best = Array.from({ length: 5 }, () => {
+        const started = performance.now();
+        parseStageResultEnvelope({
+          ...valid,
+          data: { note: "a.".repeat(length / 2) },
+        });
+        return performance.now() - started;
+      });
+      return Math.min(...best);
+    };
+    parse(2_000);
+    // Eight times the input: about 8x when linear, about 64x when quadratic.
+    expect(parse(16_000) / Math.max(parse(2_000), 0.05)).toBeLessThan(30);
   });
 });
