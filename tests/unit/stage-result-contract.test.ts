@@ -1024,3 +1024,127 @@ describe("stage result hardening, third pass", () => {
     ).toBe(false);
   });
 });
+
+describe("stage result identity and context validation", () => {
+  const agent = { kind: "agent_run", agentRunId: "run-1" } as const;
+  const text = (summary: string) => ({ ...valid, summary });
+
+  function contextRejection(
+    delivered: unknown,
+    context: Parameters<typeof assessStageResultDelivery>[1],
+  ): string {
+    try {
+      assessStageResultDelivery(delivered, context);
+    } catch (error) {
+      expect(error).toBeInstanceOf(DomainValidationError);
+      return (error as Error).message;
+    }
+    throw new Error("expected the context to be rejected");
+  }
+
+  test.each([
+    ["leading space", " run-1"],
+    ["trailing space", "run-1 "],
+    ["trailing tab", "run-1\t"],
+  ])("refuses a padded AgentRun id in the payload: %s", (_name, agentRunId) => {
+    expect(
+      rejection({ ...valid, producer: { kind: "agent_run", agentRunId } }),
+    ).toContain("producer.agentRunId");
+  });
+
+  test("refuses a padded operator label instead of trimming it", () => {
+    for (const actorLabel of ["andrea ", " andrea", "andrea\u00a0"])
+      expect(
+        rejection({ ...valid, producer: { kind: "operator", actorLabel } }),
+      ).toContain("producer.actorLabel");
+    // Interior spaces remain part of a label and are compared exactly.
+    expect(
+      parseStageResultEnvelope({
+        ...valid,
+        producer: { kind: "operator", actorLabel: "ana maria" },
+      }).producer,
+    ).toEqual({ kind: "operator", actorLabel: "ana maria" });
+  });
+
+  test("a padded claim is rejected rather than equated with the deliverer", () => {
+    expect(() =>
+      assessStageResultDelivery(
+        { ...valid, producer: { kind: "agent_run", agentRunId: " run-1 " } },
+        { deliveredBy: agent, currentAgentRunId: "run-1" },
+      ),
+    ).toThrow(DomainValidationError);
+  });
+
+  test.each([
+    ["undefined", undefined],
+    ["null", null],
+    ["a string", "run-1"],
+    ["an unknown kind", { kind: "bot" }],
+    ["an agent run without id", { kind: "agent_run" }],
+    ["a padded id", { kind: "agent_run", agentRunId: "run-1 " }],
+    ["a malformed id", { kind: "agent_run", agentRunId: "run 1/../" }],
+    ["an operator without label", { kind: "operator" }],
+    ["a padded label", { kind: "operator", actorLabel: " andrea" }],
+  ])("rejects a malformed deliverer: %s", (_name, deliveredBy) => {
+    const message = contextRejection(valid, {
+      deliveredBy: deliveredBy as never,
+      currentAgentRunId: "run-1",
+    });
+    expect(message).toContain("deliveredBy");
+    expect(message).not.toContain("run 1/../");
+  });
+
+  test.each([
+    ["padded", " run-1"],
+    ["malformed", "run 1"],
+    ["empty", ""],
+    ["not a string", 7],
+  ])(
+    "rejects a malformed currentAgentRunId: %s",
+    (_name, currentAgentRunId) => {
+      expect(
+        contextRejection(valid, {
+          deliveredBy: agent,
+          currentAgentRunId: currentAgentRunId as never,
+        }),
+      ).toContain("currentAgentRunId");
+    },
+  );
+
+  test("a valid context still classifies as before", () => {
+    expect(
+      assessStageResultDelivery(valid, {
+        deliveredBy: agent,
+        currentAgentRunId: "run-1",
+      }).decision,
+    ).toBe("accepted");
+    expect(
+      assessStageResultDelivery(valid, { deliveredBy: agent }).decision,
+    ).toBe("stale");
+  });
+
+  test("refuses credential material the earlier patterns missed", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghij";
+    for (const secret of [
+      "redis://:hunter2pass@cache.internal:6379/0",
+      "whsec_" + "a1B2".repeat(8),
+      `token_${jwt}`,
+      // Schemes with every legal character, a dash-led run and upper case.
+      "my-app+v2.x://user:hunter2pass@host/path",
+      "see -x://user:hunter2pass@host",
+      "HTTPS://user:hunter2pass@host",
+    ])
+      expect(rejection(text(secret))).toContain("credential-like");
+  });
+
+  test("keeps accepting URLs and addresses that carry no password", () => {
+    for (const harmless of [
+      "clone git@github.com:org/repo.git",
+      "see http://example.com:8080/path for details",
+      "ssh://git@host:22/repo.git",
+      "redis://cache.internal:6379/0",
+      "a.a.a.a.a.a.a.a.a.a.a.a",
+    ])
+      expect(parseStageResultEnvelope(text(harmless)).summary).toBe(harmless);
+  });
+});

@@ -112,14 +112,17 @@ const credentialPatterns: readonly RegExp[] = [
   /\bbearer\s+(?:[A-Za-z0-9._~+/=-]{20,}|(?=[A-Za-z0-9._~+/=-]*[0-9])[A-Za-z0-9._~+/=-]{12,})/i,
   // Basic: base64-shaped, with a digit, '+', '/', '=' or an interior capital.
   /\b[Bb][Aa][Ss][Ii][Cc]\s+(?=[A-Za-z0-9+/]*(?:[0-9+/]|[a-z][A-Z]))[A-Za-z0-9+/]{16,}={0,2}/,
-  /(?<![A-Za-z0-9])(?:gh[pousr]_|github_pat_|glpat-)[A-Za-z0-9_-]{16,}/,
+  /(?<![A-Za-z0-9])(?:gh[pousr]_|github_pat_|glpat-|whsec_)[A-Za-z0-9_-]{16,}/,
   /(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}/,
   /(?<![A-Za-z0-9])[sr]k_(?:live|test)_[A-Za-z0-9]{16,}/,
   /(?<![A-Za-z0-9])xox[abprs]-[A-Za-z0-9-]{10,}/,
   /(?<![A-Z0-9])A[KS]IA[0-9A-Z]{16}(?![A-Z0-9])/,
-  /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
-  // URL userinfo carrying a password.
-  /\b[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^\s/@]+@/i,
+  /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/,
+  // URL userinfo carrying a password (the user may be empty, as in
+  // `redis://:secret@host`). The literal "://" is matched first and the scheme
+  // is checked backwards from it, so the cost stays linear on long
+  // scheme-looking runs such as "a.a.a.a...".
+  /:\/\/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s/:@]*:[^\s/@]+@/i,
   /\bauthorization\s*[:=]\s*(?:bearer|basic|token|digest)\s+\S{8,}/i,
   // name=value (a quoted name is allowed) where the value has letters and
   // digits, at least 6 characters; lookaheads are capped to stay linear.
@@ -229,36 +232,47 @@ function snapshotRecord(
   return Object.fromEntries(entries);
 }
 
-function parseProducer(input: unknown): StageResultProducer {
-  if (!isRecord(input)) return invalid("producer must be an object");
-  const value = snapshotRecord(input, "producer");
+/**
+ * Identifiers are compared exactly, so padding is refused rather than trimmed
+ * away: " run-1 " and "run-1" must never be the same producer.
+ */
+function parseExactText(
+  value: unknown,
+  field: string,
+  pattern: RegExp,
+): string {
+  const text = boundedText(value, field, stageResultLimits.identifierBytes);
+  if (text !== value || !pattern.test(text))
+    return invalid(`${field} is malformed`);
+  return text;
+}
+
+function parseProducer(input: unknown, field: string): StageResultProducer {
+  if (!isRecord(input)) return invalid(`${field} must be an object`);
+  const value = snapshotRecord(input, field);
   const keys = Object.keys(value);
   const kind = value.kind;
   if (kind === "agent_run") {
     if (keys.some((key) => !["kind", "agentRunId"].includes(key)))
-      return invalid("producer has unknown fields");
-    const id = boundedText(
+      return invalid(`${field} has unknown fields`);
+    const id = parseExactText(
       value.agentRunId,
-      "producer.agentRunId",
-      stageResultLimits.identifierBytes,
+      `${field}.agentRunId`,
+      identifierPattern,
     );
-    if (!identifierPattern.test(id))
-      return invalid("producer.agentRunId is malformed");
     return Object.freeze({ kind: "agent_run", agentRunId: id });
   }
   if (kind === "operator") {
     if (keys.some((key) => !["kind", "actorLabel"].includes(key)))
-      return invalid("producer has unknown fields");
-    const label = boundedText(
+      return invalid(`${field} has unknown fields`);
+    const label = parseExactText(
       value.actorLabel,
-      "producer.actorLabel",
-      stageResultLimits.identifierBytes,
+      `${field}.actorLabel`,
+      actorLabelPattern,
     );
-    if (!actorLabelPattern.test(label))
-      return invalid("producer.actorLabel is malformed");
     return Object.freeze({ kind: "operator", actorLabel: label });
   }
-  return invalid("producer.kind is not supported");
+  return invalid(`${field}.kind is not supported`);
 }
 
 function parseError(input: unknown): StageResultError {
@@ -390,8 +404,34 @@ function parseData(
  * top-level field of the input is read exactly once.
  */
 export function parseStageResultEnvelope(value: unknown): StageResultEnvelope {
+  return withParserBoundary("envelope", () => parseEnvelope(value));
+}
+
+/**
+ * Validates a producer supplied outside an envelope, such as the deliverer the
+ * Runtime authenticated. Same rules, boundary and sanitized errors as the
+ * envelope's own `producer`; `field` names it in the error.
+ */
+export function parseStageResultProducer(
+  value: unknown,
+  field: string,
+): StageResultProducer {
+  return withParserBoundary(field, () => parseProducer(value, field));
+}
+
+/** Validates an AgentRun id supplied outside an envelope (exact, untrimmed). */
+export function parseStageResultAgentRunId(
+  value: unknown,
+  field: string,
+): string {
+  return withParserBoundary(field, () =>
+    parseExactText(value, field, identifierPattern),
+  );
+}
+
+function withParserBoundary<T>(subject: string, read: () => T): T {
   try {
-    return parseEnvelope(value);
+    return read();
   } catch (error) {
     // Only this parser's own rejections pass through; any other error, even a
     // DomainValidationError thrown by a hostile trap, is replaced.
@@ -404,7 +444,7 @@ export function parseStageResultEnvelope(value: unknown): StageResultEnvelope {
     if (reason !== undefined) return invalid(reason);
     // Exotic hostile input (for example a revoked Proxy) must still surface
     // as the typed, sanitized validation error, never as an arbitrary one.
-    return invalid("envelope cannot be read");
+    return invalid(`${subject} cannot be read`);
   }
 }
 
@@ -424,7 +464,7 @@ function parseEnvelope(input: unknown): StageResultEnvelope {
     stageResultLimits.summaryBytes,
     { multiline: true },
   );
-  const parsedProducer = parseProducer(producer);
+  const parsedProducer = parseProducer(producer, "producer");
   if (outcome === "failed" && error === undefined)
     return invalid("a failed result requires error");
   if (outcome === "succeeded" && error !== undefined)

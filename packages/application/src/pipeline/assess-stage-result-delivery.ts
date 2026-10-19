@@ -1,6 +1,8 @@
 import {
   canonicalStageResult,
+  parseStageResultAgentRunId,
   parseStageResultEnvelope,
+  parseStageResultProducer,
   sameStageResultProducer,
   type StageResultEnvelope,
   type StageResultProducer,
@@ -60,13 +62,28 @@ export function assessStageResultDelivery(
   // getter-backed context cannot change the decision between checks.
   const {
     deliveredBy: deliveredByInput,
-    currentAgentRunId,
+    currentAgentRunId: currentAgentRunIdInput,
     recorded: recordedInput,
   } = context;
-  const deliveredBy: StageResultProducer =
-    deliveredByInput.kind === "agent_run"
-      ? { kind: "agent_run", agentRunId: deliveredByInput.agentRunId }
-      : { kind: "operator", actorLabel: deliveredByInput.actorLabel };
+  const { kind, agentRunId, actorLabel } = (deliveredByInput ?? {}) as Record<
+    string,
+    unknown
+  >;
+  // The context is validated like the payload, so a malformed deliverer or run
+  // id is a typed error instead of a silent mismatch (or a padded id that
+  // compares unequal to its trimmed spelling).
+  const deliveredBy: StageResultProducer = parseStageResultProducer(
+    kind === "agent_run"
+      ? { kind, agentRunId }
+      : kind === "operator"
+        ? { kind, actorLabel }
+        : { kind },
+    "deliveredBy",
+  );
+  const currentAgentRunId =
+    currentAgentRunIdInput === undefined
+      ? undefined
+      : parseStageResultAgentRunId(currentAgentRunIdInput, "currentAgentRunId");
   const envelope = parseStageResultEnvelope(delivered);
   if (!sameStageResultProducer(envelope.producer, deliveredBy))
     return { decision: "producer_mismatch", envelope, preemptsBoundRun: false };

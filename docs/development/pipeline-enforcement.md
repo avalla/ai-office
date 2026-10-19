@@ -106,7 +106,12 @@ attributed override path with a reason. The bound run's later result is then a
 `conflict`. An operator producer is a self-declared label; it is not
 authenticated against another same-UID process.
 A recorded result passed to the assessment is validated again, so a rehydrated
-row is compared in canonical form.
+row is compared in canonical form. The delivery context is validated the same
+way: the authenticated deliverer and the bound AgentRun id must be well-formed
+identifiers, and a malformed one is a typed `DomainValidationError`, never a
+silent `producer_mismatch` or `stale`. Identifiers are compared exactly:
+padding around an AgentRun id or an operator label is refused, not trimmed, so
+two spellings of one identifier cannot be treated as the same producer.
 
 Limits: summary 2000 bytes, error message 500 bytes, data 16384 bytes in total
 (string values and keys together), identifiers and data keys 128 bytes, data
@@ -145,7 +150,9 @@ data string values; data keys that contain a sensitive name (for example
 `cacheReadInputTokens`, `cacheCreationInputTokens` and `maxTokens` (also with a `Used` or
 `Count` suffix); and token-shaped credential material in the summary, error
 message, data strings and data keys: bearer and basic credentials, common
-provider token prefixes, JWTs, URL userinfo passwords, an `authorization` header value, `key=value`
+provider token prefixes (including `whsec_`), JWTs (also after a word character
+such as `token_`), URL userinfo passwords (the user may be empty, as in
+`redis://:secret@host`), an `authorization` header value, `key=value`
 assignments whose value mixes letters and digits, and private key headers.
 Ordinary prose such as "basic validation" or "token: refresh logic" is
 accepted. The credential check is conservative and is not a complete secret
