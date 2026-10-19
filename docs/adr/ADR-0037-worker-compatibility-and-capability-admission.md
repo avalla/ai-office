@@ -74,6 +74,16 @@ matches more than one subject is the source-shipped `legacy_policy` of decision
 active decision exists per subject; replacing a decision revokes the old one
 with reason `superseded` in the same manifest generation (decision 4).
 
+A run with no persisted model selection (an unrouted or historical run, see
+ADR-0019) has no persisted provider and model, and the worker then runs its
+default model or the one named by `--worker-model`. It has no exact subject to
+certify, and no certified decision covers it. It is admitted only through the
+`legacy_policy` predicate, evaluated on the worker's resolved default or the
+`--worker-model` value under the predicate's existing syntax and allowlist
+rules, and dispatch provenance records the resolved pair with basis
+`legacy_policy`. The WC-05 differential matrix includes these runs with and
+without `--worker-model`.
+
 ### 2. Guarantees, states and risk tiers
 
 A _guarantee_ is a named, versioned property of an execution, from a catalogue
@@ -370,6 +380,16 @@ Today a run assigned a model the worker cannot execute is refused with
 `WORKER_MODEL_UNSUPPORTED` before the client is inspected and before the login
 is read. Admission preserves that order with a model-admissibility step ahead of
 the per-dispatch observations.
+
+Admission is staged so that an unsupported model still starts no process. The
+model step is also exposed as its own pure function, `admitModel`, over the
+run's model selection and persisted parameters. The application calls it before
+it collects any observation: an unsupported model is refused with
+`model_mismatch` before any client process, probe or login read, as the Codex
+tests require today. `admit` repeats the model step as its step 1 over the full
+input, so the two stages cannot disagree, and `admit` is called only after
+`admitModel` accepts. Steps 1 to 3 order the diagnostics of `admit`; they do not
+by themselves prevent an observation.
 
 Steps, in this order, each deterministic:
 
