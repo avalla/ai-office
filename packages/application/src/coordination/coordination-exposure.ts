@@ -121,10 +121,10 @@ const credentialPatterns: readonly RegExp[] = [
     "gi",
   ),
   // A camelCase name with a prefix, such as dbPassword or githubToken: the
-  // keyword starts a word after a lower-case letter or digit. Case-sensitive,
+  // keyword starts a word after a letter or digit (an acronym prefix such as DBPassword included). Case-sensitive,
   // so `mytoken=` (one lower-case word) stays untouched.
   new RegExp(
-    String.raw`(?<=[a-z0-9])(?:Password|Passwd|Pwd|SecretAccessKey|SecretKey|PrivateKey|Secret|AccessToken|RefreshToken|AuthToken|IdToken|SessionToken|Token|ApiKey|AccessKey|ClientSecret)` +
+    String.raw`(?<=[A-Za-z0-9])(?:Password|Passwd|Pwd|SecretAccessKey|SecretKey|PrivateKey|Secret|AccessToken|RefreshToken|AuthToken|IdToken|SessionToken|Token|ApiKey|AccessKey|ClientSecret)` +
       assignedValue,
     "g",
   ),
