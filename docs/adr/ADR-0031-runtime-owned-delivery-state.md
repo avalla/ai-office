@@ -35,7 +35,7 @@ the separate `ai-office` skill; `skills/README.md` states the independence of
    result with evidence) and an explicit creation command that opens a run
    (input contract in invariant 5). The skill uses them for a task whose
    delivery run was created at preflight.
-3. Keep the skill usable without a Runtime. For a task without a delivery run,
+3. Keep the skill usable without a Runtime. For a task on the offline path (no delivery run, no creation-pending marker and no creation stop),
    the skill keeps the file handoff packet of
    [step 1 of the task-delivery profiles plan](../development/task-delivery-profiles.md)
    and the same gate semantics.
@@ -246,7 +246,7 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
        no command abandons a marker in this proposal (see Known limitations
        and Open questions).
 
-     A task without a delivery run keeps the existing offline rules unchanged.
+     A task on the offline path (no delivery run, no creation-pending marker and no creation stop) keeps the existing offline rules unchanged.
      This ADR does not migrate a task already under way offline onto a
      Runtime run, because the offline handoff packet records no floor
      determinations to inherit; such a migration is a separate decision.
@@ -328,7 +328,7 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      lost reply is safe, and any different payload for a task that already has
      a run is a typed conflict. A pipeline run reference is validated as in
      invariant 1 whenever it is supplied, and is never added through a creation
-     retry.
+     retry. The comparison is against the immutable creation payload recorded with the run, not the run's current pipeline link, so an exact replay of a stored marker still returns the run after a reference was set later. An exact match returns the existing run before the payload is re-validated, so a stricter later validation cannot turn a replay into a dead end.
 
 ## Known limitations
 
@@ -405,7 +405,7 @@ and anything less is refused:
 3. It is audited: the audit record carries the marker identity, payload hash,
    the Runtime answer, the approver and the time, and is written in the same
    transaction as any Runtime state change it causes.
-4. It is authority-checked: the caller must hold the delivery capability for
+4. It is authority-checked: the caller must hold a project-scoped authorization (none exists today and it is to be defined) for
    that project; a run, task or marker of another project answers like a missing
    one.
 5. It never opens the offline path. After an abandon the task either creates its
@@ -414,7 +414,9 @@ and anything less is refused:
 6. It cannot race a late creation: the Runtime refuses a later creation request
    carrying an abandoned marker's payload hash unless the skill issues a fresh
    marker, so a delayed or duplicated original request cannot create a run after
-   the abandon.
+   the abandon. The Runtime does not see markers today, so this needs a request
+   nonce that changes the idempotency key of invariant 5; that consequence is
+   part of the cost of any abandon step.
 
 With a reachable Runtime these conditions reduce to the idempotent retry, which
 is why no separate command is recommended.
@@ -440,13 +442,14 @@ adoption is a separate explicit step, never automatic.
   pipeline run reference or absence, and nothing about any other run or
   project. It is returned only after the Runtime has verified that the run
   belongs to the requested project and task.
-- The skill treats the reply as information, not as authority. It does not
-  clear the marker, does not retry with the existing run's values on its own and
-  does not continue the task.
+- The skill treats the reply as information, not as authority. This amends
+  invariant 3: a conflict keeps the marker as a blocking stop until adoption or
+  an owner decision, instead of clearing it. The skill does not retry with the
+  existing run's values on its own and does not continue the task.
 - Adoption, if the owner wants it, is a second explicit operation that the
   operator approves for that run and marker. The Runtime accepts it only when
   the run is not terminal, its recorded gate set is at least the gate set
-  required by the current configuration (an adoption never lowers the gate
+  required by the marker's stored payload (an adoption never lowers the gate
   floor or the recorded floor additions), its pipeline run reference is
   compatible with the stored payload, and the stored snapshot differs only in
   fields the contract allows to differ. It is idempotent on the run and marker
@@ -457,7 +460,9 @@ adoption is a separate explicit step, never automatic.
 
 ### Consequences of the recommended answers
 
-No new abandon command and one richer typed reply. The marker rules and the
+No new abandon command and one richer typed reply. The marker rules stay as
+specified, except that under Question B a conflict keeps the marker (an
+amendment to invariant 3 that applies only if B is accepted). The
 idempotent retry stay as specified. A permanently lost Runtime and adoption
 remain separate decisions, so accepting this ADR does not commit the project to
 either.
