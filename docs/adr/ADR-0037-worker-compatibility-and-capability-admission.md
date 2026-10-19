@@ -76,13 +76,17 @@ with reason `superseded` in the same manifest generation (decision 4).
 
 A run with no persisted model selection (an unrouted or historical run, see
 ADR-0019) has no persisted provider and model, and the worker then runs its
-default model or the one named by `--worker-model`. It has no exact subject to
-certify, and no certified decision covers it. It is admitted only through the
-`legacy_policy` predicate, evaluated on the worker's resolved default or the
-`--worker-model` value under the predicate's existing syntax and allowlist
-rules, and dispatch provenance records the resolved pair with basis
-`legacy_policy`. The WC-05 differential matrix includes these runs with and
-without `--worker-model`.
+default model or the one named by `--worker-model`. The worker resolves that
+pair at dispatch, and admission treats it as an _observed_ provider and model,
+never as a persisted selection, and records it as such in provenance. The
+resolved pair is then matched exactly like a routed run's: a Codex run is
+matched against the exact subjects, including the source-shipped
+`baseline_import` records of decision 9, so a Codex run that resolves to a
+baselined model keeps its admission; a Claude run falls to `legacy_policy` of
+decision 10 when no exact decision names the resolved pair. A resolved pair
+with no matching record is refused as `model_mismatch`, as today. The WC-05
+differential matrix includes these runs, for both workers, with and without
+`--worker-model`.
 
 ### 2. Guarantees, states and risk tiers
 
