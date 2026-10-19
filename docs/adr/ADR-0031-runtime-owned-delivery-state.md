@@ -482,6 +482,6 @@ adoption is a separate explicit step, never automatic.
 No new abandon command and one richer typed reply. The marker rules stay as
 specified, except that under Question B a conflict keeps the marker (an
 amendment to invariant 3 that applies only if B is accepted). The
-idempotent retry stay as specified. A permanently lost Runtime and adoption
+idempotent retry stays as specified. A permanently lost Runtime and adoption
 remain separate decisions, so accepting this ADR does not commit the project to
 either.
