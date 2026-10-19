@@ -294,9 +294,11 @@ PostgreSQL project authority (M22) is unaffected by either.
   newer revocation exists. A state file that records no newer generation proves
   nothing here, since a writer can publish the pointer and stop before the state
   is updated. Admission uses a snapshot only when the Runtime has verified, at
-  its load, that its generation is the current one: the pointer names that
-  generation and manifest digest, or names a verified successor whose chain
-  contains it.
+  its load, that the snapshot was built from the generation and manifest digest
+  the pointer names. Ancestry (a chain that contains the recorded manifest)
+  validates the recorded state against rollback only; it never keeps an older
+  snapshot admissible once a successor is current, because ancestry does not
+  show that the older snapshot includes the successor's revocations.
   A crash between publishing the pointer and recording the state leaves the
   pointer one or more generations ahead of the recorded state. That is accepted
   only when the whole chain from the recorded manifest to the pointer verifies
@@ -374,7 +376,7 @@ Steps, in this order, each deterministic:
 0. Registry state: `registry_unreadable` per decision 4, otherwise continue.
 1. Model and run-parameter admissibility: some decision, active or revoked, or
    the `legacy_policy` predicate, names the observed `(worker, provider, model)`
-   under the observed mode, and the run's persisted parameters (from `dispatchContext`) lie within that
+   under the observed mode (a mode with no governed contract, which step 2 refuses, is not part of this match, so this step cannot mask `mode_unsupported`), and the run's persisted parameters (from `dispatchContext`) lie within that
    record's parameter scope. If none, refuse `model_mismatch`; this reproduces
    today's `supportsModel` refusals, which also cover an output-token cap and a
    reasoning effort the worker does not execute. A subject blocked by an

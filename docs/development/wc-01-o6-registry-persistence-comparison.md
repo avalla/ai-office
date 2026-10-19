@@ -32,7 +32,7 @@ generation, not a second file.
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Alignment with AGENTS.md    | A second persistence mechanism for authoritative registry state; needs a recorded justification.                         | Matches the SQLite and migration-runner direction of AGENTS.md (project state in SQLite; a new persistence mechanism is an architectural decision). A new database is still a new persistence surface, so the choice is recorded in the ADR. |
 | Atomic publication          | Objects first, then a rename of the pointer. Correctness depends on write ordering, fsync discipline and the exclusion.  | One transaction inserts objects, the generation row and the recorded-generation update. A reader sees the old or the new set.                                                                                                                |
-| Crash between publish/state | Possible by construction (pointer renamed, state file not yet written). The load rule recovers it by chain verification. | Not possible inside one database: publication and recorded generation commit together. The lagging-state rule still covers restored backups.                                                                                                 |
+| Crash between publish/state | Possible by construction (pointer renamed, state file not yet written). The load rule recovers it by chain verification. | Not possible for the in-database record. With the external anchor the window exists again between the database commit and the anchor update, and the same verified-successor recovery as ADR-0037 "Loading" applies.                         |
 | One active per subject      | Enforced by planning code under the exclusion.                                                                           | A partial unique index on subject for active decisions, in addition to code. A violation is a hard failure.                                                                                                                                  |
 | Immutability                | Create-exclusive files; relies on never rewriting.                                                                       | Triggers rejecting UPDATE and DELETE on object tables, plus the digest check on every load. Defence in depth against Runtime bugs, not against a same-user writer.                                                                           |
 | Verification at load        | Every digest and the chain are read from many files; a torn or partial directory is a normal failure mode to classify.   | Same digest and chain checks over rows. `integrity_check` and the schema version are extra fail-closed inputs. A corrupt database refuses everything.                                                                                        |
@@ -50,7 +50,11 @@ generation, not a second file.
 - The anti-rollback anchor must not live only inside the file that a restore
   replaces. B writes the recorded generation and manifest digest both in the
   registry database and in a small separate state record in the Runtime home,
-  and refuses when they disagree. This keeps A's property that restoring one
+  and compares them at load. Order: commit the generation, then advance the
+  anchor durably before the new snapshot is used. A database ahead of the anchor
+  by a chain that verifies is the recoverable ahead-state of ADR-0037 "Loading"
+  (accepted, anchor advanced); a database behind the anchor, or whose chain does
+  not contain the anchored manifest, is a rollback and is refused. This keeps A's property that restoring one
   part without the other is detected. Restoring both together remains the
   coordinated rewrite left to M10.
 - A database that cannot be opened, fails `integrity_check`, has an unknown
@@ -91,8 +95,8 @@ database, and a retained chain that survives a database migration bug.
 ## Recommendation
 
 B follows the AGENTS.md direction (project state in SQLite, versioned migrations) and removes
-the largest bespoke surface of A (pointer ordering, publication lock, crash
-between pointer and state). With the dual anti-rollback record it weakens no
+the largest bespoke surface of A (pointer ordering, publication lock,
+torn-write classification). With the dual anti-rollback record it weakens no
 fail-closed property. The owner's preference is consistent with the repository's
 architecture. This is a recommendation only: O6 is the owner's decision, and
 WC-02 does not start before it is taken and ADR-0037 is accepted.
