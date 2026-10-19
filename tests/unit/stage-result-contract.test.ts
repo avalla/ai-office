@@ -1,0 +1,1201 @@
+import { describe, expect, test } from "vitest";
+import { DomainValidationError } from "@ai-office/domain/errors.ts";
+import {
+  canonicalStageResult,
+  parseStageResultEnvelope,
+  stageResultLimits,
+} from "@ai-office/domain/pipeline/stage-result.ts";
+import { assessStageResultDelivery } from "@ai-office/application/pipeline/assess-stage-result-delivery.ts";
+
+const valid = {
+  version: 1,
+  outcome: "succeeded",
+  summary: "Implemented the change",
+  producer: { kind: "agent_run", agentRunId: "run-1" },
+  data: { files: 3, notes: ["a", "b"] },
+};
+
+function rejection(value: unknown): string {
+  try {
+    parseStageResultEnvelope(value);
+  } catch (error) {
+    expect(error).toBeInstanceOf(DomainValidationError);
+    return (error as Error).message;
+  }
+  throw new Error("expected the envelope to be rejected");
+}
+
+describe("stage result envelope", () => {
+  test("accepts a valid bounded result and freezes it", () => {
+    const envelope = parseStageResultEnvelope(valid);
+    expect(envelope).toMatchObject({ version: 1, outcome: "succeeded" });
+    expect(Object.isFrozen(envelope)).toBe(true);
+    expect(Object.isFrozen(envelope.producer)).toBe(true);
+  });
+
+  test("accepts an operator producer and a failed result with an error", () => {
+    const envelope = parseStageResultEnvelope({
+      version: 1,
+      outcome: "failed",
+      summary: "Could not finish",
+      producer: { kind: "operator", actorLabel: "andrea" },
+      error: { code: "validation_failed", message: "Tests did not pass" },
+    });
+    expect(envelope.error?.code).toBe("validation_failed");
+  });
+
+  test("rejects an unknown or missing version", () => {
+    expect(rejection({ ...valid, version: 2 })).toContain("version");
+    const { version: _version, ...withoutVersion } = valid;
+    expect(rejection(withoutVersion)).toContain("version");
+  });
+
+  test.each([
+    ["missing summary", { ...valid, summary: undefined }, "summary"],
+    ["blank summary", { ...valid, summary: "   " }, "summary"],
+    ["unknown outcome", { ...valid, outcome: "approved" }, "outcome"],
+    ["unknown top-level field", { ...valid, approved: true }, "unknown fields"],
+    ["non-object envelope", "text", "envelope"],
+    ["array envelope", [], "envelope"],
+  ])("rejects %s", (_name, value, fragment) => {
+    expect(rejection(value)).toContain(fragment);
+  });
+
+  test.each([
+    ["missing producer", { ...valid, producer: undefined }],
+    ["unknown producer kind", { ...valid, producer: { kind: "bot" } }],
+    ["agent run without id", { ...valid, producer: { kind: "agent_run" } }],
+    [
+      "agent run id with illegal characters",
+      { ...valid, producer: { kind: "agent_run", agentRunId: "run 1/../" } },
+    ],
+    [
+      "agent run with extra field",
+      { ...valid, producer: { kind: "agent_run", agentRunId: "r", x: 1 } },
+    ],
+    [
+      "operator without label",
+      { ...valid, producer: { kind: "operator", actorLabel: "" } },
+    ],
+  ])("rejects a malformed producer: %s", (_name, value) => {
+    expect(rejection(value)).toContain("producer");
+  });
+
+  test("requires an error for a failed result and forbids it on success", () => {
+    expect(
+      rejection({ ...valid, outcome: "failed", data: undefined }),
+    ).toContain("requires error");
+    expect(
+      rejection({
+        ...valid,
+        error: { code: "validation_failed", message: "x" },
+      }),
+    ).toContain("cannot carry error");
+  });
+
+  test("rejects a malformed error code and extra error fields", () => {
+    const failed = { ...valid, outcome: "failed", data: undefined };
+    expect(
+      rejection({ ...failed, error: { code: "Bad Code", message: "x" } }),
+    ).toContain("error.code");
+    expect(
+      rejection({
+        ...failed,
+        error: { code: "ok_code", message: "x", stack: "at foo" },
+      }),
+    ).toContain("unknown fields");
+  });
+
+  test("rejects oversized fields", () => {
+    expect(
+      rejection({
+        ...valid,
+        summary: "x".repeat(stageResultLimits.summaryBytes + 1),
+      }),
+    ).toContain("summary exceeds");
+    expect(
+      rejection({
+        ...valid,
+        data: { blob: "x".repeat(stageResultLimits.dataBytes) },
+      }),
+    ).toContain("data exceeds");
+    expect(
+      rejection({
+        ...valid,
+        outcome: "failed",
+        data: undefined,
+        error: {
+          code: "too_long",
+          message: "x".repeat(stageResultLimits.errorMessageBytes + 1),
+        },
+      }),
+    ).toContain("error.message exceeds");
+  });
+
+  describe("limits hold exactly at the boundary", () => {
+    const nested = (levels: number): Record<string, unknown> => {
+      let value: Record<string, unknown> = { leaf: 1 };
+      for (let i = 1; i < levels; i += 1) value = { n: value };
+      return value;
+    };
+
+    test("accepts a value exactly at each limit", () => {
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          summary: "x".repeat(stageResultLimits.summaryBytes),
+        }),
+      ).not.toThrow();
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          outcome: "failed",
+          data: undefined,
+          error: {
+            code: "too_long",
+            message: "x".repeat(stageResultLimits.errorMessageBytes),
+          },
+        }),
+      ).not.toThrow();
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          producer: {
+            kind: "agent_run",
+            agentRunId: "r".repeat(stageResultLimits.identifierBytes),
+          },
+        }),
+      ).not.toThrow();
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          data: { ["k".repeat(stageResultLimits.dataKeyBytes)]: 1 },
+        }),
+      ).not.toThrow();
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          data: nested(stageResultLimits.dataDepth),
+        }),
+      ).not.toThrow();
+      expect(() =>
+        parseStageResultEnvelope({
+          ...valid,
+          data: Object.fromEntries(
+            Array.from({ length: stageResultLimits.dataNodes - 1 }, (_, i) => [
+              `k${i}`,
+              1,
+            ]),
+          ),
+        }),
+      ).not.toThrow();
+    });
+
+    test("rejects a value one past each limit", () => {
+      expect(
+        rejection({
+          ...valid,
+          producer: {
+            kind: "agent_run",
+            agentRunId: "r".repeat(stageResultLimits.identifierBytes + 1),
+          },
+        }),
+      ).toContain("exceeds");
+      expect(
+        rejection({
+          ...valid,
+          producer: {
+            kind: "operator",
+            actorLabel: "a".repeat(stageResultLimits.identifierBytes + 1),
+          },
+        }),
+      ).toContain("exceeds");
+      expect(
+        rejection({
+          ...valid,
+          data: nested(stageResultLimits.dataDepth + 1),
+        }),
+      ).toBeTruthy();
+      expect(
+        rejection({
+          ...valid,
+          data: Object.fromEntries(
+            Array.from({ length: stageResultLimits.dataNodes }, (_, i) => [
+              `k${i}`,
+              1,
+            ]),
+          ),
+        }),
+      ).toBeTruthy();
+    });
+  });
+
+  test("measures the limit in bytes, not characters", () => {
+    expect(
+      rejection({
+        ...valid,
+        summary: "é".repeat(stageResultLimits.summaryBytes / 2 + 1),
+      }),
+    ).toContain("summary exceeds");
+  });
+
+  test("rejects control characters in text fields", () => {
+    expect(rejection({ ...valid, summary: "bad\u0000text" })).toContain(
+      "forbidden characters",
+    );
+  });
+
+  test("rejects sensitive data fields without echoing their content", () => {
+    const message = rejection({
+      ...valid,
+      data: { nested: { apiKey: "sk-live-super-secret-value" } },
+    });
+    expect(message).toContain("sensitive");
+    expect(message).not.toContain("sk-live-super-secret-value");
+    expect(message).not.toContain("apiKey");
+  });
+
+  test("rejects non-canonical data such as undefined values and cycles", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(rejection({ ...valid, data: cyclic })).toContain("data");
+    expect(rejection({ ...valid, data: "text" })).toContain("data");
+  });
+
+  test("cannot claim capability, review or approval semantics", () => {
+    for (const field of ["capabilities", "approval", "review", "grants"])
+      expect(rejection({ ...valid, [field]: true })).toContain(
+        "unknown fields",
+      );
+  });
+
+  test("canonical form is independent of key order", () => {
+    const left = parseStageResultEnvelope(valid);
+    const right = parseStageResultEnvelope({
+      producer: valid.producer,
+      data: { notes: ["a", "b"], files: 3 },
+      summary: valid.summary,
+      outcome: valid.outcome,
+      version: 1,
+    });
+    expect(canonicalStageResult(left)).toBe(canonicalStageResult(right));
+  });
+});
+
+describe("stage result hardening", () => {
+  test("rejects a truly absent summary key", () => {
+    const { summary: _summary, ...withoutSummary } = valid;
+    expect(rejection(withoutSummary)).toContain("summary");
+  });
+
+  test("refuses a deeply nested payload quickly, before normalizing it", () => {
+    let deep: Record<string, unknown> = { leaf: 1 };
+    for (let level = 0; level < 20_000; level += 1) deep = { next: deep };
+    const started = performance.now();
+    expect(rejection({ ...valid, data: deep })).toContain("nested too deeply");
+    expect(performance.now() - started).toBeLessThan(5_000);
+  });
+
+  test("refuses a wide payload by node budget", () => {
+    const wide = Object.fromEntries(
+      Array.from({ length: stageResultLimits.dataNodes + 1 }, (_, index) => [
+        `k${index}`,
+        index,
+      ]),
+    );
+    expect(rejection({ ...valid, data: wide })).toContain("too many nodes");
+  });
+
+  test("refuses an oversized string before scanning it", () => {
+    expect(rejection({ ...valid, summary: "x".repeat(5_000_000) })).toContain(
+      "summary exceeds",
+    );
+  });
+
+  test("does not invoke accessors while guarding data", () => {
+    let invoked = false;
+    const hostile = {
+      get trap() {
+        invoked = true;
+        return 1;
+      },
+    };
+    expect(rejection({ ...valid, data: hostile })).toContain("canonical JSON");
+    expect(invoked).toBe(false);
+  });
+
+  test.each([
+    ["envelope", "summary"],
+    ["producer", "agentRunId"],
+    ["error", "message"],
+  ])(
+    "refuses a throwing accessor on %s without invoking it (%s)",
+    (target, field) => {
+      let invoked = false;
+      const trap = {
+        enumerable: true,
+        get() {
+          invoked = true;
+          throw new Error("secret getter detail");
+        },
+      };
+      const envelope = {
+        ...valid,
+        outcome: target === "error" ? "failed" : "succeeded",
+        producer: { ...valid.producer },
+        ...(target === "error"
+          ? { error: { code: "validation_failed", message: "bad" } }
+          : {}),
+      } as Record<string, unknown>;
+      const holder =
+        target === "envelope"
+          ? envelope
+          : (envelope[target] as Record<string, unknown>);
+      Object.defineProperty(holder, field, trap);
+      const message = rejection(envelope);
+      expect(invoked).toBe(false);
+      expect(message).toContain("plain data properties");
+      expect(message).not.toContain("secret getter detail");
+    },
+  );
+
+  test("reports a revoked Proxy as a typed validation error", () => {
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    expect(rejection(proxy)).toContain("cannot be read");
+    expect(rejection({ ...valid, producer: proxy })).toContain(
+      "cannot be read",
+    );
+  });
+
+  test("does not forward a retained rejection whose message was mutated", () => {
+    // An attacker-controlled trap that caught an earlier rejection rethrows it
+    // after replacing its message; the parser must report its own text.
+    let retained: unknown;
+    try {
+      parseStageResultEnvelope({ ...valid, summary: "" });
+    } catch (error) {
+      retained = error;
+    }
+    (retained as Error).message = "ghp_" + "A".repeat(36);
+    const hostile = new Proxy(
+      { ...valid.producer },
+      {
+        ownKeys() {
+          throw retained;
+        },
+      },
+    );
+    const text = rejection({ ...valid, producer: hostile });
+    expect(text).not.toContain("ghp_");
+    expect(text).toContain("Invalid stage result");
+  });
+
+  test("reports a Proxy trap that throws as a typed validation error", () => {
+    const hostile = new Proxy(
+      { ...valid.producer },
+      {
+        ownKeys() {
+          throw new Error("secret trap detail");
+        },
+      },
+    );
+    const message = rejection({ ...valid, producer: hostile });
+    expect(message).toContain("cannot be read");
+    expect(message).not.toContain("secret trap detail");
+  });
+
+  test.each([
+    ["authorization header", "Authorization: Bearer abcdefgh12345678"],
+    ["bearer token", "failed with Bearer abcdefgh12345678ijkl"],
+    ["github token", "pushed using ghp_abcdefghijklmnop1234"],
+    ["assignment", "retry with password=hunter2"],
+    ["private key", "-----BEGIN RSA PRIVATE KEY-----"],
+  ])("rejects credential-like content in error.message: %s", (_name, text) => {
+    const message = rejection({
+      ...valid,
+      outcome: "failed",
+      data: undefined,
+      error: { code: "failed_call", message: text },
+    });
+    expect(message).toContain("credential-like");
+    expect(message).not.toContain("hunter2");
+    expect(message).not.toContain("abcdefgh");
+  });
+
+  test("rejects credential-like content in the summary and in data strings", () => {
+    expect(
+      rejection({ ...valid, summary: "token: abcdef1234567890" }),
+    ).toContain("credential-like");
+    expect(
+      rejection({
+        ...valid,
+        data: { note: "use sk-abcdefghijklmnop12345678" },
+      }),
+    ).toContain("credential-like");
+  });
+
+  test.each(["githubToken", "accessToken", "client_secret", "dbPassword"])(
+    "rejects a data key that contains a sensitive name: %s",
+    (key) => {
+      const message = rejection({ ...valid, data: { [key]: "x" } });
+      expect(message).toContain("sensitive");
+      expect(message).not.toContain(key);
+    },
+  );
+
+  test("rejects line breaks in single-line fields but not in the summary", () => {
+    expect(
+      rejection({
+        ...valid,
+        producer: { kind: "operator", actorLabel: "a\nINFO forged" },
+      }),
+    ).toContain("single line");
+    expect(
+      rejection({
+        ...valid,
+        outcome: "failed",
+        data: undefined,
+        error: { code: "multi_line", message: "line one\nline two" },
+      }),
+    ).toContain("single line");
+    expect(
+      parseStageResultEnvelope({ ...valid, summary: "line one\nline two" })
+        .summary,
+    ).toBe("line one\nline two");
+  });
+
+  test.each(
+    [0x202e, 0x2066, 0x2028, 0x0085].map((code) => String.fromCodePoint(code)),
+  )("rejects spoofing character #%# in any text field", (character) => {
+    expect(rejection({ ...valid, summary: `ok${character}gnp.exe` })).toContain(
+      "forbidden characters",
+    );
+    expect(
+      rejection({
+        ...valid,
+        producer: { kind: "operator", actorLabel: `a${character}b` },
+      }),
+    ).toContain("forbidden characters");
+  });
+
+  test("rejects a malformed actor label", () => {
+    expect(
+      rejection({
+        ...valid,
+        producer: { kind: "operator", actorLabel: "<script>" },
+      }),
+    ).toContain("actorLabel");
+  });
+
+  test("reads fields through descriptors, never through get", () => {
+    const target: Record<string, unknown> = {
+      version: 1,
+      outcome: "failed",
+      summary: "s",
+      producer: { kind: "operator", actorLabel: "andrea" },
+      data: { a: 1 },
+      error: { code: "boom", message: "m" },
+    };
+    const counted = new Proxy(target, {
+      // A plain `get` would run an accessor; the snapshot must never use it.
+      get() {
+        throw new Error("a field was read through get");
+      },
+    });
+    expect(parseStageResultEnvelope(counted).summary).toBe("s");
+  });
+});
+
+describe("assessStageResultDelivery", () => {
+  const agent = { kind: "agent_run", agentRunId: "run-1" } as const;
+  const operator = { kind: "operator", actorLabel: "andrea" } as const;
+  const current = { deliveredBy: agent, currentAgentRunId: "run-1" };
+  const operatorResult = { ...valid, producer: operator };
+
+  test("accepts the first delivery from the current AgentRun", () => {
+    expect(assessStageResultDelivery(valid, current).decision).toBe("accepted");
+  });
+
+  test("accepts an operator delivery that is not bound to an AgentRun", () => {
+    expect(
+      assessStageResultDelivery(operatorResult, { deliveredBy: operator })
+        .decision,
+    ).toBe("accepted");
+  });
+
+  test("treats an identical redelivery as a duplicate no-op", () => {
+    const recorded = parseStageResultEnvelope(valid);
+    const reordered = { ...valid, data: { notes: ["a", "b"], files: 3 } };
+    expect(
+      assessStageResultDelivery(reordered, { ...current, recorded }).decision,
+    ).toBe("duplicate");
+  });
+
+  test("redelivery stays a duplicate after the run is no longer bound", () => {
+    const recorded = parseStageResultEnvelope(valid);
+    expect(
+      assessStageResultDelivery(valid, {
+        deliveredBy: agent,
+        recorded,
+      }).decision,
+    ).toBe("duplicate");
+  });
+
+  test("never overwrites a different recorded result", () => {
+    const recorded = parseStageResultEnvelope(valid);
+    expect(
+      assessStageResultDelivery(
+        { ...valid, summary: "Different outcome" },
+        { ...current, recorded },
+      ).decision,
+    ).toBe("conflict");
+  });
+
+  test("flags a result from a superseded AgentRun as stale", () => {
+    expect(
+      assessStageResultDelivery(valid, {
+        deliveredBy: agent,
+        currentAgentRunId: "run-2",
+      }).decision,
+    ).toBe("stale");
+    expect(
+      assessStageResultDelivery(valid, { deliveredBy: agent }).decision,
+    ).toBe("stale");
+  });
+
+  test("a different result from a stale run is stale, not a conflict", () => {
+    const recorded = parseStageResultEnvelope({
+      ...valid,
+      producer: { kind: "agent_run", agentRunId: "run-2" },
+    });
+    expect(
+      assessStageResultDelivery(valid, {
+        deliveredBy: agent,
+        currentAgentRunId: "run-2",
+        recorded,
+      }).decision,
+    ).toBe("stale");
+  });
+
+  test("a stale run cannot bypass the check by claiming to be an operator", () => {
+    expect(
+      assessStageResultDelivery(operatorResult, {
+        deliveredBy: agent,
+        currentAgentRunId: "run-2",
+      }).decision,
+    ).toBe("producer_mismatch");
+  });
+
+  test("an operator cannot deliver as an AgentRun, nor as another operator", () => {
+    expect(
+      assessStageResultDelivery(valid, { deliveredBy: operator }).decision,
+    ).toBe("producer_mismatch");
+    expect(
+      assessStageResultDelivery(operatorResult, {
+        deliveredBy: { kind: "operator", actorLabel: "someone-else" },
+      }).decision,
+    ).toBe("producer_mismatch");
+  });
+
+  test("an AgentRun cannot deliver as another AgentRun", () => {
+    expect(
+      assessStageResultDelivery(valid, {
+        deliveredBy: { kind: "agent_run", agentRunId: "run-9" },
+        currentAgentRunId: "run-9",
+      }).decision,
+    ).toBe("producer_mismatch");
+  });
+
+  test("an operator delivery may pre-empt a bound run; the run's later result conflicts", () => {
+    const first = assessStageResultDelivery(operatorResult, {
+      deliveredBy: operator,
+      currentAgentRunId: "run-1",
+    });
+    expect(first.decision).toBe("accepted");
+    expect(first.preemptsBoundRun).toBe(true);
+    expect(
+      assessStageResultDelivery(valid, { ...current, recorded: first.envelope })
+        .decision,
+    ).toBe("conflict");
+  });
+
+  test("a malformed delivery throws a sanitized typed error", () => {
+    expect(() =>
+      assessStageResultDelivery({ ...valid, version: 9 }, current),
+    ).toThrow(DomainValidationError);
+  });
+
+  test("assessment has no side effects and exposes no retry decision", () => {
+    const result = assessStageResultDelivery(valid, current);
+    expect(Object.keys(result).sort()).toEqual([
+      "decision",
+      "envelope",
+      "preemptsBoundRun",
+    ]);
+  });
+});
+
+describe("stage result hardening, second pass", () => {
+  test.each([
+    "Added basic validation for request payloads",
+    "A basic implementation of the parser",
+    "Basic internationalization is in place",
+    "Used tokens: 1200 input",
+    "Fixed token: refresh logic",
+    "Updated the Bearer authentication scheme docs",
+    "Rotated the secret store layout, no values changed",
+  ])("accepts ordinary prose in the summary: %s", (summary) => {
+    expect(parseStageResultEnvelope({ ...valid, summary }).summary).toBe(
+      summary,
+    );
+  });
+
+  test.each([
+    "Invalid token: expired",
+    "secret is missing from the environment",
+    "const secret = readEnv()",
+    "password: required",
+  ])("accepts ordinary error text: %s", (message) => {
+    expect(
+      parseStageResultEnvelope({
+        ...valid,
+        outcome: "failed",
+        data: undefined,
+        error: { code: "upstream_error", message },
+      }).error?.message,
+    ).toBe(message);
+  });
+
+  test.each([
+    "Basic dXNlcjpwYXNzd29yZDEyMzQ=",
+    "bearer eyJhbGciOiJIUzI1NiJ9abcdef",
+    "key AKIAABCDEFGHIJKLMNOP leaked",
+    "xoxb-1234567890-abcdef",
+  ])("still rejects token-shaped material: %s", (summary) => {
+    expect(rejection({ ...valid, summary })).toContain("credential-like");
+  });
+
+  test("accepts token-usage metering keys but not a bare token key", () => {
+    const envelope = parseStageResultEnvelope({
+      ...valid,
+      data: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
+    });
+    expect(envelope.data?.totalTokens).toBe(30);
+    expect(rejection({ ...valid, data: { token: "x" } })).toContain(
+      "sensitive",
+    );
+    expect(rejection({ ...valid, data: { accessTokens: [] } })).toContain(
+      "sensitive",
+    );
+  });
+
+  test("applies the character and credential checks to data keys", () => {
+    const bad: [string, string, string][] = [
+      ["line break", "a\nINFO forged", "forbidden characters"],
+      ["bidi override", "a" + String.fromCodePoint(0x202e) + "b", "forbidden"],
+      [
+        "zero-width space",
+        "a" + String.fromCodePoint(0x200b) + "b",
+        "forbidden",
+      ],
+      ["NUL", "a" + String.fromCodePoint(0) + "b", "forbidden"],
+      ["provider token", "ghp_" + "A".repeat(36), "credential-like"],
+      ["too long", "k".repeat(stageResultLimits.dataKeyBytes + 1), "oversized"],
+      // 64 CJK characters are 192 UTF-8 bytes: the limit is bytes, not units.
+      [
+        "multibyte too long",
+        String.fromCodePoint(0x4e2d).repeat(64),
+        "oversized",
+      ],
+    ];
+    for (const [, key, expected] of bad)
+      expect(rejection({ ...valid, data: { [key]: 1 } })).toContain(expected);
+  });
+
+  class Marker {
+    value = 1;
+  }
+
+  test.each([
+    ["Map", () => new Map([["a", 1]])],
+    ["Set", () => new Set([1])],
+    ["Date", () => new Date(0)],
+    ["RegExp", () => /x/],
+    ["Uint8Array", () => new Uint8Array([1, 2])],
+    ["class instance", () => new Marker()],
+  ])("rejects a %s in data instead of coercing it", (_name, make) => {
+    expect(rejection({ ...valid, data: { v: make() } })).toContain(
+      "canonical JSON",
+    );
+  });
+
+  test("accepts a null-prototype object in data", () => {
+    const data = Object.assign(Object.create(null), { a: 1 });
+    expect(parseStageResultEnvelope({ ...valid, data }).data).toEqual({ a: 1 });
+  });
+
+  test.each([
+    ["an array with an extra property", () => Object.assign([1], { x: 2 })],
+    ["an object with a symbol key", () => ({ a: 1, [Symbol("s")]: 2 })],
+    [
+      "an object with a hidden property",
+      () => Object.defineProperty({ a: 1 }, "b", { value: 2 }),
+    ],
+  ])("refuses %s instead of silently dropping it", (_name, make) => {
+    expect(rejection({ ...valid, data: { v: make() } })).toContain(
+      "canonical JSON",
+    );
+  });
+
+  test("a Proxy that changes its keys between reads gets nothing past the guard", () => {
+    let calls = 0;
+    const hostile = new Proxy(
+      { password: "Bearer abcdefgh12345678ijkl" },
+      {
+        ownKeys(target) {
+          calls += 1;
+          return calls === 1 ? ["k"] : Reflect.ownKeys(target);
+        },
+        getOwnPropertyDescriptor(target, key) {
+          return key === "k"
+            ? { value: "fine", enumerable: true, configurable: true }
+            : Reflect.getOwnPropertyDescriptor(target, key);
+        },
+      },
+    );
+    const envelope = parseStageResultEnvelope({ ...valid, data: hostile });
+    expect(envelope.data).toEqual({ k: "fine" });
+  });
+
+  test("a __proto__ key is rejected and pollutes nothing", () => {
+    const data = JSON.parse('{"__proto__": {"admin": true}}');
+    expect(rejection({ ...valid, data })).toContain("canonical JSON");
+    expect(({} as Record<string, unknown>).admin).toBeUndefined();
+  });
+
+  test("stops at the cumulative string budget, before reaching later fields", () => {
+    const strings = Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [
+        `k${index}`,
+        "x".repeat(stageResultLimits.dataBytes / 2),
+      ]),
+    );
+    // A forbidden key after the budget is exhausted must not be what is reported.
+    expect(
+      rejection({ ...valid, data: { ...strings, password: "p" } }),
+    ).toContain("data exceeds");
+  });
+
+  test("stops at the cumulative key budget, before reaching later fields", () => {
+    const keys = Object.fromEntries(
+      Array.from({ length: 200 }, (_, index) => [
+        String(index).padStart(stageResultLimits.dataKeyBytes, "k"),
+        1,
+      ]),
+    );
+    expect(rejection({ ...valid, data: { ...keys, password: "p" } })).toContain(
+      "data exceeds",
+    );
+  });
+
+  test.each([0x200b, 0x200e, 0x200f, 0x061c, 0xfeff, 0xd800, 0xdc00])(
+    "rejects invisible or invalid code point U+%s in text",
+    (code) => {
+      expect(
+        rejection({
+          ...valid,
+          summary: "ab" + String.fromCharCode(code) + "cd",
+        }),
+      ).toContain("forbidden characters");
+    },
+  );
+});
+
+describe("stage result hardening, third pass", () => {
+  const agent = { kind: "agent_run", agentRunId: "run-1" } as const;
+  const operator = { kind: "operator", actorLabel: "andrea" } as const;
+  const current = { deliveredBy: agent, currentAgentRunId: "run-1" };
+  const operatorResult = { ...valid, producer: operator };
+  const text = (summary: string) => ({ ...valid, summary });
+  const asSummary = (summary: string) =>
+    parseStageResultEnvelope(text(summary));
+
+  test("validates the raw text before trimming it", () => {
+    expect(rejection(text("é".repeat(999) + "   "))).toContain("exceeds");
+    expect(rejection(text("ok\ufeff"))).toContain("forbidden characters");
+    expect(
+      rejection({
+        ...valid,
+        producer: { kind: "operator", actorLabel: "ana\n" },
+      }),
+    ).toContain("single line");
+  });
+
+  test("rejects invisible format characters and a lone carriage return", () => {
+    for (const hidden of ["\u2060", "\u{e0049}", "\u00ad", "\u3164"])
+      expect(rejection(text(`ok${hidden}ok`))).toContain("forbidden");
+    expect(rejection(text("FAILED\rok"))).toContain("forbidden");
+    expect(asSummary("line one\r\nline two").summary).toContain("line two");
+  });
+
+  test("passes through only its own rejections, not an error thrown by a trap", () => {
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new DomainValidationError("Invalid stage result: SECRET=abc");
+        },
+      },
+    );
+    expect(rejection(hostile)).toBe(
+      "Invalid stage result: envelope cannot be read",
+    );
+  });
+
+  test("classifies a hostile thrown value without running its traps", () => {
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    const throwsRevoked = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw revoked.proxy;
+        },
+      },
+    );
+    const throwsOnPrototype = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Proxy(new Error("SECRET=abc"), {
+            getPrototypeOf() {
+              throw new Error("SECRET=trap");
+            },
+          });
+        },
+      },
+    );
+    for (const hostile of [throwsRevoked, throwsOnPrototype])
+      expect(rejection(hostile)).toBe(
+        "Invalid stage result: envelope cannot be read",
+      );
+  });
+
+  test("refuses hidden properties on arrays, envelope and producer", () => {
+    const hiddenIndex = [1];
+    Object.defineProperty(hiddenIndex, "0", { value: 1, enumerable: false });
+    expect(rejection({ ...valid, data: { list: hiddenIndex } })).toContain(
+      "canonical JSON",
+    );
+    class Items extends Array<number> {}
+    expect(rejection({ ...valid, data: { list: Items.from([1]) } })).toContain(
+      "canonical JSON",
+    );
+    const hiddenEnvelope = { ...valid };
+    Object.defineProperty(hiddenEnvelope, "approved", {
+      value: true,
+      enumerable: false,
+    });
+    expect(rejection(hiddenEnvelope)).toContain("plain data properties");
+    class Producer {
+      kind = "agent_run";
+      agentRunId = "run-1";
+    }
+    expect(rejection({ ...valid, producer: new Producer() })).toContain(
+      "plain data properties",
+    );
+  });
+
+  test("refuses credential-shaped content that earlier patterns missed", () => {
+    const ghp = "ghp_" + "a1".repeat(18);
+    for (const secret of [
+      `foo_${ghp}`,
+      "x AKIAIOSFODNN7EXAMPLE_x",
+      "sk_live_" + "a1".repeat(12),
+      "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghij",
+      "https://user:hunter2pass@example.com/path",
+      '{"token":"ab12cd34ef56"}',
+      "pwd=ab12cd34ef56",
+    ])
+      expect(rejection(text(secret))).toContain("credential-like");
+    expect(
+      rejection({
+        ...valid,
+        outcome: "failed",
+        data: undefined,
+        error: { code: ghp.toLowerCase(), message: "x" },
+      }),
+    ).toContain("credential-like");
+  });
+
+  test("rejects bare token keys, including plural and suffixed forms", () => {
+    for (const key of [
+      "tokens",
+      "tokensUsed",
+      "tokens_count",
+      "Tokens",
+      "token_used",
+    ])
+      expect(
+        rejection({ ...valid, data: { [key]: "reserved-value" } }),
+      ).toContain("sensitive");
+  });
+
+  test("accepts provider usage metering keys", () => {
+    for (const key of [
+      "cache_read_input_tokens",
+      "cache_creation_input_tokens",
+      "reasoning_tokens",
+    ])
+      expect(
+        parseStageResultEnvelope({ ...valid, data: { [key]: 5 } }).data,
+      ).toEqual({ [key]: 5 });
+  });
+
+  test("bounds the work for a very wide object", () => {
+    const wide = Object.fromEntries(
+      Array.from({ length: 600 }, (_, i) => [`k${i}`, i]),
+    );
+    expect(rejection({ ...valid, data: wide })).toContain("too many");
+    expect(rejection({ ...valid, ...wide })).toContain("too many properties");
+  });
+
+  test("revalidates the recorded result and reads the context once", () => {
+    const recorded = { ...valid, summary: " Implemented the change " } as never;
+    expect(
+      assessStageResultDelivery(valid, { ...current, recorded }).decision,
+    ).toBe("duplicate");
+    expect(() =>
+      assessStageResultDelivery(valid, {
+        ...current,
+        recorded: { ...valid, error: undefined, version: 9 } as never,
+      }),
+    ).toThrow(DomainValidationError);
+    let reads = 0;
+    const context = {
+      get deliveredBy() {
+        reads += 1;
+        return reads === 1
+          ? current.deliveredBy
+          : { kind: "operator" as const, actorLabel: "ana" };
+      },
+      currentAgentRunId: "run-9",
+    };
+    expect(assessStageResultDelivery(valid, context).decision).toBe("stale");
+    expect(reads).toBe(1);
+  });
+
+  test("refuses an accessor-backed deliverer without invoking it", () => {
+    let reads = 0;
+    const deliveredBy = {
+      get kind() {
+        reads += 1;
+        return "agent_run" as const;
+      },
+      agentRunId: "run-1",
+    };
+    expect(() =>
+      assessStageResultDelivery(valid, {
+        deliveredBy,
+        currentAgentRunId: "run-1",
+      }),
+    ).toThrow(DomainValidationError);
+    expect(reads).toBe(0);
+  });
+
+  test("refuses an object wider than the remaining node budget", () => {
+    // 300 nodes already spent by siblings leave room for fewer than 300 keys.
+    const sibling = Array.from({ length: 300 }, (_, index) => index);
+    const wide = Object.fromEntries(
+      Array.from({ length: 300 }, (_, index) => [`k${index}`, 0]),
+    );
+    expect(rejection({ ...valid, data: { sibling, wide } })).toContain(
+      "too many nodes",
+    );
+  });
+
+  test("an operator delivery with no bound run does not pre-empt anything", () => {
+    expect(
+      assessStageResultDelivery(operatorResult, { deliveredBy: operator })
+        .preemptsBoundRun,
+    ).toBe(false);
+  });
+});
+
+describe("stage result identity and context validation", () => {
+  const agent = { kind: "agent_run", agentRunId: "run-1" } as const;
+  const text = (summary: string) => ({ ...valid, summary });
+
+  function contextRejection(
+    delivered: unknown,
+    context: Parameters<typeof assessStageResultDelivery>[1],
+  ): string {
+    try {
+      assessStageResultDelivery(delivered, context);
+    } catch (error) {
+      expect(error).toBeInstanceOf(DomainValidationError);
+      return (error as Error).message;
+    }
+    throw new Error("expected the context to be rejected");
+  }
+
+  test.each([
+    ["leading space", " run-1"],
+    ["trailing space", "run-1 "],
+    ["trailing tab", "run-1\t"],
+  ])("refuses a padded AgentRun id in the payload: %s", (_name, agentRunId) => {
+    expect(
+      rejection({ ...valid, producer: { kind: "agent_run", agentRunId } }),
+    ).toContain("producer.agentRunId");
+  });
+
+  test("refuses a padded operator label instead of trimming it", () => {
+    for (const actorLabel of ["andrea ", " andrea", "andrea\u00a0"])
+      expect(
+        rejection({ ...valid, producer: { kind: "operator", actorLabel } }),
+      ).toContain("producer.actorLabel");
+    // Interior spaces remain part of a label and are compared exactly.
+    expect(
+      parseStageResultEnvelope({
+        ...valid,
+        producer: { kind: "operator", actorLabel: "ana maria" },
+      }).producer,
+    ).toEqual({ kind: "operator", actorLabel: "ana maria" });
+  });
+
+  test("a padded claim is rejected rather than equated with the deliverer", () => {
+    expect(() =>
+      assessStageResultDelivery(
+        { ...valid, producer: { kind: "agent_run", agentRunId: " run-1 " } },
+        { deliveredBy: agent, currentAgentRunId: "run-1" },
+      ),
+    ).toThrow(DomainValidationError);
+  });
+
+  test.each([
+    ["undefined", undefined],
+    ["null", null],
+    ["a string", "run-1"],
+    ["an unknown kind", { kind: "bot" }],
+    ["an agent run without id", { kind: "agent_run" }],
+    ["a padded id", { kind: "agent_run", agentRunId: "run-1 " }],
+    ["a malformed id", { kind: "agent_run", agentRunId: "run 1/../" }],
+    ["an operator without label", { kind: "operator" }],
+    ["a padded label", { kind: "operator", actorLabel: " andrea" }],
+  ])("rejects a malformed deliverer: %s", (_name, deliveredBy) => {
+    const message = contextRejection(valid, {
+      deliveredBy: deliveredBy as never,
+      currentAgentRunId: "run-1",
+    });
+    expect(message).toContain("deliveredBy");
+    expect(message).not.toContain("run 1/../");
+  });
+
+  test.each([
+    ["padded", " run-1"],
+    ["malformed", "run 1"],
+    ["empty", ""],
+    ["not a string", 7],
+  ])(
+    "rejects a malformed currentAgentRunId: %s",
+    (_name, currentAgentRunId) => {
+      expect(
+        contextRejection(valid, {
+          deliveredBy: agent,
+          currentAgentRunId: currentAgentRunId as never,
+        }),
+      ).toContain("currentAgentRunId");
+    },
+  );
+
+  test("a valid context still classifies as before", () => {
+    expect(
+      assessStageResultDelivery(valid, {
+        deliveredBy: agent,
+        currentAgentRunId: "run-1",
+      }).decision,
+    ).toBe("accepted");
+    expect(
+      assessStageResultDelivery(valid, { deliveredBy: agent }).decision,
+    ).toBe("stale");
+  });
+
+  test("refuses credential material the earlier patterns missed", () => {
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghij";
+    for (const secret of [
+      "redis://:hunter2pass@cache.internal:6379/0",
+      "whsec_" + "a1B2".repeat(8),
+      `token_${jwt}`,
+      // Schemes with every legal character, a dash-led run and upper case.
+      "my-app+v2.x://user:hunter2pass@host/path",
+      "see -x://user:hunter2pass@host",
+      "HTTPS://user:hunter2pass@host",
+    ])
+      expect(rejection(text(secret))).toContain("credential-like");
+  });
+
+  test("keeps accepting URLs and addresses that carry no password", () => {
+    for (const harmless of [
+      "clone git@github.com:org/repo.git",
+      "see http://example.com:8080/path for details",
+      "ssh://git@host:22/repo.git",
+      "redis://cache.internal:6379/0",
+      "a.a.a.a.a.a.a.a.a.a.a.a",
+    ])
+      expect(parseStageResultEnvelope(text(harmless)).summary).toBe(harmless);
+  });
+});
+
+describe("stage result delivery context boundary", () => {
+  const reject = (deliveredBy: unknown) => {
+    try {
+      assessStageResultDelivery(valid, {
+        deliveredBy: deliveredBy as never,
+        currentAgentRunId: "run-1",
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(DomainValidationError);
+      return (error as Error).message;
+    }
+    throw new Error("expected the deliverer to be rejected");
+  };
+
+  test("refuses extra fields and inherited properties on the deliverer", () => {
+    expect(
+      reject({ kind: "agent_run", agentRunId: "run-1", actorLabel: "x" }),
+    ).toContain("deliveredBy has unknown fields");
+    expect(
+      reject(Object.create({ kind: "agent_run", agentRunId: "run-1" })),
+    ).toContain("deliveredBy");
+  });
+
+  test("turns a throwing getter or a revoked proxy into the typed, sanitized error", () => {
+    const throwing = {
+      get kind(): string {
+        throw new Error("SECRET leak sk-abc");
+      },
+    };
+    expect(reject(throwing)).not.toContain("SECRET");
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    expect(reject(revoked.proxy)).toContain("deliveredBy");
+  });
+
+  test("the URL credential check stays linear on long scheme-looking runs", () => {
+    const parse = (length: number) => {
+      const best = Array.from({ length: 5 }, () => {
+        const started = performance.now();
+        parseStageResultEnvelope({
+          ...valid,
+          data: { note: "a.".repeat(length / 2) },
+        });
+        return performance.now() - started;
+      });
+      return Math.min(...best);
+    };
+    parse(2_000);
+    // Eight times the input: about 8x when linear, about 64x when quadratic.
+    expect(parse(16_000) / Math.max(parse(2_000), 0.05)).toBeLessThan(30);
+  });
+});
