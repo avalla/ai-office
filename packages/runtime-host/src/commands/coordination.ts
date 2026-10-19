@@ -51,7 +51,7 @@ export async function handleCoordinationCommand(
     offset: windowOption("offset", parsed.options.get("offset")),
     limit: windowOption("limit", parsed.options.get("limit")),
     classes: parsed.options.get("classes")?.split(","),
-  });
+  }, { kind: "owner" });
   context.io.stdout(JSON.stringify(response));
   return 0;
 }

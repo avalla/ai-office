@@ -102,8 +102,9 @@ export interface CoordinationReadQuery {
  * Who may read what. `owner` is the trusted-local operator on the main
  * socket: every project, classes P and T. `exposure` is the owner's
  * listener configuration: only the listed projects, each with its enabled
- * classes; any other project answers exactly like a missing one. Every
- * adapter passes its policy here, so no adapter holds an authority check of
+ * classes; any other project answers exactly like a missing one. The
+ * policy is a required argument with no default: every adapter states its
+ * authority explicitly, so no adapter holds an authority check of
  * its own.
  */
 export type CoordinationReadPolicy =
@@ -251,7 +252,7 @@ export class CoordinationReadService {
 
   async execute(
     query: CoordinationReadQuery,
-    policy: CoordinationReadPolicy = { kind: "owner" },
+    policy: CoordinationReadPolicy,
   ): Promise<CoordinationReadResponse> {
     if (!isOperation(query.operation))
       throw new CoordinationOperationError(

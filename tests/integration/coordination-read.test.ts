@@ -21,6 +21,9 @@ import { PlanningReadBusyError } from "@ai-office/application/ports/planning-rea
 import { Project } from "@ai-office/domain/project/project.ts";
 import { Task } from "@ai-office/domain/task/task.ts";
 
+// Explicit trusted-local authority: the service has no default policy.
+const ownerReadPolicy = { kind: "owner" } as const;
+
 const now = new Date("2026-10-16T08:00:00.000Z");
 const roots: string[] = [];
 
@@ -61,7 +64,7 @@ describe("coordination read service over SQLite", () => {
       const page = (await reads.execute({
         projectId: "p",
         operation: "tasks",
-      })) as CoordinationCollectionResponse;
+      }, ownerReadPolicy)) as CoordinationCollectionResponse;
       expect(page.items.map((item) => item.taskId)).toEqual(["t1", "t2"]);
       expect(JSON.stringify(page)).not.toContain("SECRET");
     } finally {
@@ -92,14 +95,14 @@ describe("coordination read service over SQLite", () => {
         .catch(() => undefined);
       await inside;
       await expect(
-        reads.execute({ projectId: "p", operation: "tasks" }),
+        reads.execute({ projectId: "p", operation: "tasks" }, ownerReadPolicy),
       ).rejects.toBeInstanceOf(PlanningReadBusyError);
       release();
       await writer;
       const page = (await reads.execute({
         projectId: "p",
         operation: "tasks",
-      })) as CoordinationCollectionResponse;
+      }, ownerReadPolicy)) as CoordinationCollectionResponse;
       // The rolled-back task was never observed.
       expect(page.items).toEqual([]);
     } finally {

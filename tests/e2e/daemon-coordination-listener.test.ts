@@ -34,6 +34,9 @@ import {
   startSocketHolder,
 } from "../helpers/unix-socket.ts";
 
+// Explicit trusted-local authority: the service has no default policy.
+const ownerReadPolicy = { kind: "owner" } as const;
+
 const temporaryDirectories: string[] = [];
 
 afterEach(() => {
@@ -365,7 +368,7 @@ describe("coordination listener", () => {
             ...(query.classes === undefined
               ? {}
               : { classes: query.classes.split(",") }),
-          });
+          }, ownerReadPolicy);
           // Byte-identical across the listener, the CLI and the service.
           expect(cli).toEqual([listener.text]);
           expect(listener.text).toBe(JSON.stringify(direct));

@@ -23,6 +23,9 @@ import {
   type PlanningStateRecord,
 } from "@ai-office/application/ports/planning-read.port.ts";
 
+// Explicit trusted-local authority: the service has no default policy.
+const ownerReadPolicy = { kind: "owner" } as const;
+
 function state(): PlanningStateRecord {
   return {
     projectId: "p",
@@ -90,7 +93,7 @@ describe("coordination read service", () => {
     const status = (await service().execute({
       projectId: "p",
       operation: "status",
-    })) as CoordinationStatusResponse;
+    }, ownerReadPolicy)) as CoordinationStatusResponse;
     expect(status).toEqual({
       coordinationApiVersion: 1,
       operation: "status",
@@ -124,7 +127,7 @@ describe("coordination read service", () => {
       projectId: "p",
       operation: "status",
       milestoneId: "m1",
-    })) as CoordinationStatusResponse;
+    }, ownerReadPolicy)) as CoordinationStatusResponse;
     expect(scoped.counts.tasks).toBe(2);
     expect(scoped.taskStatusCounts.pending).toBe(1);
     expect(scoped.taskStatusCounts.blocked).toBe(0);
@@ -132,8 +135,8 @@ describe("coordination read service", () => {
 
   test("the status snapshot identity equals the collection identity", async () => {
     const reads = service();
-    const status = await reads.execute({ projectId: "p", operation: "status" });
-    const tasks = await reads.execute({ projectId: "p", operation: "tasks" });
+    const status = await reads.execute({ projectId: "p", operation: "status" }, ownerReadPolicy);
+    const tasks = await reads.execute({ projectId: "p", operation: "tasks" }, ownerReadPolicy);
     expect(status.snapshotId).toBe(tasks.snapshotId);
   });
 
@@ -142,7 +145,7 @@ describe("coordination read service", () => {
       projectId: "p",
       operation: "tasks",
       limit: 2,
-    })) as CoordinationCollectionResponse;
+    }, ownerReadPolicy)) as CoordinationCollectionResponse;
     expect(page).toMatchObject({
       coordinationApiVersion: 1,
       operation: "tasks",
@@ -159,7 +162,7 @@ describe("coordination read service", () => {
     const blockers = (await service().execute({
       projectId: "p",
       operation: "blockers",
-    })) as CoordinationCollectionResponse;
+    }, ownerReadPolicy)) as CoordinationCollectionResponse;
     expect(blockers.section).toBe("derived");
     expect(blockers.items).toEqual([
       {
@@ -181,7 +184,7 @@ describe("coordination read service", () => {
     })).execute({
       projectId: "p",
       operation: "runnable",
-    })) as CoordinationCollectionResponse;
+    }, ownerReadPolicy)) as CoordinationCollectionResponse;
     expect(runnable.items).toEqual([
       { taskId: "b", status: "pending", priority: 5 },
     ]);
@@ -190,9 +193,9 @@ describe("coordination read service", () => {
   test("the same state yields byte-identical responses", async () => {
     for (const operation of coordinationReadOperations)
       expect(
-        JSON.stringify(await service().execute({ projectId: "p", operation })),
+        JSON.stringify(await service().execute({ projectId: "p", operation }, ownerReadPolicy)),
       ).toBe(
-        JSON.stringify(await service().execute({ projectId: "p", operation })),
+        JSON.stringify(await service().execute({ projectId: "p", operation }, ownerReadPolicy)),
       );
   });
 
@@ -210,7 +213,7 @@ describe("coordination read service", () => {
     })).execute({
       projectId: "p",
       operation: "milestones",
-    })) as CoordinationCollectionResponse;
+    }, ownerReadPolicy)) as CoordinationCollectionResponse;
     expect(page.items).toEqual([
       {
         milestoneId: "m1",
@@ -239,11 +242,11 @@ describe("coordination read service", () => {
     ];
     for (const [left, right] of pairs) {
       for (const operation of ["status", "milestones", "tasks"]) {
-        const one = await withTitle(left).execute({ projectId: "p", operation });
+        const one = await withTitle(left).execute({ projectId: "p", operation }, ownerReadPolicy);
         const two = await withTitle(right).execute({
           projectId: "p",
           operation,
-        });
+        }, ownerReadPolicy);
         // Byte-identical: neither snapshotId nor pageDigest differs.
         expect(JSON.stringify(one)).toBe(JSON.stringify(two));
       }
@@ -252,8 +255,8 @@ describe("coordination read service", () => {
     const visible = await withTitle("Milestone two").execute({
       projectId: "p",
       operation: "status",
-    });
-    const base = await service().execute({ projectId: "p", operation: "status" });
+    }, ownerReadPolicy);
+    const base = await service().execute({ projectId: "p", operation: "status" }, ownerReadPolicy);
     expect(visible.snapshotId).not.toBe(base.snapshotId);
     // Without T, a title change is not visible and the identity holds.
     const onlyP = { kind: "exposure" as const, projects: new Map([["p", ["P"] as const]]) };
@@ -280,8 +283,8 @@ describe("coordination read service", () => {
     // Stored keys sort on opposite sides of "R-2"; exposed, both read
     // "[redacted]", so the order and every byte must match.
     expect(below < "R-2" && above > "R-2").toBe(true);
-    const low = await withKey(below).execute({ projectId: "p", operation: "requirements" });
-    const high = await withKey(above).execute({ projectId: "p", operation: "requirements" });
+    const low = await withKey(below).execute({ projectId: "p", operation: "requirements" }, ownerReadPolicy);
+    const high = await withKey(above).execute({ projectId: "p", operation: "requirements" }, ownerReadPolicy);
     expect(JSON.stringify(low)).toBe(JSON.stringify(high));
     expect(
       (low as CoordinationCollectionResponse).items.map((item) => item.requirementId),
@@ -300,14 +303,14 @@ describe("coordination read service", () => {
     // Swapping only the creation times changes nothing that is exposed, so
     // the order, the snapshotId and the pageDigest must all match.
     for (const operation of ["milestones", "status"]) {
-      const early = await withTimes(0, 1).execute({ projectId: "p", operation });
-      const late = await withTimes(1, 0).execute({ projectId: "p", operation });
+      const early = await withTimes(0, 1).execute({ projectId: "p", operation }, ownerReadPolicy);
+      const late = await withTimes(1, 0).execute({ projectId: "p", operation }, ownerReadPolicy);
       expect(JSON.stringify(early)).toBe(JSON.stringify(late));
     }
     const page = (await withTimes(1, 0).execute({
       projectId: "p",
       operation: "milestones",
-    })) as CoordinationCollectionResponse;
+    }, ownerReadPolicy)) as CoordinationCollectionResponse;
     expect(page.items.map((item) => item.milestoneId)).toEqual(["m1", "m2"]);
   });
 
@@ -321,16 +324,16 @@ describe("coordination read service", () => {
         },
       }),
     );
-    const first = await counting.execute({ projectId: "p", operation: "tasks", limit: 1 });
-    const second = await counting.execute({ projectId: "p", operation: "tasks", limit: 1, offset: 1 });
-    const status = await counting.execute({ projectId: "p", operation: "status" });
+    const first = await counting.execute({ projectId: "p", operation: "tasks", limit: 1 }, ownerReadPolicy);
+    const second = await counting.execute({ projectId: "p", operation: "tasks", limit: 1, offset: 1 }, ownerReadPolicy);
+    const status = await counting.execute({ projectId: "p", operation: "status" }, ownerReadPolicy);
     expect(reads).toBe(3);
     expect(second.snapshotId).toBe(first.snapshotId);
     expect(status.snapshotId).toBe(first.snapshotId);
     // A fresh service over the same state yields the same bytes as the cache.
     expect(JSON.stringify(second)).toBe(
       JSON.stringify(
-        await service().execute({ projectId: "p", operation: "tasks", limit: 1, offset: 1 }),
+        await service().execute({ projectId: "p", operation: "tasks", limit: 1, offset: 1 }, ownerReadPolicy),
       ),
     );
   });
@@ -338,17 +341,17 @@ describe("coordination read service", () => {
   test("changing a returned item cannot change later responses", async () => {
     const reads = service();
     const before = JSON.stringify(
-      await reads.execute({ projectId: "p", operation: "tasks" }),
+      await reads.execute({ projectId: "p", operation: "tasks" }, ownerReadPolicy),
     );
     const first = (await reads.execute({
       projectId: "p",
       operation: "tasks",
-    })) as CoordinationCollectionResponse;
+    }, ownerReadPolicy)) as CoordinationCollectionResponse;
     first.items[0]!.title = "tampered";
     (first.items[0]!.requirementIds as string[]).push("tampered");
     first.items.pop();
     expect(
-      JSON.stringify(await reads.execute({ projectId: "p", operation: "tasks" })),
+      JSON.stringify(await reads.execute({ projectId: "p", operation: "tasks" }, ownerReadPolicy)),
     ).toBe(before);
   });
 
@@ -389,22 +392,22 @@ describe("coordination read service", () => {
   test("typed refusals", async () => {
     const reads = service();
     await expect(
-      reads.execute({ projectId: "p", operation: "active" }),
+      reads.execute({ projectId: "p", operation: "active" }, ownerReadPolicy),
     ).rejects.toBeInstanceOf(CoordinationOperationError);
     await expect(
-      reads.execute({ projectId: "p", operation: "runs" }),
+      reads.execute({ projectId: "p", operation: "runs" }, ownerReadPolicy),
     ).rejects.toBeInstanceOf(CoordinationOperationError);
     await expect(
-      reads.execute({ projectId: "missing", operation: "tasks" }),
+      reads.execute({ projectId: "missing", operation: "tasks" }, ownerReadPolicy),
     ).rejects.toBeInstanceOf(ProjectNotFoundError);
     await expect(
-      reads.execute({ projectId: "p", operation: "tasks", milestoneId: "mx" }),
+      reads.execute({ projectId: "p", operation: "tasks", milestoneId: "mx" }, ownerReadPolicy),
     ).rejects.toBeInstanceOf(PlanningScopeNotFoundError);
     await expect(
-      reads.execute({ projectId: "p", operation: "tasks", limit: 201 }),
+      reads.execute({ projectId: "p", operation: "tasks", limit: 201 }, ownerReadPolicy),
     ).rejects.toBeInstanceOf(PlanningSnapshotQueryError);
     await expect(
-      reads.execute({ projectId: "p", operation: "status", limit: 1 }),
+      reads.execute({ projectId: "p", operation: "status", limit: 1 }, ownerReadPolicy),
     ).rejects.toBeInstanceOf(PlanningSnapshotQueryError);
     const busy = new CoordinationReadService(
       new GetPlanningSnapshot({
@@ -414,8 +417,21 @@ describe("coordination read service", () => {
       }),
     );
     await expect(
-      busy.execute({ projectId: "p", operation: "status" }),
+      busy.execute({ projectId: "p", operation: "status" }, ownerReadPolicy),
     ).rejects.toBeInstanceOf(PlanningReadBusyError);
+  });
+
+  test("a caller that omits the read policy gets no data instead of owner access", async () => {
+    // The policy is a required argument: a JavaScript caller or a stale
+    // adapter that omits it must not inherit every project and class.
+    await expect(
+      // @ts-expect-error the policy is required by the contract
+      service().execute({ projectId: "p", operation: "status" }),
+    ).rejects.toBeInstanceOf(Error);
+    await expect(
+      // @ts-expect-error the policy is required by the contract
+      service().execute({ projectId: "p", operation: "tasks" }, undefined),
+    ).rejects.toBeInstanceOf(Error);
   });
 
   test("a response above 256 KiB is refused; a smaller window of the same operation is served", async () => {
@@ -452,13 +468,13 @@ describe("coordination read service", () => {
       taskRequirementLinks: [],
     });
     await expect(
-      service(big).execute({ projectId: "p", operation: "tasks", limit: 200 }),
+      service(big).execute({ projectId: "p", operation: "tasks", limit: 200 }, ownerReadPolicy),
     ).rejects.toBeInstanceOf(CoordinationResponseTooLargeError);
     const page = (await service(big).execute({
       projectId: "p",
       operation: "tasks",
       limit: 10,
-    })) as CoordinationCollectionResponse;
+    }, ownerReadPolicy)) as CoordinationCollectionResponse;
     expect(page.items).toHaveLength(10);
   });
 
@@ -480,7 +496,7 @@ describe("coordination read service", () => {
     })).execute({
       projectId: "p",
       operation: "requirements",
-    })) as CoordinationCollectionResponse;
+    }, ownerReadPolicy)) as CoordinationCollectionResponse;
     expect(page.items[0]!.taskIds).toHaveLength(100);
     expect(page.items[0]!.truncatedFields).toEqual(["taskIds"]);
   });
@@ -504,7 +520,7 @@ describe("coordination read service", () => {
       new GetPlanningSnapshot(reads, { attempts: 5, delayMs: 7, sleep }),
     );
     await expect(
-      retried.execute({ projectId: "p", operation: "status" }),
+      retried.execute({ projectId: "p", operation: "status" }, ownerReadPolicy),
     ).resolves.toMatchObject({ operation: "status" });
     expect(delays).toEqual([7, 7]);
 
@@ -522,7 +538,7 @@ describe("coordination read service", () => {
       ),
     );
     await expect(
-      stuck.execute({ projectId: "p", operation: "tasks" }),
+      stuck.execute({ projectId: "p", operation: "tasks" }, ownerReadPolicy),
     ).rejects.toBeInstanceOf(PlanningReadBusyError);
     expect(calls).toBe(3);
     expect(delays).toEqual([5, 5]);
@@ -555,7 +571,7 @@ describe("coordination read service", () => {
       operation: "tasks",
       limit: 2,
       offset: 1,
-    });
+    }, ownerReadPolicy);
     expect(JSON.stringify(response)).toBe(fixture);
   });
 });
