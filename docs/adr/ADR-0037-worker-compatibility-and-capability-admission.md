@@ -212,7 +212,7 @@ memory. Putting admission facts in it would couple a safety-critical,
 rollback-checked record to a memory store and let a memory migration change what
 is admitted, so this ADR does not reuse it. That does not by itself settle file
 objects versus a new dedicated host-level SQLite store: AGENTS.md keeps
-authoritative state in SQLite behind the Runtime, and a dedicated store would
+authoritative project state in SQLite behind the Runtime, and a dedicated store would
 supply transactions, constraints (one active decision per subject) and the
 existing versioned migration runner in place of the pointer, publication
 exclusion and separate state file specified below. The content-addressed file
@@ -300,7 +300,7 @@ PostgreSQL project authority (M22) is unaffected by either.
   A crash between publishing the pointer and recording the state leaves the
   pointer one or more generations ahead of the recorded state. That is accepted
   only when the whole chain from the recorded manifest to the pointer verifies
-  and every revocation it adds is applied; the state is then advanced. A pointer
+  and every revocation it adds is applied; the state is then advanced durably before the new snapshot is used, and a state that cannot be written fails the reload closed with `registry_unreadable`. A pointer
   that names an older generation than the recorded state, or a chain that does
   not contain the recorded manifest, is a rollback and is refused.
   The last accepted generation and manifest digest are kept in a state file in
@@ -687,7 +687,7 @@ Provenance never contains registry paths, credentials or raw probe output.
 | O3  | Approve the evidence sufficiency table (T1 needs scripted adversarial evidence plus drift observation or live confirmation of metadata)                                                           | Approve as the baseline of WC-02                                                                                                                                                        |
 | O4  | Accept `local_operator` approvals until M10, recorded as such, knowing that a same-account process (including an external coding agent) is not distinguished from the operator                    | Accept, with the class visible everywhere, the separation of agents from the approval surface stated as an operational rule, and a policy hook to require a stronger class later        |
 | O5  | Initial guarantee catalogue contents                                                                                                                                                              | Freeze in WC-02 from the documented guarantees, reviewed by the owner                                                                                                                   |
-| O6  | Registry persistence: content-addressed files (decision 4) or a dedicated host-level SQLite store, given AGENTS.md (authoritative state in SQLite, Runtime-centralised)                           | Owner decides before acceptance; the ADR does not choose. If files are kept, record why a second persistence mechanism is justified; WC-02 does not start before this is settled        |
+| O6  | Registry persistence: content-addressed files (decision 4) or a dedicated host-level SQLite store, given AGENTS.md (authoritative project state in SQLite; new persistence mechanisms are an architectural decision, Runtime-centralised)                           | Owner decides before acceptance; the ADR does not choose. If files are kept, record why a second persistence mechanism is justified; WC-02 does not start before this is settled        |
 
 The comparison of the two O6 options, with the owner's dedicated-SQLite
 preference tested against decision 4, is in
