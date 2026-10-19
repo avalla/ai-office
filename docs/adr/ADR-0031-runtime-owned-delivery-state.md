@@ -116,8 +116,7 @@ were reviewed independently before being proposed, which is not an approval.
   register of the reference, its hash, and its association with the run, gate
   and head commit. The delivery run can name a candidate checkpoint but cannot
   declare it valid for resume, and a checkpoint's existence never implies that a
-  gate passed or is authorized. Registration follows the protocol in invariant
-  4.
+  gate passed or is authorized. Registration follows the protocol in invariant 4.
 
 ## Invariants and failure modes
 
@@ -134,8 +133,11 @@ run identifiers, no paths beyond what the caller supplied, and no stack traces.
      this wherever a reference is set; a foreign key to the run identifier alone
      cannot enforce ownership and is only a backstop, as the cross-project rule
      in `AGENTS.md` requires.
-   - The reference may be set at creation or once afterwards. A second set is a
-     typed conflict and the reference is never repointed.
+   - The reference may be set at creation or once afterwards. The Decision
+     lists no operation for setting it afterwards; like the name of the creation
+     command, that operation is left to the implementation plan, and whether it
+     exists at all is not decided here. A second set is a typed conflict and the
+     reference is never repointed.
    - Failure modes: a pipeline run of another task or project, or one that does
      not exist, is rejected with the same typed not-found error, so a caller
      cannot probe another project's runs. The ownership check reads only the
