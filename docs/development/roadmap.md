@@ -2573,3 +2573,40 @@ Non-goals: GitHub-owned state or a task-tracker mirror, webhooks, the general
 GitHub connector (M13), remote approval, apply or any mutating MCP tool, a
 proxy embedded in the Runtime, an identity provider, scope or milestone
 mutation in V2, PostgreSQL parity claims.
+
+## M24 — Worker Compatibility & Capability Admission
+
+Status: planned 2026-10-16; the milestone, requirements WC-R01–WC-R14 and tasks
+WC-01–WC-08 are registered in the Runtime. WC-01 delivered the gap analysis, the
+plan and [ADR-0037](../adr/ADR-0037-worker-compatibility-and-capability-admission.md)
+(proposed); nothing is implemented, and the Codex, Claude and gateway workers,
+their allowlists, model routing and local configuration are unchanged.
+
+Goal: replace the static version and model allowlists in the worker adapters
+(`auditedCodexVersions`, `auditedBoundedCodexModels`, the Claude version floor)
+with one admission function that refuses on missing, mismatched, revoked or
+drifted evidence, over exactly-bound subjects: worker, client version,
+provider, model, effective configuration, output protocol, platform and
+execution mode. Guarantees are classified `enforced`, `verified`, `unverified` or
+`unsupported` with evidence proportional to risk; technical evidence is kept
+apart from the owner's certification decision, and a digest proves integrity,
+not trust. A host-local, content-addressed, revocable registry with atomic
+manifest generations holds the decisions. Metadata drift that touches a required
+guarantee refuses new runs; the Claude legacy policy is carried as such and is
+never presented as certified. Probes run offline and only propose; live
+certification needs an explicit authorization per execution, model, version and
+USD ceiling and never runs in CI; release monitoring and a recertification
+procedure cover new Codex CLI and Claude Code versions without enabling them.
+
+The [M24 delivery plan](worker-compatibility-admission.md) records the gap
+analysis, requirement and task tables, rollout without regression, the
+recertification procedure and the owner decisions D1–D7 with the open points
+O1–O6. [ADR-0037](../adr/ADR-0037-worker-compatibility-and-capability-admission.md)
+is the decision gate, not current architecture. M24 consumes M12's worker port
+(extended additively), M18's confinement levels as an `enforced` input and M21's
+governed child execution; it delivers none of them and does not change M10
+same-user scope.
+
+Non-goals: enabling any new version, model or worker; changing a current
+allowlist, flag or admission rule; automatic real-provider tests; hook-adapter
+audits; a Windows worker.
