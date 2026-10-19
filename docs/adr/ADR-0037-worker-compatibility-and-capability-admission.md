@@ -52,7 +52,7 @@ outputProtocol, platform, mode)`:
 - `worker` is a stable adapter identity (`codex-cli`, `claude-code`, …);
 - `clientVersion` is the exact version string the client reports; there are no
   ranges, and a version that does not parse is not a subject;
-- `provider` and `model` are the exact pair of the run's persisted selection;
+- `provider` and `model` are the exact pair of the run's persisted selection, or the resolved pair for a run without one (see below);
 - `configurationProfile` is an id plus the digest of the _effective_
   configuration the adapter constructs: argument vector template, feature and
   configuration overrides, environment construction, sandbox mode and the rules
