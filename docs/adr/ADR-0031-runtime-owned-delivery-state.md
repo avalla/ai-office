@@ -90,8 +90,10 @@ Two pieces of delivery state already exist and predate this decision:
   `0050_task_delivery_setup`, `delivery:setup:show` and `delivery:setup:set`;
   M19-T4). It holds checkpoint, handoff and similar settings, not the delivery
   profile or the gate selection, which live in the caller-local
-  `.task-delivery.yaml`. The skill reads it today
-  (`scripts/skills/task-delivery-config.ts`) and the planned
+  `.task-delivery.yaml`. The skill reads the Runtime setup today
+  (`scripts/skills/setup-resolution.ts`, which runs `delivery:setup:show`) and
+  validates the YAML against the shared key schema
+  (`scripts/skills/task-delivery-config.ts`); the planned
   `delivery:validate` (not implemented) is to validate it.
 - Checkpoints are stored in a local file store with atomic, immutable
   publication (M19-T2). Per point 3 above the skill keeps working without a
